@@ -1,0 +1,3056 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Architecture Advisor — Bioclimatic Design</title>
+<style>
+:root{
+  --bg:#ffffff;
+  --panel:#ffffff;
+  --ink:#14171a;
+  --ink2:#3d444b;
+  --muted:#7b838b;
+  --faint:#a8afb5;
+  --line:#e3e6e2;
+  --line2:#f0f2ee;
+  --wash:#fafbf9;
+  --c1:#2563EB; --c2:#DC2626; --c3:#0D9488; --c4:#D97706;
+  --c5:#7C3AED; --c6:#65A30D; --c7:#DB2777; --c8:#0891B2;
+  --sans: ui-sans-serif, -apple-system, "Segoe UI", Inter, Roboto, "Helvetica Neue", Arial, sans-serif;
+  --mono: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{
+  background:var(--bg); color:var(--ink);
+  font-family:var(--sans); font-size:14px; line-height:1.5;
+  -webkit-font-smoothing:antialiased;
+}
+h1,h2,h3,h4{margin:0; font-weight:600; letter-spacing:-0.01em}
+a{color:var(--c1)}
+
+/* ---------- Header ---------- */
+header{
+  position:sticky; top:0; z-index:40;
+  background:rgba(255,255,255,.94); backdrop-filter:blur(8px);
+  border-bottom:1px solid var(--line);
+}
+.hbar{display:flex; align-items:center; gap:18px; padding:10px 24px; max-width:1680px; margin:0 auto}
+.brand{display:flex; align-items:baseline; gap:9px; flex:0 0 auto}
+.brand b{font-size:15px; font-weight:650; letter-spacing:-0.015em}
+.brand span{font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:.09em}
+.langsel{display:inline-flex; border:1px solid var(--line); border-radius:6px; overflow:hidden; background:#fff; flex:0 0 auto}
+.langsel button{
+  font:inherit; font-size:11.5px; font-weight:600; letter-spacing:.03em;
+  padding:4px 11px; border:none; background:#fff; color:var(--muted); cursor:pointer;
+  border-right:1px solid var(--line2);
+}
+.langsel button:last-child{border-right:none}
+.langsel button:hover{color:var(--ink); background:var(--wash)}
+.langsel button[aria-pressed="true"]{background:var(--ink); color:#fff}
+.filechip{
+  display:none; align-items:center; gap:10px; margin-left:auto;
+  font-size:12px; color:var(--ink2);
+}
+.langsel{margin-left:auto}
+.filechip.on ~ .langsel{margin-left:0}
+.filechip.on{display:flex}
+.filechip .loc{font-weight:600; color:var(--ink)}
+.filechip .meta{color:var(--muted); font-family:var(--mono); font-size:11px}
+.btn{
+  font:inherit; font-size:12px; color:var(--ink2); background:#fff;
+  border:1px solid var(--line); border-radius:6px; padding:5px 11px; cursor:pointer;
+  transition:border-color .12s, color .12s, background .12s;
+}
+.btn:hover{border-color:#c6cbc4; color:var(--ink); background:var(--wash)}
+.btn:active{background:#f2f4f0}
+.btn.solid{background:var(--ink); color:#fff; border-color:var(--ink)}
+.btn.solid:hover{background:#000; color:#fff}
+
+/* ---------- Tabs ---------- */
+nav.tabs{border-bottom:1px solid var(--line); background:#fff}
+.tabs-inner{display:flex; gap:2px; padding:0 24px; max-width:1680px; margin:0 auto; overflow-x:auto}
+.tab{
+  appearance:none; background:none; border:none; font:inherit; font-size:13px;
+  color:var(--muted); padding:11px 14px; cursor:pointer; white-space:nowrap;
+  border-bottom:2px solid transparent; margin-bottom:-1px; letter-spacing:-0.005em;
+}
+.tab:hover{color:var(--ink2)}
+.tab[aria-selected="true"]{color:var(--ink); border-bottom-color:var(--ink); font-weight:600}
+.tab .n{font-family:var(--mono); font-size:10px; color:var(--faint); margin-right:6px}
+
+/* ---------- Layout ---------- */
+main{max-width:1680px; margin:0 auto; padding:0 24px 44px}
+section.page{display:none; padding-top:26px}
+section.page.on{display:block}
+.pagehead{margin-bottom:20px; max-width:760px}
+.pagehead h2{font-size:19px; letter-spacing:-0.02em}
+.pagehead p{margin:5px 0 0; color:var(--muted); font-size:13px}
+
+.grid{display:grid; gap:16px}
+.g2{grid-template-columns:repeat(2,minmax(0,1fr))}
+.g3{grid-template-columns:repeat(3,minmax(0,1fr))}
+.g4{grid-template-columns:repeat(4,minmax(0,1fr))}
+@media(max-width:1180px){.g3,.g4{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:820px){.g2,.g3,.g4{grid-template-columns:1fr}}
+
+/* ---------- Panels ---------- */
+.panel{border:1px solid var(--line); border-radius:9px; background:var(--panel); overflow:hidden}
+.panel-head{
+  display:flex; align-items:flex-start; gap:14px;
+  padding:12px 14px 10px; border-bottom:1px solid var(--line2);
+}
+.panel-title{flex:1 1 auto; min-width:0}
+.panel-title h3{font-size:13.5px; letter-spacing:-0.01em}
+.panel-title p{margin:2px 0 0; font-size:11.5px; color:var(--muted); line-height:1.45}
+.panel-tools{display:flex; gap:5px; flex:0 0 auto}
+.icobtn{
+  font:inherit; font-size:11px; color:var(--muted); background:none;
+  border:1px solid var(--line); border-radius:5px; padding:3px 8px; cursor:pointer;
+}
+.icobtn:hover{color:var(--ink); border-color:#c6cbc4; background:var(--wash)}
+.panel-body{padding:10px 12px 14px; position:relative}
+.canvas-wrap{position:relative; width:100%}
+canvas.chart{display:block; width:100%; cursor:crosshair}
+
+/* ---------- Controls ---------- */
+.controls{
+  display:flex; flex-wrap:wrap; gap:8px 14px; align-items:center;
+  padding:10px 14px; border:1px solid var(--line); border-radius:9px;
+  background:var(--wash); margin-bottom:16px;
+}
+.ctl{display:flex; align-items:center; gap:7px; font-size:12px; color:var(--ink2)}
+.ctl > label{color:var(--muted); font-size:11px; text-transform:uppercase; letter-spacing:.07em}
+select,input[type=number]{
+  font:inherit; font-size:12px; color:var(--ink); background:#fff;
+  border:1px solid var(--line); border-radius:5px; padding:4px 7px; max-width:230px;
+}
+select:focus,input:focus{outline:2px solid #cfd8ea; outline-offset:0; border-color:var(--c1)}
+input[type=range]{width:120px; accent-color:var(--ink)}
+.chk{display:inline-flex; align-items:center; gap:5px; font-size:12px; cursor:pointer; color:var(--ink2)}
+.chk input{accent-color:var(--ink); margin:0}
+.seg{display:inline-flex; border:1px solid var(--line); border-radius:6px; overflow:hidden; background:#fff}
+.seg button{
+  font:inherit; font-size:11.5px; padding:4px 10px; border:none; background:#fff;
+  color:var(--muted); cursor:pointer; border-right:1px solid var(--line2);
+}
+.seg button:last-child{border-right:none}
+.seg button[aria-pressed="true"]{background:var(--ink); color:#fff}
+.divider{width:1px; align-self:stretch; background:var(--line); margin:0 2px}
+
+/* ---------- Stats ---------- */
+.stat{border:1px solid var(--line); border-radius:9px; padding:13px 14px}
+.stat .k{font-size:10.5px; text-transform:uppercase; letter-spacing:.08em; color:var(--muted)}
+.stat .v{font-family:var(--mono); font-size:23px; font-weight:500; letter-spacing:-0.02em; margin-top:5px; color:var(--ink)}
+.stat .v small{font-size:12px; color:var(--muted); font-weight:400; margin-left:3px}
+.stat .s{font-size:11.5px; color:var(--muted); margin-top:3px}
+
+/* ---------- Tables ---------- */
+.tbl-scroll{overflow-x:auto}
+table.data{border-collapse:collapse; width:100%; font-size:12px; font-variant-numeric:tabular-nums}
+table.data th,table.data td{padding:6px 9px; text-align:right; border-bottom:1px solid var(--line2); white-space:nowrap}
+table.data th{font-weight:600; color:var(--muted); font-size:10.5px; text-transform:uppercase; letter-spacing:.06em; border-bottom:1px solid var(--line)}
+table.data td:first-child,table.data th:first-child{text-align:left; font-weight:500; color:var(--ink)}
+table.data td{font-family:var(--mono); color:var(--ink2)}
+table.data tbody tr:hover{background:var(--wash)}
+table.data tr.total td{border-top:1px solid var(--line); font-weight:600; color:var(--ink)}
+
+/* ---------- Legend / keys ---------- */
+.keylist{display:flex; flex-wrap:wrap; gap:5px 16px; padding:2px 2px 0; font-size:11.5px; color:var(--ink2)}
+.keyitem{display:inline-flex; align-items:center; gap:6px}
+.swatch{width:11px; height:11px; border-radius:2.5px; flex:0 0 auto; box-shadow:0 0 0 1px rgba(0,0,0,.08) inset}
+
+/* ---------- Data-availability pills ---------- */
+.pill{
+  display:inline-block; font-size:9.5px; text-transform:uppercase; letter-spacing:.08em;
+  padding:2px 7px; border-radius:4px; font-weight:600; white-space:nowrap;
+}
+.pill.ok{background:#eaf3dd; color:#3f6212}
+.pill.empty{background:#f1f2ef; color:#7b838b}
+.pill.bad{background:#fbe6e6; color:#9f2420}
+table.inv td:nth-child(2){text-align:left}
+table.inv td:last-child{text-align:left; font-family:var(--sans); color:var(--muted); white-space:normal; min-width:280px}
+
+/* ---------- Strategy list ---------- */
+
+/* ---------- Envelope: climate-zone matrix ---------- */
+
+/* ---------- Envelope: sliders graded by outcome ---------- */
+input[type=range].grad{
+  -webkit-appearance:none; appearance:none;
+  width:150px; height:14px; border-radius:7px; padding:0;
+  background:var(--line2); background-repeat:no-repeat;
+  box-shadow:0 0 0 1px rgba(0,0,0,.10) inset; cursor:pointer;
+}
+input[type=range].grad::-webkit-slider-runnable-track{background:transparent; height:14px; border:none}
+input[type=range].grad::-moz-range-track{background:transparent; height:14px; border:none}
+input[type=range].grad::-webkit-slider-thumb{
+  -webkit-appearance:none; width:14px; height:14px; border-radius:50%;
+  background:#fff; border:2px solid var(--ink); box-shadow:0 1px 3px rgba(0,0,0,.3);
+}
+input[type=range].grad::-moz-range-thumb{
+  width:14px; height:14px; border-radius:50%; box-sizing:border-box;
+  background:#fff; border:2px solid var(--ink); box-shadow:0 1px 3px rgba(0,0,0,.3);
+}
+.sug{
+  font-size:10px; text-transform:uppercase; letter-spacing:.07em; font-weight:600;
+  padding:2px 6px; border-radius:4px; background:#eaf3dd; color:#3f6212; white-space:nowrap;
+}
+.sug.off{background:#f1f2ef; color:#7b838b}
+.chk.dim span{color:var(--faint)}
+
+/* ---------- Envelope: abbreviations that open on hover ---------- */
+abbr.gl{
+  text-decoration:none; border-bottom:1px dotted var(--faint);
+  cursor:help; outline:none;
+}
+abbr.gl:hover,abbr.gl:focus{border-bottom-color:var(--ink); background:rgba(37,99,235,.06); border-radius:2px}
+abbr.gl:focus{box-shadow:0 0 0 2px #cfd8ea}
+#tip.gloss{max-width:360px; line-height:1.55}
+#tip.gloss b{display:block; margin-bottom:3px; color:#fff}
+
+/* ---------- Drop zone ---------- */
+#empty{padding:52px 24px 20px; max-width:1000px; margin:0 auto}
+.explain{display:grid; grid-template-columns:repeat(3,1fr); gap:22px; margin-top:44px}
+@media(max-width:820px){.explain{grid-template-columns:1fr}}
+.explain h4{font-size:12px; text-transform:uppercase; letter-spacing:.08em; color:var(--ink)}
+.explain p{font-size:12.5px; color:var(--muted); margin:7px 0 0; line-height:1.6}
+.note{font-size:11.5px; color:var(--faint); margin-top:26px; text-align:center}
+
+/* ---------- Tooltip ---------- */
+#tip{
+  position:fixed; z-index:80; pointer-events:none; display:none;
+  background:rgba(20,23,26,.95); color:#fff; font-size:11.5px; line-height:1.5;
+  padding:7px 9px; border-radius:6px; max-width:280px;
+  box-shadow:0 4px 18px rgba(0,0,0,.18); font-variant-numeric:tabular-nums;
+}
+#tip b{font-weight:600}
+#tip .tv{font-family:var(--mono)}
+#tip .tm{color:#a8b0b8}
+
+/* ---------- Misc ---------- */
+.hint{font-size:11.5px; color:var(--muted); margin-top:8px; line-height:1.55}
+.hint b{color:var(--ink2); font-weight:600}
+.warn{
+  border:1px solid #f0dfc0; background:#fdf8ee; border-radius:8px;
+  padding:10px 12px; font-size:12px; color:#7a5a1d; margin-bottom:16px;
+}
+.sechead{
+  display:flex; align-items:baseline; gap:10px; margin:30px 0 12px;
+  padding-bottom:7px; border-bottom:1px solid var(--line);
+}
+.sechead h3{font-size:14px}
+.sechead span{font-size:11.5px; color:var(--muted)}
+#toast{
+  position:fixed; left:50%; bottom:26px; transform:translateX(-50%) translateY(14px);
+  background:var(--ink); color:#fff; font-size:12.5px; padding:9px 15px; border-radius:7px;
+  opacity:0; pointer-events:none; transition:opacity .2s, transform .2s; z-index:90;
+}
+#toast.on{opacity:1; transform:translateX(-50%) translateY(0)}
+
+/* ---------- Weather-file map ---------- */
+/* ---------- Footer ---------- */
+footer{border-top:1px solid var(--line); margin-top:26px; background:var(--wash)}
+.foot{max-width:1680px; margin:0 auto; padding:30px 24px 40px}
+.foot-top{display:grid; grid-template-columns:1.5fr 1fr 1fr; gap:34px; align-items:start}
+@media(max-width:820px){.foot-top{grid-template-columns:1fr; gap:24px}}
+.foot h5{
+  font-size:10.5px; text-transform:uppercase; letter-spacing:.09em;
+  color:var(--muted); font-weight:600; margin:0 0 8px;
+}
+.foot p{margin:0 0 3px; font-size:12.5px; color:var(--ink2); line-height:1.6}
+.foot .appname{font-size:14px; font-weight:650; color:var(--ink); letter-spacing:-0.015em}
+.foot .ver{
+  display:inline-block; margin-left:8px; font-family:var(--mono); font-size:10.5px;
+  color:var(--muted); border:1px solid var(--line); border-radius:4px; padding:1px 6px; background:#fff;
+  vertical-align:2px;
+}
+.foot .tag{font-size:12.5px; color:var(--muted); margin-top:7px; max-width:46ch; line-height:1.6}
+.foot a{color:var(--c1); text-decoration:none; border-bottom:1px solid rgba(37,99,235,.3)}
+.foot a:hover{border-bottom-color:var(--c1)}
+.foot-refs{margin-top:30px; padding-top:20px; border-top:1px solid var(--line)}
+.foot-refs ul{margin:0; padding:0; list-style:none; columns:2; column-gap:34px}
+@media(max-width:900px){.foot-refs ul{columns:1}}
+.foot-refs li{
+  font-size:11.5px; color:var(--ink2); line-height:1.65; margin:0 0 9px;
+  padding-left:20px; text-indent:-20px; break-inside:avoid;
+}
+.foot-refs i{font-style:italic}
+.foot-legal{
+  margin-top:24px; padding-top:16px; border-top:1px solid var(--line);
+  font-size:11.5px; color:var(--faint); line-height:1.65; max-width:96ch;
+}
+/* ---------------------------------------------- CONSTRUCTION ADVISOR ---- */
+/* The site card that replaces the weather-file drop zone. Everything this
+   application knows about a place is entered here: the municipality, which
+   fixes the NUTS III, and the altitude, which corrects it. */
+.setup{
+  max-width:860px; margin:0 auto; padding:34px 30px 30px;
+  border:1px solid var(--line); border-radius:14px; background:var(--panel);
+  box-shadow:0 1px 2px rgba(16,24,40,.04), 0 8px 26px rgba(16,24,40,.05);
+}
+.setup h2{font-size:21px; letter-spacing:-.3px; margin:0 0 8px}
+.setup>p{font-size:13.5px; color:var(--ink2); line-height:1.7; margin:0 0 22px; max-width:70ch}
+.setup-grid{display:grid; grid-template-columns:1fr 1fr; gap:16px 22px; margin-bottom:20px}
+@media(max-width:700px){.setup-grid{grid-template-columns:1fr}}
+.fld{display:flex; flex-direction:column; gap:6px}
+.fld>label{font-size:11px; font-weight:600; letter-spacing:.06em; text-transform:uppercase; color:var(--muted)}
+.fld input,.fld select{
+  font:inherit; font-size:13.5px; padding:9px 11px; border:1px solid var(--line2);
+  border-radius:8px; background:var(--bg); color:var(--ink); width:100%;
+}
+.fld input:focus,.fld select:focus{outline:2px solid var(--c1); outline-offset:-1px; border-color:var(--c1)}
+.fld .sub{font-size:11.5px; color:var(--faint); line-height:1.5}
+/* Twelve months of two measured quantities, entered by hand. The grid is a
+   month per row on a narrow screen and two blocks of six on a wide one, so
+   that a year is legible without scrolling past the button that uses it. */
+.normals{border-top:1px solid var(--line); margin:22px 0 20px; padding-top:18px}
+.normals h3{font-size:12px; text-transform:uppercase; letter-spacing:.08em; color:var(--ink); margin:0 0 6px}
+.normals>.sub{font-size:12px; color:var(--muted); line-height:1.6; margin:0 0 14px; max-width:70ch}
+#normGrid{display:grid; grid-template-columns:repeat(2,minmax(260px,1fr)); gap:2px 26px}
+@media(max-width:700px){#normGrid{grid-template-columns:1fr}}
+.nrow{display:grid; grid-template-columns:3.2em 1fr 1fr; gap:8px; align-items:center; padding:2px 0}
+.nrow.head{padding-bottom:4px}
+.nrow.head span{font-size:10.5px; font-weight:600; letter-spacing:.06em; text-transform:uppercase; color:var(--faint)}
+.nrow>b{font-family:var(--mono); font-size:11.5px; font-weight:600; color:var(--muted)}
+.nrow input{
+  font:inherit; font-family:var(--mono); font-size:12.5px; padding:5px 8px; width:100%;
+  border:1px solid var(--line2); border-radius:6px; background:var(--bg); color:var(--ink);
+}
+.nrow input:focus{outline:2px solid var(--c1); outline-offset:-1px; border-color:var(--c1)}
+.nrow input.miss{border-color:#D97706; background:rgba(217,119,6,.05)}
+/* EPW import: a dashed box that fills the twelve pairs from a weather file.
+   Everything is parsed locally with FileReader — the file never leaves the
+   browser, like the rest of this application. */
+.epwbox{display:flex; gap:14px; align-items:center; justify-content:space-between;
+  border:1px dashed var(--line); border-radius:10px; background:var(--wash);
+  padding:12px 14px; margin:0 0 14px}
+.epwbox b{font-size:12.5px}
+.epwbox .sub{display:block; font-size:11.5px; color:var(--muted); margin-top:2px; max-width:78ch; line-height:1.55}
+.epwbox .epwstatus{display:block; color:var(--ink2); font-family:var(--mono); font-size:11px; margin-top:6px}
+.epwbox.dragover{border-color:var(--c1); background:#eef4ff}
+.epwbtns{flex:0 0 auto}
+.setup .cta{display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-top:6px}
+/* The classification the site resolves to, shown live as it is typed. */
+.zonechip{
+  display:inline-flex; align-items:baseline; gap:8px; padding:7px 13px; border-radius:999px;
+  background:var(--wash); border:1px solid var(--line); font-family:var(--mono); font-size:13px; font-weight:600;
+}
+.zonechip small{font-family:var(--sans); font-weight:500; font-size:11.5px; color:var(--muted)}
+/* The header chip carries the site instead of a file. */
+.sitechip .loc{font-weight:600}
+.sitechip .zn{
+  font-family:var(--mono); font-size:11px; font-weight:700; color:var(--c1);
+  background:rgba(37,99,235,.09); border-radius:5px; padding:2px 6px; margin-left:2px;
+}
+/* A layer of construction, in the assembly editors. */
+.layers{display:flex; flex-direction:column; gap:6px; margin:10px 0 4px}
+.layer{
+  display:grid; grid-template-columns:1fr 92px 92px 84px 30px; gap:8px; align-items:center;
+  padding:6px 8px; border:1px solid var(--line); border-radius:8px; background:var(--panel);
+}
+@media(max-width:760px){.layer{grid-template-columns:1fr 1fr; gap:6px}}
+.layer select,.layer input{font:inherit; font-size:12px; padding:5px 7px; border:1px solid var(--line2); border-radius:6px; background:var(--bg); color:var(--ink); width:100%}
+.layer .r{font-family:var(--mono); font-size:11.5px; color:var(--muted); text-align:right}
+.layer .x{border:none; background:none; color:var(--faint); cursor:pointer; font-size:15px; line-height:1; padding:2px}
+.layer .x:hover{color:var(--c2)}
+.layer.air{background:var(--wash)}
+/* The running total of an assembly. */
+.uresult{
+  display:flex; flex-wrap:wrap; gap:20px; align-items:center; padding:13px 16px; margin-top:12px;
+  border-radius:10px; border:1px solid var(--line); background:var(--wash);
+}
+.uresult .big{font-family:var(--mono); font-size:23px; font-weight:700; letter-spacing:-.5px}
+.uresult .lbl{font-size:11px; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); font-weight:600}
+/* The description of a climate zone, on the Climate page. */
+.zonebox{border:1px solid var(--line); border-radius:10px; padding:16px 18px; background:var(--wash); margin-bottom:18px}
+.zonebox .zt{margin:0 0 14px; font-size:13.5px; color:var(--ink); line-height:1.65; max-width:78ch}
+.zonebox h5{margin:0 0 4px; font-size:10.5px; text-transform:uppercase; letter-spacing:.08em; color:var(--muted)}
+.zonebox p{margin:0; font-size:12.5px; color:var(--ink2); line-height:1.6}
+/* A limit stated beside the value being tested against it. */
+.limitrow{display:flex; flex-wrap:wrap; gap:8px 18px; align-items:baseline; margin:10px 0 2px; font-size:12.5px; color:var(--ink2)}
+.limitrow b{font-family:var(--mono); font-size:15px; color:var(--ink)}
+</style>
+</head>
+
+<body>
+
+<header>
+  <div class="hbar">
+    <div class="brand"><b>Architecture Advisor</b><span data-t="brandsub">Bioclimatic Design</span></div>
+    <div class="filechip sitechip" id="sitechip">
+      <span class="loc" id="chipLoc"></span>
+      <span class="meta" id="chipMeta"></span>
+      <button class="btn" id="btnReload" data-t="btnReload">Change the site</button>
+    </div>
+    <div class="langsel" id="langsel" role="group" aria-label="Language / Idioma">
+      <button type="button" data-lang="en" aria-pressed="true" title="English">EN</button>
+      <button type="button" data-lang="pt" aria-pressed="false" title="Português">PT</button>
+    </div>
+  </div>
+  <nav class="tabs" id="tabsNav" hidden>
+    <div class="tabs-inner" role="tablist" id="tablist"></div>
+  </nav>
+</header>
+
+<main>
+  <div id="empty">
+    <div class="setup" id="setup">
+      <h2 data-t="setupTitle">Where are you building, and in what climate?</h2>
+      <p data-t="setupBody">This application asks nothing of a regulation. It works from the position of the
+        building and from the climate that position sits in, classified by <b>Köppen–Geiger</b>, because that
+        is the classification the design literature is written against. Name the place and give its
+        coordinates, then enter the monthly normals of the nearest station. What follows is orientation,
+        compactness, roof, glazing, shading, the organisation of the plan and the movement of air — the
+        decisions taken before any limit can be applied to them.</p>
+
+      <div class="setup-grid">
+        <div class="fld">
+          <label for="selConc" data-t="fldConc">Place</label>
+          <input list="concList" id="selConc" placeholder="Lisboa" autocomplete="off" spellcheck="false">
+          <datalist id="concList"></datalist>
+          <span class="sub" id="concSub" data-t="fldConcSub">Type a Portuguese municipality, or any name you want the exports to carry.</span>
+        </div>
+        <div class="fld">
+          <label for="selNuts" data-t="fldNuts">Region</label>
+          <select id="selNuts"></select>
+          <span class="sub" data-t="fldNutsSub">Used only to seed the latitude and to label the site. Nothing in this application is indexed on it.</span>
+        </div>
+        <div class="fld">
+          <label for="inpLat" data-t="fldLat">Latitude</label>
+          <input type="number" id="inpLat" min="-90" max="90" step="0.01" value="38.7">
+          <span class="sub" id="latSub" data-t="fldLatSub">Degrees, north positive. Seeded from the region; replace it with the building's own.</span>
+        </div>
+        <div class="fld">
+          <label for="inpLon" data-t="fldLon">Longitude</label>
+          <input type="number" id="inpLon" min="-180" max="180" step="0.01" value="-9.14">
+          <span class="sub" data-t="fldLonSub">Degrees, east positive. Read it off a map at the site itself.</span>
+        </div>
+        <div class="fld">
+          <label for="inpAlt" data-t="fldAlt">Altitude of the site</label>
+          <input type="number" id="inpAlt" min="0" max="4000" step="5" value="100">
+          <span class="sub" data-t="fldAltSub">Metres above sea level, at the building, not at the town hall.</span>
+        </div>
+        <div class="fld">
+          <label for="selUse" data-t="fldUse">Building use</label>
+          <select id="selUse">
+            <option value="hab" data-t="useHab">Dwelling</option>
+            <option value="cs" data-t="useCS">Commerce and services</option>
+          </select>
+          <span class="sub" data-t="fldUseSub">Decides how the plan is read: a dwelling is zoned by hour of occupation, a workplace by internal gain.</span>
+        </div>
+        <div class="fld">
+          <label data-t="fldOp">Type of intervention</label>
+          <div class="seg" id="segOp" role="group" aria-label="Type of intervention">
+            <button type="button" data-op="new" aria-pressed="true" data-t="opNew">New construction</button>
+            <button type="button" data-op="renovation" aria-pressed="false" data-t="opRenovation">Major renovation</button>
+          </div>
+          <span class="sub" data-t="fldOpSub">A new building can still choose its orientation and its form; a renovation has to take both as found.</span>
+        </div>
+      </div>
+
+      <div class="normals" id="normalsBlock">
+        <h3 data-t="normTitle">Monthly normals</h3>
+        <p class="sub" data-t="normBody">Köppen–Geiger is computed, not looked up, so it needs the twelve monthly
+          mean temperatures and the twelve monthly precipitation totals. This application ships none: normals are
+          measured data and it has no authority to invent them. Take them from the IPMA <i>normais climatológicas</i>
+          for the nearest station, from another national service, or from a gridded product such as WorldClim, and
+          name the source so the export carries it. Pick an IPMA station below and press
+          Fill boxes — the twelve pairs and the station coordinates are entered for you.
+          If you have an EnergyPlus weather file (.epw) — for example
+          Lisboa, Porto, Faro, Funchal or Ponta Delgada from climate.onebuilding.org — drop it below and the
+          twelve pairs, the coordinates and the altitude are filled in automatically.</p>
+        <div class="epwbox" id="epwBox">
+          <div>
+            <b data-t="epwTitle">Fill from an EPW file</b>
+            <span class="sub" data-t="epwSub">Drop a .epw here or choose one. Monthly mean temperature and monthly precipitation are aggregated from its 8,760 hourly records, and latitude, longitude and station elevation are read from its LOCATION line. The file is parsed on this computer — nothing is uploaded. Check the altitude afterwards: the station is rarely at the building.</span>
+            <span class="epwstatus" id="epwStatus"></span>
+          </div>
+          <div class="epwbtns">
+            <label class="btn solid" for="epwFile" data-t="epwChoose" style="cursor:pointer">Choose .epw</label>
+            <input type="file" id="epwFile" accept=".epw,.txt,.csv" hidden>
+          </div>
+        </div>
+        <div id="normGrid"></div>
+        <div class="fld" style="margin-top:12px;max-width:520px">
+          <label for="inpSource" data-t="fldSource">Where the normals come from</label>
+          <div style="display:flex;gap:8px">
+            <input type="text" id="inpSource" list="srcList" placeholder="IPMA, Lisboa/Gago Coutinho, 1981–2010" autocomplete="off" style="flex:1">
+            <button type="button" class="btn" id="btnSrcFill" data-t="srcFill">Fill boxes</button>
+          </div>
+          <datalist id="srcList">
+            <option value="IPMA, Lisboa/Gago Coutinho, 1981–2010"></option>
+            <option value="IPMA, Lisboa/Geofísico, 1981–2010"></option>
+            <option value="IPMA, Porto/Pedras Rubras, 1981–2010"></option>
+            <option value="IPMA, Porto/Serra do Pilar, 1981–2010"></option>
+            <option value="IPMA, Coimbra, 1981–2010"></option>
+            <option value="IPMA, Aveiro, 1981–2010"></option>
+            <option value="IPMA, Viana do Castelo, 1981–2010"></option>
+            <option value="IPMA, Vila Real, 1981–2010"></option>
+            <option value="IPMA, Bragança, 1981–2010"></option>
+            <option value="IPMA, Chaves, 1981–2010"></option>
+            <option value="IPMA, Montalegre, 1981–2010"></option>
+            <option value="IPMA, Mirandela, 1981–2010"></option>
+            <option value="IPMA, Viseu, 1981–2010"></option>
+            <option value="IPMA, Guarda, 1981–2010"></option>
+            <option value="IPMA, Penhas Douradas, 1981–2010"></option>
+            <option value="IPMA, Castelo Branco, 1981–2010"></option>
+            <option value="IPMA, Portalegre, 1981–2010"></option>
+            <option value="IPMA, Évora, 1981–2010"></option>
+            <option value="IPMA, Beja, 1981–2010"></option>
+            <option value="IPMA, Setúbal, 1981–2010"></option>
+            <option value="IPMA, Sines, 1981–2010"></option>
+            <option value="IPMA, Sagres, 1981–2010"></option>
+            <option value="IPMA, Faro, 1981–2010"></option>
+            <option value="IPMA, Cabo Carvoeiro (Peniche), 1981–2010"></option>
+            <option value="IPMA, Funchal, 1981–2010"></option>
+            <option value="IPMA, Porto Santo, 1981–2010"></option>
+            <option value="IPMA, Ponta Delgada, 1981–2010"></option>
+            <option value="IPMA, Angra do Heroísmo, 1981–2010"></option>
+            <option value="IPMA, Horta, 1981–2010"></option>
+            <option value="IPMA, Santa Cruz das Flores, 1981–2010"></option>
+            <option value="WorldClim v2.1, 1970–2000"></option>
+          </datalist>
+          <span class="sub" data-t="fldSourceSub">Written into every CSV and PNG this application exports. Pick an IPMA station and press Fill boxes — fichas at ipma.pt/oclima/normais.clima — or name your EPW file.</span>
+          <span class="epwstatus" id="srcStatus"></span>
+        </div>
+      </div>
+
+      <div class="cta">
+        <span class="zonechip" id="zonePreview">—</span>
+        <button class="btn solid" id="btnGo" data-t="btnGo">Work through the design</button>
+      </div>
+    </div>
+
+    <div class="explain">
+      <div>
+        <h4 data-t="ex1h">Grounded in the design literature</h4>
+        <p data-t="ex1p">Olgyay, Lechner, DeKay and Brown, Hyde, Ching and Shapiro, Brophy and Lewis. Every
+           guideline names the book it comes from, and where the books disagree the application says so
+           rather than averaging them into a single number.</p>
+      </div>
+      <div>
+        <h4 data-t="ex2h">The decisions that come before the limits</h4>
+        <p data-t="ex2p">Which way the building faces, how compact it is, what its roof does, how much glass
+           each façade carries, where the rooms sit against the sun, and how air moves through the plan.
+           None of these is settled by a maximum thermal transmittance.</p>
+      </div>
+      <div>
+        <h4 data-t="ex3h">A companion, not a replacement</h4>
+        <p data-t="ex3p">Construction Advisor answers to the SCE and reports what an envelope may not exceed.
+           This one carries none of that regulation. Use them in that order: shape the building here, then
+           take it there to be checked.</p>
+      </div>
+    </div>
+    <p class="note" data-t="privacyNote">Nothing is uploaded. The whole application runs on this computer.</p>
+  </div>
+
+  <div id="app" hidden></div>
+</main>
+
+<footer>
+  <div class="foot">
+    <div class="foot-top">
+      <div>
+        <span class="appname">Architecture Advisor</span><span class="ver" id="footVer">v1.0.0</span>
+        <p class="tag" data-t="footTag">A bioclimatic design advisor for architecture students, written for the
+           decisions that are made before a regulation has anything to say about them.</p>
+      </div>
+      <div>
+        <h5 data-t="footAuthor">Author</h5>
+        <p>Nuno Dinis Cortiços</p>
+        <h5 style="margin-top:14px" data-t="footInst">Institution</h5>
+        <p>Lisbon School of Architecture,<br>Universidade de Lisboa</p>
+        <h5 style="margin-top:14px" data-t="footDev">Developed with</h5>
+        <p>Claude Opus 5 (Anthropic)</p>
+      </div>
+      <div>
+        <h5 data-t="footClass">Classification</h5>
+        <p data-t="footClassBody">Köppen–Geiger, in the formalisation of Peel, Finlayson and McMahon (2007),
+           computed from the normals you enter.</p>
+        <h5 style="margin-top:14px" data-t="footPriv">Privacy</h5>
+        <p style="color:var(--muted)" data-t="footPrivBody">No site data leaves the browser. Nothing is uploaded.</p>
+      </div>
+    </div>
+
+    <div class="foot-refs">
+      <h5 data-t="footMethods">Methods and sources</h5>
+      <ul id="refList"></ul>
+    </div>
+
+    <p class="foot-legal" data-t="footLegal">
+      © 2026 Nuno Dinis Cortiços. This is a teaching instrument. It reports what the design literature
+      recommends and names the source of every recommendation, but a guideline is not a calculation and this
+      application is not an energy model. Nothing it reports is a compliance statement, and none of it
+      substitutes for the checks required under the SCE.
+    </p>
+  </div>
+</footer>
+
+<div id="tip"></div>
+<div id="toast"></div>
+
+<script>
+
+"use strict";
+
+/* ============================================================================
+   ARCHITECTURE ADVISOR — a single-file bioclimatic design advisor for
+   architecture students
+   ----------------------------------------------------------------------------
+   The companion to Construction Advisor, and its opposite in method.
+   Construction Advisor answers to a regulation: it takes a NUTS III region and
+   an altitude and reports the limits the SCE puts on an envelope. This
+   application carries none of that. It answers to the design literature
+   instead — Olgyay, Lechner, DeKay and Brown, Hyde, Ching and Shapiro, Brophy
+   and Lewis and the rest of the shared bibliography — and it works on the
+   decisions an architect makes before any of those limits can be applied:
+   which way the building faces, how compact it is, what shape its roof takes,
+   how much glass each façade carries, how the plan is organised around the
+   sun, and how the air moves through it.
+
+   A site here is a coordinate and a climate, not a table row. The climate is
+   classified by Köppen–Geiger, computed from monthly normals the student
+   supplies, because that is the classification the design literature is
+   written against.
+
+   Sections:  0 utilities · 1 solar geometry · 2 chart engine · 3 geography ·
+              4 climate and design data · 5 the site engine · 6 page furniture ·
+              7 pages · 8 boot · 9 European Portuguese
+   ========================================================================== */
+
+/* ------------------------------------------------------------ 0. IDENTITY -- */
+const APP = {
+  name:        'Architecture Advisor',
+  version:     '1.4.1',
+  author:      'Nuno Dinis Cortiços',
+  institution: 'Lisbon School of Architecture, Universidade de Lisboa',
+  builtWith:   'Claude Opus 5 (Anthropic)',
+  lawSource:   null
+};
+/* ------------------------------------------------------------ 0a. LANGUAGE --
+   Translation is applied at the few functions through which every visible
+   string already passes — el(), label(), the control builders and the panel
+   factory — rather than at each of the several hundred call sites. A string
+   with no entry in the dictionary falls through unchanged, so an untranslated
+   phrase appears in English instead of breaking the page. */
+let LANG = 'en';
+const PT = {};                       // European Portuguese, filled in at the foot of this script
+const STATIC_PT = {};                // static markup blocks, keyed by data-t
+const I18N_MISSING = new Set();      // anything asked for but not translated
+/* Numbers are abstracted out before lookup, so one entry covers every value a
+   caption can take: "Range 4.3 to 21.7 °C" is keyed as "Range {} to {} °C". */
+const NUM_RE = /-?\d+(?:[ ., ]\d+)*/g;
+function t(s) {
+  if (LANG === 'en' || typeof s !== 'string' || !s) return s;
+  const direct = PT[s];
+  if (direct !== undefined) return direct;
+  const nums = [];
+  const key = s.replace(NUM_RE, m => { nums.push(m); return '{}'; });
+  if (key !== s) {
+    const tpl = PT[key];
+    if (tpl !== undefined) { let i = 0; return tpl.replace(/\{\}/g, () => nums[i++]); }
+  }
+  if (/[A-Za-z]{3}/.test(s)) I18N_MISSING.add(key);
+  return s;
+}
+/** Decimal comma and thousands separator for Portuguese. */
+function locNum(str) { return LANG === 'pt' ? String(str).replace(/\./g, ',') : str; }
+const localeTag = () => LANG === 'pt' ? 'pt-PT' : 'en-GB';
+function nInt(v) { return Number(v).toLocaleString(localeTag()); }
+
+/**
+ * Data tables carry their English text in a shadow property the first time this
+ * runs, so switching language repeatedly always translates from the original.
+ */
+function applyLanguage() {
+  MONTHS    = LANG === 'pt' ? MONTHS_PT    : MONTHS_EN;
+  MON3      = LANG === 'pt' ? MON3_PT      : MON3_EN;
+  COMPASS16 = LANG === 'pt' ? COMPASS16_PT : COMPASS16_EN;
+  COMPASS8  = LANG === 'pt' ? COMPASS8_PT  : COMPASS8_EN;
+  document.documentElement.lang = LANG === 'pt' ? 'pt-PT' : 'en';
+}
+/* The data tables are not relabelled in place. Every name they carry reaches
+   the page through t() at its call site — the option builders translate their
+   labels, and the table builders wrap each name — so a single dictionary of
+   English keys covers them, and switching language repeatedly cannot compound
+   a translation onto a translation. */
+
+/* ---------------------------------------------------------------- 0. UTIL -- */
+const $  = (s, r) => (r || document).querySelector(s);
+const $$ = (s, r) => Array.from((r || document).querySelectorAll(s));
+const el = (tag, attrs, kids) => {
+  const n = document.createElement(tag);
+  if (attrs) for (const k in attrs) {
+    if (k === 'class') n.className = attrs[k];
+    else if (k === 'html') n.innerHTML = t(attrs[k]);
+    else if (k === 'text') n.textContent = t(attrs[k]);
+    else if (k.startsWith('on')) n.addEventListener(k.slice(2), attrs[k]);
+    else if (k === 'title') n.setAttribute(k, t(attrs[k]));
+    else if (attrs[k] !== null && attrs[k] !== undefined) n.setAttribute(k, attrs[k]);
+  }
+  if (kids) (Array.isArray(kids) ? kids : [kids]).forEach(c => c && n.appendChild(c));
+  return n;
+};
+const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
+const lerp  = (a, b, t) => a + (b - a) * t;
+const RAD = Math.PI / 180, DEG = 180 / Math.PI;
+
+/** Format a number with a fixed number of decimals, using an en-dash for nothing. */
+function fmt(v, d) {
+  if (v === null || v === undefined || !isFinite(v)) return '–';
+  return locNum(v.toFixed(d === undefined ? 1 : d));
+}
+/**
+ * Compact axis label. The number of decimals is the number the tick step itself
+ * needs to be written exactly — so a step of 0.25 prints 0.25, not 0.3.
+ */
+function decimalsFor(step) {
+  const s = Math.abs(step);
+  if (!isFinite(s) || s === 0) return 0;
+  for (let d = 0; d <= 6; d++) {
+    const scaled = s * Math.pow(10, d);
+    if (Math.abs(scaled - Math.round(scaled)) < 1e-9) return d;
+  }
+  return 6;
+}
+function axfmt(v, step) {
+  if (!isFinite(v)) return '';
+  const a = Math.abs(v);
+  if (a >= 10000) return locNum((v / 1000).toFixed(a % 1000 ? 1 : 0)) + 'k';
+  return locNum(v.toFixed(step === undefined ? 0 : decimalsFor(step)));
+}
+function toast(msg) {
+  const n = $('#toast'); n.textContent = t(msg); n.classList.add('on');
+  clearTimeout(toast._t); toast._t = setTimeout(() => n.classList.remove('on'), 2200);
+}
+function download(blob, name) {
+  const url = URL.createObjectURL(blob);
+  const a = el('a', { href: url, download: name });
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1500);
+}
+
+const MONTHS_EN = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+const MONTHS_PT = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
+const MON3_EN = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+const MON3_PT = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
+// Portuguese uses O for Oeste; every other point keeps its letter
+const COMPASS16_EN = ['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW'];
+const COMPASS16_PT = ['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSO','SO','OSO','O','ONO','NO','NNO'];
+const COMPASS8_EN = ['N','NE','E','SE','S','SW','W','NW'];
+const COMPASS8_PT = ['N','NE','E','SE','S','SO','O','NO'];
+let MONTHS = MONTHS_EN, MON3 = MON3_EN, COMPASS16 = COMPASS16_EN, COMPASS8 = COMPASS8_EN;
+const MDAYS   = [31,28,31,30,31,30,31,31,30,31,30,31];
+const MDAYS_L = [31,29,31,30,31,30,31,31,30,31,30,31];
+
+/* -------------------------------------------------- 3. SOLAR GEOMETRY -- */
+/**
+ * Solar position after the NOAA solar calculator formulation, simplified to the
+ * Spencer Fourier series for declination and the equation of time. Accurate to
+ * roughly 0.1° — far below the resolution of an hourly weather file.
+ * `hourLST` is decimal local standard time (0–24); tz is the standard meridian
+ * offset in hours; lon is positive east.
+ * Returns { alt, azi } in degrees, azimuth measured clockwise from north.
+ */
+function sunPos(doy, hourLST, lat, lon, tz) {
+  const g = 2 * Math.PI / 365 * (doy - 1 + (hourLST - 12) / 24);
+  const eqt = 229.18 * (0.000075 + 0.001868 * Math.cos(g) - 0.032077 * Math.sin(g)
+            - 0.014615 * Math.cos(2 * g) - 0.040849 * Math.sin(2 * g));
+  const dec = 0.006918 - 0.399912 * Math.cos(g) + 0.070257 * Math.sin(g)
+            - 0.006758 * Math.cos(2 * g) + 0.000907 * Math.sin(2 * g)
+            - 0.002697 * Math.cos(3 * g) + 0.00148 * Math.sin(3 * g);      // radians
+  const tst = hourLST * 60 + eqt + 4 * lon - 60 * tz;                       // true solar time, minutes
+  const ha  = (tst / 4 - 180) * RAD;                                        // hour angle
+  const la  = lat * RAD;
+  const cosZ = Math.sin(la) * Math.sin(dec) + Math.cos(la) * Math.cos(dec) * Math.cos(ha);
+  const z    = Math.acos(clamp(cosZ, -1, 1));
+  const alt  = 90 - z * DEG;
+  let azi;
+  const sz = Math.sin(z);
+  if (Math.abs(sz) < 1e-7) azi = 180;
+  else {
+    let ca = (Math.sin(dec) - Math.sin(la) * cosZ) / (Math.cos(la) * sz);
+    azi = Math.acos(clamp(ca, -1, 1)) * DEG;
+    if (ha > 0) azi = 360 - azi;
+  }
+  return { alt, azi, dec: dec * DEG };
+}
+/** Sunrise and sunset in local standard hours for a given day, or null for polar day/night. */
+function sunriseSunset(doy, lat, lon, tz) {
+  const g = 2 * Math.PI / 365 * (doy - 1);
+  const dec = 0.006918 - 0.399912 * Math.cos(g) + 0.070257 * Math.sin(g)
+            - 0.006758 * Math.cos(2 * g) + 0.000907 * Math.sin(2 * g)
+            - 0.002697 * Math.cos(3 * g) + 0.00148 * Math.sin(3 * g);
+  const eqt = 229.18 * (0.000075 + 0.001868 * Math.cos(g) - 0.032077 * Math.sin(g)
+            - 0.014615 * Math.cos(2 * g) - 0.040849 * Math.sin(2 * g));
+  const la = lat * RAD;
+  const cosH = (Math.cos(90.833 * RAD) - Math.sin(la) * Math.sin(dec)) / (Math.cos(la) * Math.cos(dec));
+  if (cosH > 1 || cosH < -1) return null;
+  const H = Math.acos(cosH) * DEG;              // degrees
+  const noon = 12 - (4 * lon - 60 * tz + eqt) / 60;
+  return { rise: noon - H / 15, set: noon + H / 15, noon };
+}
+
+/* ------------------------------------------------------- 5. CHART ENGINE -- */
+const CH = { ink:'#14171a', ink2:'#3d444b', muted:'#7b838b', faint:'#a8afb5',
+             line:'#e3e6e2', line2:'#f0f2ee', wash:'#fafbf9', white:'#ffffff' };
+const CAT = ['#2563EB','#DC2626','#0D9488','#D97706','#7C3AED','#65A30D','#DB2777','#0891B2'];
+const SANS = 'ui-sans-serif,-apple-system,"Segoe UI",Inter,Roboto,"Helvetica Neue",Arial,sans-serif';
+const MONO = 'ui-monospace,"SF Mono","Cascadia Mono",Menlo,Consolas,monospace';
+const F  = (s, w) => (w ? w + ' ' : '') + s + 'px ' + SANS;
+const FM = (s, w) => (w ? w + ' ' : '') + s + 'px ' + MONO;
+
+/* --- colour ramps ---------------------------------------------------------
+   Sequential ramps run light→dark so that magnitude reads as ink density on a
+   white page. The thermal ramp is diverging with a neutral grey midpoint. */
+function makeRamp(stops) {
+  const S = stops.map(s => {
+    const h = s[1].replace('#', '');
+    return [s[0], parseInt(h.slice(0,2),16), parseInt(h.slice(2,4),16), parseInt(h.slice(4,6),16)];
+  });
+  const fn = t => {
+    t = clamp(t, 0, 1);
+    let i = 0; while (i < S.length - 2 && t > S[i+1][0]) i++;
+    const a = S[i], b = S[i+1];
+    const u = b[0] === a[0] ? 0 : (t - a[0]) / (b[0] - a[0]);
+    return [Math.round(lerp(a[1],b[1],u)), Math.round(lerp(a[2],b[2],u)), Math.round(lerp(a[3],b[3],u))];
+  };
+  fn.css = t => { const c = fn(t); return 'rgb(' + c[0] + ',' + c[1] + ',' + c[2] + ')'; };
+  return fn;
+}
+const RAMPS = {
+  thermal: makeRamp([[0,'#08306B'],[0.12,'#1B5A9E'],[0.26,'#4A90C4'],[0.40,'#A9C9DE'],[0.50,'#EDEDEA'],
+                     [0.60,'#F3D9B9'],[0.74,'#E8964E'],[0.88,'#C4442A'],[1,'#6E0B14']]),
+  solar:   makeRamp([[0,'#FFFCF2'],[0.15,'#FDE9B8'],[0.35,'#F7C463'],[0.55,'#E08A1E'],[0.75,'#A85406'],[0.9,'#6A2E04'],[1,'#331503']]),
+  aqua:    makeRamp([[0,'#F6FCFB'],[0.15,'#D2EEE9'],[0.35,'#94D6CB'],[0.55,'#4FAEA1'],[0.75,'#1E7C73'],[0.9,'#0C4B47'],[1,'#04211F']]),
+  wind:    makeRamp([[0,'#F6F7FD'],[0.15,'#DADDF3'],[0.35,'#A9AFE0'],[0.55,'#7178C4'],[0.75,'#43489A'],[0.9,'#23255F'],[1,'#0E0F2C']]),
+  slate:   makeRamp([[0,'#FBFBFA'],[0.18,'#E0E1DD'],[0.38,'#B9BBB5'],[0.58,'#8B8E88'],[0.78,'#5A5D58'],[1,'#23251F']]),
+  ember:   makeRamp([[0,'#FCF7F5'],[0.2,'#F0D8D0'],[0.4,'#DDA694'],[0.6,'#C06A54'],[0.8,'#8E3222'],[1,'#4A0F06']]),
+  cyclic:  makeRamp([[0,'#3B5FC0'],[0.25,'#2E8B72'],[0.5,'#C99A2E'],[0.75,'#C0504A'],[1,'#3B5FC0']]),
+  viridis: makeRamp([[0,'#440154'],[0.25,'#3B528B'],[0.5,'#21918C'],[0.75,'#5EC962'],[1,'#FDE725']]),
+  mono:    makeRamp([[0,'#FFFFFF'],[1,'#101010']])
+};
+const RAMP_NAMES = { auto:'Automatic', thermal:'Thermal (diverging)', solar:'Solar', aqua:'Aqua',
+                     wind:'Indigo', slate:'Slate', ember:'Ember', viridis:'Viridis', mono:'Greyscale' };
+
+/* --- scales & ticks ------------------------------------------------------- */
+function plotRect(x, y, w, h, xmin, xmax, ymin, ymax) {
+  const dx = (xmax - xmin) || 1, dy = (ymax - ymin) || 1;
+  return { x, y, w, h, xmin, xmax, ymin, ymax,
+    sx: v => x + (v - xmin) / dx * w,
+    sy: v => y + h - (v - ymin) / dy * h,
+    ix: p => xmin + (p - x) / w * dx,
+    iy: p => ymin + (y + h - p) / h * dy };
+}
+function niceTicks(min, max, target) {
+  if (!isFinite(min) || !isFinite(max)) return { ticks:[0], step:1 };
+  if (min === max) return { ticks:[min], step:1 };
+  const raw = (max - min) / Math.max(1, target || 6);
+  const mag = Math.pow(10, Math.floor(Math.log10(raw)));
+  const nrm = raw / mag;
+  const step = mag * (nrm <= 1 ? 1 : nrm <= 2 ? 2 : nrm <= 2.5 ? 2.5 : nrm <= 5 ? 5 : 10);
+  const ticks = [];
+  for (let v = Math.ceil(min / step) * step; v <= max + step * 1e-6; v += step)
+    ticks.push(Math.abs(v) < step * 1e-9 ? 0 : v);
+  return { ticks, step };
+}
+function niceDomain(min, max, target, padFrac) {
+  if (!isFinite(min) || !isFinite(max)) return [0, 1];
+  if (min === max) { min -= 0.5; max += 0.5; }
+  const pad = (max - min) * (padFrac === undefined ? 0.04 : padFrac);
+  min -= pad; max += pad;
+  const tk = niceTicks(min, max, target || 6);
+  return [Math.floor(min / tk.step) * tk.step, Math.ceil(max / tk.step) * tk.step];
+}
+
+/* --- primitives ----------------------------------------------------------- */
+function stroke(ctx, color, width, dash) {
+  ctx.strokeStyle = color; ctx.lineWidth = width === undefined ? 1 : width;
+  ctx.setLineDash(dash || []);
+}
+function seg(ctx, x1, y1, x2, y2) { ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke(); }
+function label(ctx, text, x, y, color, font, align, base) {
+  ctx.fillStyle = color; ctx.font = font;
+  ctx.textAlign = align || 'left'; ctx.textBaseline = base || 'alphabetic';
+  ctx.fillText(t(text), x, y);
+}
+/** Crisp hairline: canvas strokes straddle the coordinate, so offset by ½ px. */
+const px = v => Math.round(v) + 0.5;
+
+/**
+ * Draw the axis furniture of a cartesian plot: recessive grid, tick labels,
+ * axis titles. The frame itself is deliberately absent — only a baseline and a
+ * left rule — to keep ink on the data.
+ */
+function drawAxes(ctx, P, o) {
+  o = o || {};
+  const xt = o.xTicks || niceTicks(P.xmin, P.xmax, o.xCount || 8).ticks;
+  const yt = o.yTicks || niceTicks(P.ymin, P.ymax, o.yCount || 5).ticks;
+  const xf = o.xFmt || (v => axfmt(v, (xt[1] - xt[0])));
+  const yf = o.yFmt || (v => axfmt(v, (yt[1] - yt[0])));
+
+  if (o.grid !== false) {
+    stroke(ctx, CH.line2, 1);
+    for (const v of yt) { const y = px(P.sy(v)); seg(ctx, P.x, y, P.x + P.w, y); }
+    if (o.gridX) for (const v of xt) { const x = px(P.sx(v)); seg(ctx, x, P.y, x, P.y + P.h); }
+  }
+  stroke(ctx, CH.line, 1);
+  seg(ctx, P.x, px(P.y + P.h), P.x + P.w, px(P.y + P.h));
+
+  if (o.yLabels !== false)
+    for (const v of yt) label(ctx, yf(v), P.x - 7, P.sy(v), CH.muted, FM(10), 'right', 'middle');
+  if (o.xLabels !== false)
+    for (const v of xt) label(ctx, xf(v), P.sx(v), P.y + P.h + 13, CH.muted, FM(10), 'center', 'middle');
+
+  if (o.yLabel) {
+    ctx.save(); ctx.translate(P.x - (o.yLabelPad || 36), P.y + P.h / 2); ctx.rotate(-Math.PI / 2);
+    label(ctx, o.yLabel, 0, 0, CH.ink2, F(10.5, '600'), 'center', 'middle'); ctx.restore();
+  }
+  if (o.xLabel) label(ctx, o.xLabel, P.x + P.w / 2, P.y + P.h + 30, CH.ink2, F(10.5, '600'), 'center', 'middle');
+  return { xt, yt };
+}
+
+/** Month bands and centred month names along a day-of-year axis. */
+function monthAxis(ctx, P, md, opts) {
+  opts = opts || {};
+  let acc = 0;
+  for (let m = 0; m < 12; m++) {
+    const start = acc, end = acc + md[m];
+    if (m > 0) { stroke(ctx, opts.tickColor || 'rgba(255,255,255,.55)', 1); seg(ctx, px(P.sx(start)), P.y, px(P.sx(start)), P.y + P.h); }
+    label(ctx, MON3[m], P.sx((start + end) / 2), P.y + P.h + (opts.dy || 13), opts.color || CH.muted, F(10), 'center', 'middle');
+    acc = end;
+  }
+}
+
+/** Horizontal colour key with a min/max scale, drawn inside the canvas. */
+function colorKey(ctx, x, y, w, h, ramp, vmin, vmax, title, unit) {
+  const g = ctx.createLinearGradient(x, 0, x + w, 0);
+  for (let i = 0; i <= 20; i++) g.addColorStop(i / 20, ramp.css(i / 20));
+  ctx.fillStyle = g; ctx.fillRect(x, y, w, h);
+  stroke(ctx, 'rgba(0,0,0,.14)', 1); ctx.strokeRect(px(x), px(y), Math.round(w), Math.round(h));
+  const tk = niceTicks(vmin, vmax, 5);
+  for (const v of tk.ticks) {
+    if (v < vmin || v > vmax) continue;
+    const xx = x + (v - vmin) / ((vmax - vmin) || 1) * w;
+    stroke(ctx, CH.muted, 1); seg(ctx, px(xx), y + h, px(xx), y + h + 3);
+    label(ctx, axfmt(v, tk.step), xx, y + h + 12, CH.muted, FM(9.5), 'center', 'middle');
+  }
+  if (title) label(ctx, t(title) + (unit ? ' (' + unit + ')' : ''), x, y - 6, CH.ink2, F(10, '600'), 'left', 'alphabetic');
+}
+
+/** Categorical / binned key drawn inside the canvas so exports stay self-contained. */
+function swatchKey(ctx, x, y, items, opts) {
+  opts = opts || {};
+  const cols = opts.cols || 1, cw = opts.colWidth || 120, rh = opts.rowHeight || 15;
+  // Translated labels are often longer than the English they replace, so the
+  // type shrinks a little rather than letting neighbouring entries collide.
+  let size = 10.5;
+  ctx.font = F(size);
+  let widest = 0;
+  items.forEach(it => { widest = Math.max(widest, ctx.measureText(t(it.label)).width); });
+  const room = cw - 15 - (items.some(it => it.value !== undefined) ? 46 : 6);
+  if (widest > room && room > 0) size = Math.max(8, size * room / widest);
+  items.forEach((it, i) => {
+    const c = i % cols, r = Math.floor(i / cols);
+    const xx = x + c * cw, yy = y + r * rh;
+    ctx.fillStyle = it.color; ctx.fillRect(xx, yy, 10, 10);
+    stroke(ctx, 'rgba(0,0,0,.12)', 1); ctx.strokeRect(px(xx), px(yy), 10, 10);
+    label(ctx, it.label, xx + 15, yy + 5.5, CH.ink2, F(size), 'left', 'middle');
+    if (it.value !== undefined) label(ctx, it.value, xx + cw - 8, yy + 5.5, CH.muted, FM(Math.min(10, size)), 'right', 'middle');
+  });
+  return y + Math.ceil(items.length / cols) * rh;
+}
+
+/* --- panel ---------------------------------------------------------------- */
+const TIP = $('#tip');
+function showTip(html, ev) {
+  TIP.innerHTML = html; TIP.style.display = 'block';
+  const r = TIP.getBoundingClientRect();
+  let x = ev.clientX + 14, y = ev.clientY + 14;
+  if (x + r.width > innerWidth - 8) x = ev.clientX - r.width - 14;
+  if (y + r.height > innerHeight - 8) y = ev.clientY - r.height - 14;
+  TIP.style.left = x + 'px'; TIP.style.top = y + 'px';
+}
+function hideTip() { TIP.style.display = 'none'; }
+
+
+let PANELS = [];
+/**
+ * Build a titled panel that owns one canvas. `o.render(ctx, W, H)` draws in CSS
+ * pixels; the panel handles device-pixel scaling, resize and 3× PNG export, so
+ * an exported chart is pixel-identical to what is on screen, only sharper.
+ */
+function makePanel(host, o) {
+  const body  = el('div', { class:'panel-body' });
+  const wrap  = el('div', { class:'canvas-wrap' });
+  const cv    = el('canvas', { class:'chart' });
+  const tools = el('div', { class:'panel-tools' });
+  const head  = el('div', { class:'panel-head' }, [
+    el('div', { class:'panel-title' }, [ el('h3', { text:o.title }), o.note ? el('p', { text:o.note }) : null ]),
+    tools
+  ]);
+  wrap.appendChild(cv); body.appendChild(wrap);
+  if (o.below) body.appendChild(o.below);
+  const root = el('div', { class:'panel' + (o.span ? ' span' : '') }, [head, body]);
+  if (o.gridColumn) root.style.gridColumn = o.gridColumn;
+  host.appendChild(root);
+
+  const P = {
+    root, canvas: cv, body, tools, head,
+    render: o.render, hit: o.hit || null, csv: o.csv || null,
+    title: o.title, W: 0, H: 0, data: {}
+  };
+
+  function sizeAndDraw() {
+    const w = Math.max(220, wrap.clientWidth);
+    // heightFn lets a small-multiple grid keep its cells a sensible size as the
+    // column count changes, which a fixed aspect ratio cannot do
+    const h = o.heightFn ? Math.round(o.heightFn(w)) : o.height ? o.height : Math.round(w / (o.aspect || 2.2));
+    P.W = w; P.H = h;
+    const dpr = Math.min(3, window.devicePixelRatio || 1);
+    cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr);
+    cv.style.height = h + 'px';
+    const ctx = cv.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, w, h);
+    ctx.fillStyle = CH.white; ctx.fillRect(0, 0, w, h);
+    try { P.render(ctx, w, h, P); }
+    catch (err) { label(ctx, 'Chart error: ' + err.message, 12, 24, '#DC2626', F(12)); console.error(err); }
+  }
+  P.draw = sizeAndDraw;
+
+  let raf = 0;
+  P.ro = new ResizeObserver(() => { cancelAnimationFrame(raf); raf = requestAnimationFrame(sizeAndDraw); });
+  P.ro.observe(wrap);
+
+  /* A panel built far down a long tab is sometimes laid out before the
+     browser has finished settling the page around it — the canvas then
+     measures a stale or zero width and stays blank until some later event
+     forces a re-layout. A one-shot watch that fires the first time the
+     panel actually nears the viewport catches that case without waiting on
+     the visitor to do anything. */
+  if ('IntersectionObserver' in window) {
+    P.io = new IntersectionObserver(entries => {
+      if (entries.some(e => e.isIntersecting)) { sizeAndDraw(); P.io.disconnect(); }
+    }, { rootMargin: '800px 0px' });
+    P.io.observe(wrap);
+  }
+
+  // --- export ------------------------------------------------------------
+  const slug = s => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 60);
+  tools.appendChild(el('button', { class:'icobtn', title:'Export this chart as a PNG image at 3× resolution',
+    onclick: () => {
+      if (!P.W || !P.H) sizeAndDraw();          // panel never laid out yet
+      if (!P.W || !P.H) { toast('Nothing to export yet — open the chart first'); return; }
+      // The panel title lives in HTML, not on the canvas, so an exported figure
+      // would otherwise arrive unlabelled. Wrap it in a caption band instead.
+      const S = 3, padX = 16, padT = 42;
+      const padB = 26;
+      const place = siteCaption();
+      const W2 = P.W + padX * 2, H2 = P.H + padT + padB;
+      const c2 = document.createElement('canvas');
+      c2.width = W2 * S; c2.height = H2 * S;
+      const g = c2.getContext('2d');
+      g.setTransform(S, 0, 0, S, 0, 0);
+      g.fillStyle = CH.white; g.fillRect(0, 0, W2, H2);
+      label(g, o.title, padX, 17, CH.ink, F(13.5, '600'), 'left', 'middle');
+      if (place) label(g, place, padX, 32, CH.muted, F(10.5), 'left', 'middle');
+      g.save(); g.translate(padX, padT); P.render(g, P.W, P.H, P); g.restore();
+      stroke(g, CH.line2, 1); seg(g, padX, px(H2 - padB + 6), W2 - padX, px(H2 - padB + 6));
+      label(g, 'Developed with ' + APP.builtWith, padX, H2 - 9, CH.faint, F(9.5), 'left', 'middle');
+      c2.toBlob(b => {
+        download(b, slug(sitePrefix() + o.title) + '.png');
+        toast('PNG exported at ' + (W2 * S) + ' × ' + (H2 * S) + ' px');
+      }, 'image/png');
+    }, text:'PNG' }));
+  if (o.csv) tools.appendChild(el('button', { class:'icobtn', title:'Export the underlying numbers as CSV',
+    onclick: () => {
+      download(new Blob([o.csv()], { type:'text/csv;charset=utf-8' }),
+               slug(sitePrefix() + o.title) + '.csv');
+      toast('CSV exported');
+    }, text:'CSV' }));
+  if (o.extraTools) o.extraTools.forEach(b => tools.appendChild(b));
+
+  // --- hover -------------------------------------------------------------
+  if (o.hit) {
+    cv.addEventListener('mousemove', ev => {
+      const r = cv.getBoundingClientRect();
+      const res = P.hit(ev.clientX - r.left, ev.clientY - r.top, P);
+      if (res) showTip(res, ev); else hideTip();
+    });
+    cv.addEventListener('mouseleave', hideTip);
+  } else cv.style.cursor = 'default';
+
+  PANELS.push(P);
+  requestAnimationFrame(sizeAndDraw);
+  return P;
+}
+function redrawAll() { PANELS.forEach(p => { try { p.draw(); } catch (e) { console.error(e); } }); }
+/** Redraw only the panels actually in the layout — cheap and idempotent, so
+    it is safe to call again a little later as a safety net against a first
+    pass that measured the page before it had finished settling. */
+function redrawVisiblePanels() { PANELS.forEach(p => { if (p.root.offsetParent) p.draw(); }); }
+
+/* --- small DOM helpers used by the pages ---------------------------------- */
+function statCard(k, v, unit, sub) {
+  return el('div', { class:'stat' }, [
+    el('div', { class:'k', text:t(k) }),
+    el('div', { class:'v', html: v + (unit ? ' <small>' + t(unit) + '</small>' : '') }),
+    sub ? el('div', { class:'s', text:sub }) : null
+  ]);
+}
+function selectCtl(labelText, options, value, onchange, width) {
+  const s = el('select', { onchange: e => onchange(e.target.value) });
+  for (const o of options) {
+    if (o.group) {
+      const g = el('optgroup', { label:t(o.group) });
+      o.items.forEach(it => g.appendChild(el('option', { value:it.value, text:it.label, selected: it.value === value ? '' : null })));
+      s.appendChild(g);
+    } else s.appendChild(el('option', { value:o.value, text:o.label, selected: o.value === value ? '' : null }));
+  }
+  /* A global rule caps every select at 230px so an unspecified width stays
+     compact; a caller that asks for more than that is asking for it because
+     its own option text needs the room, so max-width has to move with it or
+     the request is silently clamped back down. */
+  if (width) { s.style.width = width + 'px'; s.style.maxWidth = width + 'px'; }
+  const wrap = el('div', { class:'ctl' }, [ labelText ? el('label', { text:labelText }) : null, s ]);
+  wrap.select = s;                       // so callers can reset the value programmatically
+  return wrap;
+}
+function segCtl(labelText, options, value, onchange) {
+  const box = el('div', { class:'seg' });
+  const btns = options.map(o => {
+    const b = el('button', { text:o.label, 'aria-pressed': o.value === value ? 'true' : 'false', title:o.title || '',
+      onclick: () => { btns.forEach(x => x.setAttribute('aria-pressed', 'false')); b.setAttribute('aria-pressed', 'true'); onchange(o.value); } });
+    box.appendChild(b); return b;
+  });
+  return el('div', { class:'ctl' }, [ labelText ? el('label', { text:labelText }) : null, box ]);
+}
+function checkCtl(labelText, checked, onchange) {
+  const i = el('input', { type:'checkbox', onchange: e => onchange(e.target.checked) });
+  i.checked = !!checked;
+  return el('label', { class:'chk' }, [ i, el('span', { text:labelText }) ]);
+}
+function rangeCtl(labelText, min, max, step, value, onchange, fmtFn) {
+  const out = el('span', { class:'tv', text: fmtFn ? fmtFn(value) : String(value) });
+  out.style.fontFamily = MONO; out.style.fontSize = '11px'; out.style.minWidth = '38px';
+  const r = el('input', { type:'range', min, max, step, value,
+    oninput: e => { const v = +e.target.value; out.textContent = fmtFn ? fmtFn(v) : String(v); onchange(v); } });
+  const wrap = el('div', { class:'ctl' }, [ el('label', { text:labelText }), r, out ]);
+  wrap.range = r; wrap.out = out;        // so callers can reset the value programmatically
+  return wrap;
+}
+function sectionHead(title, note) {
+  return el('div', { class:'sechead' }, [ el('h3', { text:title }), note ? el('span', { text:note }) : null ]);
+}
+/**
+ * A Portuguese spreadsheet expects the semicolon as list separator and the
+ * comma as decimal mark, so the export follows the interface language. Numeric
+ * fields are converted at this single point rather than at every call site.
+ */
+function csvRows(rows) {
+  const sep = LANG === 'pt' ? ';' : ',';
+  const cell = v => {
+    if (v === null || v === undefined || (typeof v === 'number' && !isFinite(v))) return '';
+    let s = String(v);
+    if (LANG === 'pt' && /^-?\d+\.\d+$/.test(s)) s = s.replace('.', ',');
+    return new RegExp('["' + sep + '\\n]').test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+  };
+  return rows.map(r => r.map(cell).join(sep)).join('\n');
+}
+/** Header block prepended to every CSV export so a file is self-describing. */
+function csvHeader(extra) {
+  /* The identity rows are the same for either application; the rows that
+     describe the site are not, so each one supplies its own. */
+  const rows = [
+    ['# ' + APP.name + ' ' + APP.version + ' export'],
+    ['# Author', APP.author, 'Institution', APP.institution],
+    ['# Developed with', APP.builtWith]
+  ].concat(csvSiteRows());
+  if (extra) extra.forEach(r => rows.push(['#'].concat(r)));
+  rows.push([]);
+  return csvRows(rows) + '\n';
+}
+
+/* ------------------------------------------------------- 1. GEOGRAPHY --
+   Shared by both applications: the municipality list is the same country
+   whichever set of rules is being applied to it.
+   ====================================================================== */
+
+/**
+ * The 308 municipalities and the NUTS III each belongs to — Anexo II, Tabela
+ * 116 of the Manual SCE, whose composition follows Decreto-Lei n.º 68/2008.
+ * Calheta and Lagoa each name two municipalities in different regions, so the
+ * value is a list and the ambiguity is reported rather than resolved silently.
+ */
+
+const CONCELHOS = {
+  'Abrantes':['Médio Tejo'],'Aguiar da Beira':['Dão-Lafões'],'Alandroal':['Alentejo Central'],
+  'Albergaria-a-Velha':['Baixo Vouga'],'Albufeira':['Algarve'],'Alcanena':['Médio Tejo'],'Alcobaça':['Oeste'],
+  'Alcochete':['Península de Setúbal'],'Alcoutim':['Algarve'],'Alcácer do Sal':['Alentejo Litoral'],
+  'Alenquer':['Oeste'],'Alfândega da Fé':['Alto Trás-os-Montes'],'Alijó':['Douro'],'Aljezur':['Algarve'],
+  'Aljustrel':['Baixo Alentejo'],'Almada':['Península de Setúbal'],'Almeida':['Beira Interior Norte'],
+  'Almeirim':['Lezíria do Tejo'],'Almodôvar':['Baixo Alentejo'],'Alpiarça':['Lezíria do Tejo'],
+  'Alter do Chão':['Alto Alentejo'],'Alvaiázere':['Pinhal Interior Norte'],'Alvito':['Baixo Alentejo'],
+  'Amadora':['Grande Lisboa'],'Amarante':['Tâmega'],'Amares':['Cávado'],'Anadia':['Baixo Vouga'],
+  'Angra do Heroísmo':['RA dos Açores'],'Ansião':['Pinhal Interior Norte'],'Arcos de Valdevez':['Minho-Lima'],
+  'Arganil':['Pinhal Interior Norte'],'Armamar':['Douro'],'Arouca':['Entre Douro e Vouga'],
+  'Arraiolos':['Alentejo Central'],'Arronches':['Alto Alentejo'],'Arruda dos Vinhos':['Oeste'],
+  'Aveiro':['Baixo Vouga'],'Avis':['Alto Alentejo'],'Azambuja':['Lezíria do Tejo'],'Baião':['Tâmega'],
+  'Barcelos':['Cávado'],'Barrancos':['Baixo Alentejo'],'Barreiro':['Península de Setúbal'],
+  'Batalha':['Pinhal Litoral'],'Beja':['Baixo Alentejo'],'Belmonte':['Cova da Beira'],'Benavente':['Lezíria do Tejo'],
+  'Bombarral':['Oeste'],'Borba':['Alentejo Central'],'Boticas':['Alto Trás-os-Montes'],'Braga':['Cávado'],
+  'Bragança':['Alto Trás-os-Montes'],'Cabeceiras de Basto':['Ave'],'Cadaval':['Oeste'],'Caldas da Rainha':['Oeste'],
+  'Calheta':['RA dos Açores','RA da Madeira'],'Caminha':['Minho-Lima'],'Campo Maior':['Alto Alentejo'],
+  'Cantanhede':['Baixo Mondego'],'Carrazeda de Ansiães':['Douro'],'Carregal do Sal':['Dão-Lafões'],
+  'Cartaxo':['Lezíria do Tejo'],'Cascais':['Grande Lisboa'],'Castanheira de Pera':['Pinhal Interior Norte'],
+  'Castelo Branco':['Beira Interior Sul'],'Castelo de Paiva':['Tâmega'],'Castelo de Vide':['Alto Alentejo'],
+  'Castro Daire':['Dão-Lafões'],'Castro Marim':['Algarve'],'Castro Verde':['Baixo Alentejo'],
+  'Celorico da Beira':['Beira Interior Norte'],'Celorico de Basto':['Tâmega'],'Chamusca':['Lezíria do Tejo'],
+  'Chaves':['Alto Trás-os-Montes'],'Cinfães':['Tâmega'],'Coimbra':['Baixo Mondego'],
+  'Condeixa-a-Nova':['Baixo Mondego'],'Constância':['Médio Tejo'],'Coruche':['Lezíria do Tejo'],
+  'Covilhã':['Cova da Beira'],'Crato':['Alto Alentejo'],'Cuba':['Baixo Alentejo'],'Câmara de Lobos':['RA da Madeira'],
+  'Elvas':['Alto Alentejo'],'Entroncamento':['Médio Tejo'],'Espinho':['Grande Porto'],'Esposende':['Cávado'],
+  'Estarreja':['Baixo Vouga'],'Estremoz':['Alentejo Central'],'Fafe':['Ave'],'Faro':['Algarve'],
+  'Felgueiras':['Tâmega'],'Ferreira do Alentejo':['Baixo Alentejo'],'Ferreira do Zêzere':['Médio Tejo'],
+  'Figueira da Foz':['Baixo Mondego'],'Figueira de Castelo Rodrigo':['Beira Interior Norte'],
+  'Figueiró dos Vinhos':['Pinhal Interior Norte'],'Fornos de Algodres':['Serra da Estrela'],
+  'Freixo de Espada à Cinta':['Douro'],'Fronteira':['Alto Alentejo'],'Funchal':['RA da Madeira'],
+  'Fundão':['Cova da Beira'],'Gavião':['Alto Alentejo'],'Golegã':['Lezíria do Tejo'],'Gondomar':['Grande Porto'],
+  'Gouveia':['Serra da Estrela'],'Grândola':['Alentejo Litoral'],'Guarda':['Beira Interior Norte'],
+  'Guimarães':['Ave'],'Góis':['Pinhal Interior Norte'],'Horta':['RA dos Açores'],
+  'Idanha-a-Nova':['Beira Interior Sul'],'Lagoa':['Algarve','RA dos Açores'],'Lagos':['Algarve'],
+  'Lajes das Flores':['RA dos Açores'],'Lajes do Pico':['RA dos Açores'],'Lamego':['Douro'],
+  'Leiria':['Pinhal Litoral'],'Lisboa':['Grande Lisboa'],'Loulé':['Algarve'],'Loures':['Grande Lisboa'],
+  'Lourinhã':['Oeste'],'Lousada':['Tâmega'],'Lousã':['Pinhal Interior Norte'],
+  'Macedo de Cavaleiros':['Alto Trás-os-Montes'],'Machico':['RA da Madeira'],'Madalena':['RA dos Açores'],
+  'Mafra':['Grande Lisboa'],'Maia':['Grande Porto'],'Mangualde':['Dão-Lafões'],'Manteigas':['Beira Interior Norte'],
+  'Marco de Canaveses':['Tâmega'],'Marinha Grande':['Pinhal Litoral'],'Marvão':['Alto Alentejo'],
+  'Matosinhos':['Grande Porto'],'Mação':['Médio Tejo'],'Mealhada':['Baixo Mondego'],'Melgaço':['Minho-Lima'],
+  'Mesão Frio':['Douro'],'Mira':['Baixo Mondego'],'Miranda do Corvo':['Pinhal Interior Norte'],
+  'Miranda do Douro':['Alto Trás-os-Montes'],'Mirandela':['Alto Trás-os-Montes'],'Mogadouro':['Alto Trás-os-Montes'],
+  'Moimenta da Beira':['Douro'],'Moita':['Península de Setúbal'],'Monchique':['Algarve'],'Mondim de Basto':['Ave'],
+  'Monforte':['Alto Alentejo'],'Montalegre':['Alto Trás-os-Montes'],'Montemor-o-Novo':['Alentejo Central'],
+  'Montemor-o-Velho':['Baixo Mondego'],'Montijo':['Península de Setúbal'],'Monção':['Minho-Lima'],
+  'Mora':['Alentejo Central'],'Mortágua':['Baixo Mondego'],'Moura':['Baixo Alentejo'],'Mourão':['Alentejo Central'],
+  'Murtosa':['Baixo Vouga'],'Murça':['Douro'],'Mértola':['Baixo Alentejo'],'Mêda':['Beira Interior Norte'],
+  'Nazaré':['Oeste'],'Nelas':['Dão-Lafões'],'Nisa':['Alto Alentejo'],'Nordeste':['RA dos Açores'],
+  'Odemira':['Alentejo Litoral'],'Odivelas':['Grande Lisboa'],'Oeiras':['Grande Lisboa'],
+  'Oleiros':['Pinhal Interior Sul'],'Olhão':['Algarve'],'Oliveira de Azeméis':['Entre Douro e Vouga'],
+  'Oliveira de Frades':['Dão-Lafões'],'Oliveira do Bairro':['Baixo Vouga'],
+  'Oliveira do Hospital':['Pinhal Interior Norte'],'Ourique':['Baixo Alentejo'],'Ourém':['Médio Tejo'],
+  'Ovar':['Baixo Vouga'],'Palmela':['Península de Setúbal'],'Pampilhosa da Serra':['Pinhal Interior Norte'],
+  'Paredes':['Tâmega'],'Paredes de Coura':['Minho-Lima'],'Paços de Ferreira':['Tâmega'],
+  'Pedrógão Grande':['Pinhal Interior Norte'],'Penacova':['Baixo Mondego'],'Penafiel':['Tâmega'],
+  'Penalva do Castelo':['Dão-Lafões'],'Penamacor':['Beira Interior Sul'],'Penedono':['Douro'],
+  'Penela':['Pinhal Interior Norte'],'Peniche':['Oeste'],'Peso da Régua':['Douro'],'Pinhel':['Beira Interior Norte'],
+  'Pombal':['Pinhal Litoral'],'Ponta Delgada':['RA dos Açores'],'Ponta do Sol':['RA da Madeira'],
+  'Ponte da Barca':['Minho-Lima'],'Ponte de Lima':['Minho-Lima'],'Ponte de Sor':['Alto Alentejo'],
+  'Portalegre':['Alto Alentejo'],'Portel':['Alentejo Central'],'Portimão':['Algarve'],'Porto':['Grande Porto'],
+  'Porto Moniz':['RA da Madeira'],'Porto Santo':['RA da Madeira'],'Porto de Mós':['Pinhal Litoral'],
+  'Povoação':['RA dos Açores'],'Praia da Vitória':['RA dos Açores'],'Proença-a-Nova':['Pinhal Interior Sul'],
+  'Póvoa de Lanhoso':['Ave'],'Póvoa de Varzim':['Grande Porto'],'Redondo':['Alentejo Central'],
+  'Reguengos de Monsaraz':['Alentejo Central'],'Resende':['Tâmega'],'Ribeira Brava':['RA da Madeira'],
+  'Ribeira Grande':['RA dos Açores'],'Ribeira de Pena':['Alto Trás-os-Montes'],'Rio Maior':['Lezíria do Tejo'],
+  'S. Brás de Alportel':['Algarve'],'Sabrosa':['Douro'],'Sabugal':['Beira Interior Norte'],
+  'Salvaterra de Magos':['Lezíria do Tejo'],'Santa Comba Dão':['Dão-Lafões'],'Santa Cruz':['RA da Madeira'],
+  'Santa Cruz da Graciosa':['RA dos Açores'],'Santa Cruz das Flores':['RA dos Açores'],
+  'Santa Maria da Feira':['Entre Douro e Vouga'],'Santa Marta de Penaguião':['Douro'],'Santana':['RA da Madeira'],
+  'Santarém':['Lezíria do Tejo'],'Santiago do Cacém':['Alentejo Litoral'],'Santo Tirso':['Grande Porto'],
+  'Sardoal':['Médio Tejo'],'Seia':['Serra da Estrela'],'Seixal':['Península de Setúbal'],'Sernancelhe':['Douro'],
+  'Serpa':['Baixo Alentejo'],'Sertã':['Pinhal Interior Sul'],'Sesimbra':['Península de Setúbal'],
+  'Setúbal':['Península de Setúbal'],'Sever do Vouga':['Baixo Vouga'],'Silves':['Algarve'],
+  'Sines':['Alentejo Litoral'],'Sintra':['Grande Lisboa'],'Sobral de Monte Agraço':['Oeste'],
+  'Soure':['Baixo Mondego'],'Sousel':['Alto Alentejo'],'Sátão':['Dão-Lafões'],
+  'São João da Madeira':['Entre Douro e Vouga'],'São João da Pesqueira':['Douro'],'São Pedro do Sul':['Dão-Lafões'],
+  'São Roque do Pico':['RA dos Açores'],'São Vicente':['RA da Madeira'],'Tabuaço':['Douro'],'Tarouca':['Douro'],
+  'Tavira':['Algarve'],'Terras de Bouro':['Cávado'],'Tomar':['Médio Tejo'],'Tondela':['Dão-Lafões'],
+  'Torre de Moncorvo':['Douro'],'Torres Novas':['Médio Tejo'],'Torres Vedras':['Oeste'],
+  'Trancoso':['Beira Interior Norte'],'Trofa':['Grande Porto'],'Tábua':['Pinhal Interior Norte'],
+  'Vagos':['Baixo Vouga'],'Vale de Cambra':['Entre Douro e Vouga'],'Valença':['Minho-Lima'],
+  'Valongo':['Grande Porto'],'Valpaços':['Alto Trás-os-Montes'],'Velas':['RA dos Açores'],
+  'Vendas Novas':['Alentejo Central'],'Viana do Alentejo':['Alentejo Central'],'Viana do Castelo':['Minho-Lima'],
+  'Vidigueira':['Baixo Alentejo'],'Vieira do Minho':['Ave'],'Vila Flor':['Alto Trás-os-Montes'],
+  'Vila Franca de Xira':['Grande Lisboa'],'Vila Franca do Campo':['RA dos Açores'],
+  'Vila Nova da Barquinha':['Médio Tejo'],'Vila Nova de Cerveira':['Minho-Lima'],'Vila Nova de Famalicão':['Ave'],
+  'Vila Nova de Foz Côa':['Douro'],'Vila Nova de Gaia':['Grande Porto'],'Vila Nova de Paiva':['Dão-Lafões'],
+  'Vila Nova de Poiares':['Pinhal Interior Norte'],'Vila Pouca de Aguiar':['Alto Trás-os-Montes'],
+  'Vila Real':['Douro'],'Vila Real de Santo António':['Algarve'],'Vila Velha de Ródão':['Beira Interior Sul'],
+  'Vila Verde':['Cávado'],'Vila Viçosa':['Alentejo Central'],'Vila de Rei':['Pinhal Interior Sul'],
+  'Vila do Bispo':['Algarve'],'Vila do Conde':['Grande Porto'],'Vila do Corvo':['RA dos Açores'],
+  'Vila do Porto':['RA dos Açores'],'Vimioso':['Alto Trás-os-Montes'],'Vinhais':['Alto Trás-os-Montes'],
+  'Viseu':['Dão-Lafões'],'Vizela':['Ave'],'Vouzela':['Dão-Lafões'],'Águeda':['Baixo Vouga'],
+  'Évora':['Alentejo Central'],'Ílhavo':['Baixo Vouga'],'Óbidos':['Oeste']
+};
+
+/* ================================== 4. CLIMATE AND DESIGN DATA ==
+   Nothing in this file comes from the SCE. The classification is
+   Köppen–Geiger in the formalisation of Peel, Finlayson and McMahon (2007),
+   which is the version most current literature cites and the one that states
+   every criterion as an inequality a program can evaluate rather than as a
+   description a reader has to judge.
+   ============================================================== */
+
+/**
+ * The five main classes, and the letters that qualify them.
+ *
+ * Peel et al. (2007), Table 1. The symbols used below are theirs:
+ *
+ *   MAT      mean annual temperature, °C
+ *   MAP      mean annual precipitation, mm
+ *   Tcold    mean temperature of the coldest month
+ *   Thot     mean temperature of the hottest month
+ *   Tmon10   number of months whose mean temperature is above 10 °C
+ *   Pdry     precipitation of the driest month
+ *   Psdry    driest month of the summer half-year
+ *   Pwdry    driest month of the winter half-year
+ *   Pswet    wettest month of the summer half-year
+ *   Pwwet    wettest month of the winter half-year
+ *   Pth      the aridity threshold, below which a climate is class B
+ *
+ * The summer half-year is April to September in the northern hemisphere and
+ * October to March in the southern, which is the convention Peel et al. use
+ * and not a calendar season.
+ */
+const KOPPEN_MAIN = {
+  A: { name:'Tropical',  test:'T<sub>cold</sub> ≥ 18 °C' },
+  B: { name:'Arid',      test:'MAP &lt; 10 × P<sub>th</sub>' },
+  C: { name:'Temperate', test:'T<sub>hot</sub> &gt; 10 °C and 0 &lt; T<sub>cold</sub> &lt; 18 °C' },
+  D: { name:'Cold',      test:'T<sub>hot</sub> &gt; 10 °C and T<sub>cold</sub> ≤ 0 °C' },
+  E: { name:'Polar',     test:'T<sub>hot</sub> ≤ 10 °C' }
+};
+
+/** The second and third letters, with the criterion each one states. */
+const KOPPEN_SUB = {
+  W: { name:'Desert',            test:'MAP &lt; 5 × P<sub>th</sub>' },
+  S: { name:'Steppe',            test:'MAP ≥ 5 × P<sub>th</sub>' },
+  f: { name:'Without dry season', test:'Neither the summer-dry nor the winter-dry criterion is met' },
+  s: { name:'Dry summer',        test:'P<sub>sdry</sub> &lt; 40 mm and P<sub>sdry</sub> &lt; P<sub>wwet</sub> ÷ 3' },
+  w: { name:'Dry winter',        test:'P<sub>wdry</sub> &lt; P<sub>swet</sub> ÷ 10' },
+  m: { name:'Monsoon',           test:'P<sub>dry</sub> ≥ 100 − MAP ÷ 25' },
+  h: { name:'Hot',               test:'MAT ≥ 18 °C' },
+  k: { name:'Cold',              test:'MAT &lt; 18 °C' },
+  a: { name:'Hot summer',        test:'T<sub>hot</sub> ≥ 22 °C' },
+  b: { name:'Warm summer',       test:'Not a, and T<sub>mon10</sub> ≥ 4' },
+  c: { name:'Cold summer',       test:'Not a or b, and 1 ≤ T<sub>mon10</sub> &lt; 4' },
+  d: { name:'Very cold winter',  test:'As c, and T<sub>cold</sub> &lt; −38 °C' },
+  T: { name:'Tundra',            test:'T<sub>hot</sub> &gt; 0 °C' },
+  F: { name:'Frost',             test:'T<sub>hot</sub> ≤ 0 °C' }
+};
+
+/**
+ * The classes a Portuguese or wider Mediterranean site actually falls in, and
+ * what each one asks of a building. The readings are the design literature's,
+ * not the classification's — Köppen says nothing about architecture. Each is
+ * attributed where it is used rather than here.
+ */
+const KOPPEN_NOTE = {
+  Csa: 'The Mediterranean summer-dry climate with a hot summer. The design problem is asymmetric: a mild winter that a modest amount of south glazing will carry, against a summer that punishes any surface left unshaded. Shading, thermal mass and night ventilation do more here than insulation alone.',
+  Csb: 'The same summer-dry regime with a warm rather than a hot summer — the Atlantic coast of the Iberian peninsula. Winter carries more weight than in Csa and the summer peak is softer, so solar gain in the heating season is worth more and the cooling problem is shorter.',
+  Csc: 'Summer-dry with a short cool summer, found only at altitude. Heating dominates the year and the summer is too brief to drive the form.',
+  Cfa: 'Temperate without a dry season and with a hot summer. Humidity, not dry heat, sets the summer problem, so air movement matters more than mass.',
+  Cfb: 'Temperate without a dry season and with a warm summer — the oceanic climate of northwest Iberia and much of northern Europe. Overcast skies make daylight the scarce resource and cooling is rarely the governing case.',
+  BSk: 'Cold semi-arid steppe. A large daily temperature swing is the resource: mass charged by the cold night carries the building through the day. The southeastern Portuguese interior touches this class.',
+  BSh: 'Hot semi-arid steppe. The daily swing is still the resource, but the night no longer falls far enough to discharge mass on its own.'
+};
+
+/**
+ * The approximate latitude of each NUTS III region's main population centre.
+ * It seeds the coordinate fields on the setup page so that a student who does
+ * not yet have the building's own position still gets sun geometry that is
+ * right to within a degree; the field stays editable and the page says so.
+ * Moved here from Construction Advisor, which no longer has any use for it.
+ */
+const NUTS_LAT = {
+  'Minho-Lima':41.8, 'Cávado':41.5, 'Ave':41.4, 'Grande Porto':41.2, 'Tâmega':41.3,
+  'Entre Douro e Vouga':41.0, 'Douro':41.2, 'Alto Trás-os-Montes':41.7,
+  'Baixo Vouga':40.6, 'Baixo Mondego':40.2, 'Pinhal Litoral':39.7,
+  'Pinhal Interior Norte':40.1, 'Pinhal Interior Sul':39.6, 'Dão-Lafões':40.7,
+  'Serra da Estrela':40.4, 'Beira Interior Norte':40.5, 'Beira Interior Sul':39.8,
+  'Cova da Beira':40.3, 'Oeste':39.4, 'Grande Lisboa':38.7, 'Península de Setúbal':38.5,
+  'Médio Tejo':39.6, 'Lezíria do Tejo':39.2, 'Alentejo Litoral':38.0,
+  'Alto Alentejo':39.3, 'Alentejo Central':38.6, 'Baixo Alentejo':38.0, 'Algarve':37.1,
+  'RA da Madeira':32.7, 'RA dos Açores':37.8
+};
+
+/** The thirty NUTS III, taken from the municipality table so that the two
+ *  applications cannot drift apart on which regions exist. */
+const NUTS_LIST = (() => {
+  const s = new Set();
+  for (const c in CONCELHOS) CONCELHOS[c].forEach(n => s.add(n));
+  return Array.from(s).sort((a, b) => a.localeCompare(b, 'pt'));
+})();
+
+/* ============================================ 5. THE SITE ENGINE ==
+   A site here is a position, an altitude and a year of monthly normals.
+   Everything the pages read follows from those three.
+   ================================================================= */
+
+/** The whole of the application's state. There is no file and no upload. */
+const STATE = { site:null, clim:null, tab:null };
+
+/**
+ * Twelve monthly mean temperatures, °C, and twelve monthly precipitation
+ * totals, mm, January first. The application ships neither: monthly normals
+ * are measured data and this file has no authority to invent them. The
+ * student enters the normals for the station nearest the site — from the
+ * IPMA normais climatológicas, from a national meteorological service, or
+ * from a gridded product such as WorldClim — and the classification is
+ * computed from what they enter and shown with its own arithmetic exposed.
+ */
+const CLIM_BLANK = () => ({ t:new Array(12).fill(null), p:new Array(12).fill(null), source:'' });
+
+/** Whether a set of normals is complete enough to classify. */
+const climComplete = c => !!c && c.t.every(v => v !== null && isFinite(v))
+                              && c.p.every(v => v !== null && isFinite(v) && v >= 0);
+
+/**
+ * Köppen–Geiger, in the formalisation of Peel, Finlayson and McMahon (2007).
+ *
+ * The summer half-year is April to September north of the equator and October
+ * to March south of it, which is what `south` selects. Every intermediate
+ * quantity is returned alongside the code so that a page can show the student
+ * the number that decided each letter rather than only the letters.
+ */
+function koppen(t, p, south) {
+  const sum = a => a.reduce((x, y) => x + y, 0);
+  const MAT = sum(t) / 12, MAP = sum(p);
+  const Tcold = Math.min.apply(null, t), Thot = Math.max.apply(null, t);
+  const Tmon10 = t.filter(v => v > 10).length;
+  const Pdry = Math.min.apply(null, p);
+
+  // April–September, or October–March in the southern hemisphere
+  const sIdx = south ? [9, 10, 11, 0, 1, 2] : [3, 4, 5, 6, 7, 8];
+  const wIdx = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11].filter(i => sIdx.indexOf(i) < 0);
+  const sP = sIdx.map(i => p[i]), wP = wIdx.map(i => p[i]);
+  const Psdry = Math.min.apply(null, sP), Pswet = Math.max.apply(null, sP);
+  const Pwdry = Math.min.apply(null, wP), Pwwet = Math.max.apply(null, wP);
+  const Psum = sum(sP), Pwin = sum(wP);
+
+  /* The aridity threshold moves with when the rain falls, because the same
+     rainfall evaporates differently in a hot month than in a cold one. */
+  let Pth, thWhy;
+  if (Psum >= 0.7 * MAP)      { Pth = 2 * MAT + 28; thWhy = 'summer'; }
+  else if (Pwin >= 0.7 * MAP) { Pth = 2 * MAT;      thWhy = 'winter'; }
+  else                        { Pth = 2 * MAT + 14; thWhy = 'even'; }
+
+  const D = { MAT, MAP, Tcold, Thot, Tmon10, Pdry, Psdry, Pswet, Pwdry, Pwwet,
+              Psum, Pwin, Pth, thWhy, south:!!south };
+
+  /* B is tested before everything else: an arid climate is arid whatever its
+     temperature would otherwise have made it. */
+  if (MAP < 10 * Pth) {
+    const second = MAP < 5 * Pth ? 'W' : 'S';
+    return Object.assign(D, { code:'B' + second + (MAT >= 18 ? 'h' : 'k'), main:'B' });
+  }
+  if (Tcold >= 18) {
+    const second = Pdry >= 60 ? 'f' : (Pdry >= 100 - MAP / 25 ? 'm' : 'w');
+    return Object.assign(D, { code:'A' + second, main:'A' });
+  }
+  if (Thot <= 10) return Object.assign(D, { code: Thot > 0 ? 'ET' : 'EF', main:'E' });
+
+  const main = Tcold > 0 ? 'C' : 'D';
+  const second = (Psdry < 40 && Psdry < Pwwet / 3) ? 's'
+               : (Pwdry < Pswet / 10)              ? 'w' : 'f';
+  let third;
+  if (Thot >= 22)        third = 'a';
+  else if (Tmon10 >= 4)  third = 'b';
+  else if (main === 'D' && Tcold < -38) third = 'd';
+  else                   third = 'c';
+  return Object.assign(D, { code:main + second + third, main:main });
+}
+
+/** The label a site carries in a chip, a title and an export filename. */
+const sitePrefix = () => STATE.site ? (STATE.site.place || STATE.site.nuts) + ' ' : '';
+
+/** The site rows the shared CSV header asks each application to supply. */
+function csvSiteRows() {
+  const S = STATE.site, K = STATE.clim && STATE.clim.k;
+  return [
+    ['# Site', S ? (S.place || S.nuts) : '', 'NUTS III', S ? S.nuts : '', 'Altitude (m)', S ? S.alt : ''],
+    ['# Latitude', S ? S.lat : '', 'Longitude', S ? S.lon : ''],
+    ['# Köppen–Geiger', K ? K.code : 'not yet classified',
+     'Normals', STATE.clim && STATE.clim.source ? STATE.clim.source : 'entered by hand'],
+    ['# Use', S && S.use === 'cs' ? 'Commerce and services' : 'Dwelling',
+     'Intervention', S && S.operation === 'renovation' ? 'Major renovation' : 'New construction'],
+    ['# Basis', 'Köppen–Geiger after Peel, Finlayson and McMahon (2007); design guidance as cited per page']
+  ];
+}
+/* ================================================= 3b. PAGE FURNITURE == */
+
+/** The heading every page opens with. */
+function pageHead(host, title, body) {
+  host.appendChild(el('div', { class:'pagehead' }, [
+    el('h2', { text:t(title) }), el('p', { text:t(body) }) ]));
+}
+
+/* Long captions are keyed by a stable identifier rather than by their English
+   text, so that editing a sentence in English does not silently drop its
+   translation. %1, %2 … are substituted after the lookup. */
+const PT_HINT = {};
+const PT_HINT_MISSING = new Set();
+function hint(id, template, vals) {
+  const pt = PT_HINT[id];
+  if (LANG === 'pt' && pt === undefined) PT_HINT_MISSING.add(id);
+  let s = (LANG === 'pt' && pt !== undefined) ? pt : template;
+  if (vals) vals.forEach((v, i) => { s = s.split('%' + (i + 1)).join(String(v)); });
+  const n = document.createElement('p');
+  n.className = 'hint';
+  n.innerHTML = s;
+  return n;
+}
+
+/** A table whose numeric columns are mono and right-aligned, text columns not. */
+function dataTable(headers, rows, leftCols) {
+  const L = {}; (leftCols || []).forEach(i => L[i] = 1);
+  // headings carry markup of their own — U<sub>g</sub>, g<sub>tot,máx</sub> — so
+  // they are set as HTML, not as text that would show the tags themselves
+  const thead = el('thead', null, [ el('tr', null, headers.map((h, i) =>
+    el('th', { html:h, style: L[i] ? 'text-align:left' : null }))) ]);
+  const tb = el('tbody');
+  for (const r of rows) {
+    const tr = el('tr', { class: r.cls || null });
+    (r.cells || r).forEach((c, i) => tr.appendChild(el('td', {
+      html: String(c),
+      style: L[i] ? 'text-align:left;font-family:var(--sans);white-space:normal' : null })));
+    tb.appendChild(tr);
+  }
+  return el('div', { class:'tbl-scroll' }, [ el('table', { class:'data' }, [thead, tb]) ]);
+}
+
+/** A section heading that carries its own CSV button. */
+function section(title, note, name, rowsFn) {
+  const h = sectionHead(t(title), note ? t(note) : null);
+  if (rowsFn) h.appendChild(el('button', { class:'icobtn', style:'margin-left:auto', text:'CSV',
+    title:'Export this table as CSV',
+    onclick: () => {
+      download(new Blob([csvHeader() + rowsFn()], { type:'text/csv;charset=utf-8' }),
+        slugify(sitePrefix() + name) + '.csv');
+      toast('CSV exported');
+    } }));
+  return h;
+}
+const slugify = s => s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '')
+  .replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 60);
+
+/** A number field, for a value the student wants to type rather than drag. */
+function numCtl(labelText, min, max, step, value, onchange, unit) {
+  const inp = el('input', { type:'number', min:min, max:max, step:step, value:value,
+    onchange: e => {
+      let v = +e.target.value;
+      if (!isFinite(v)) v = value;
+      v = Math.round(clamp(v, min, max) / step) * step;
+      e.target.value = v;
+      onchange(v);
+    } });
+  inp.style.width = '92px';
+  const wrap = el('div', { class:'ctl' }, [
+    el('label', { text:labelText }), inp,
+    unit ? el('span', { text:unit, style:'font-size:11px;color:var(--muted)' }) : null ]);
+  wrap.input = inp;
+  return wrap;
+}
+
+const pct  = (v, d) => isFinite(v) ? fmt(100 * v, d === undefined ? 0 : d) + ' %' : '–';
+const degs = v => isFinite(v) ? fmt(v, 0) + '°' : '–';
+/** A pass/fail badge against a maximum. */
+function verdict(value, limit, invert) {
+  const ok = invert ? value >= limit : value <= limit;
+  return '<span class="pill ' + (ok ? 'ok' : 'bad') + '">'
+       + t(ok ? 'Meets the limit' : 'Above the limit') + '</span>';
+}
+/** A row of statistic cards, four across on a wide screen. */
+const stats = (cards, cols) => el('div', { class:'grid g' + (cols || 4) }, cards.filter(Boolean));
+/** The control bar that sits above a result. */
+const controls = kids => el('div', { class:'controls' }, kids.filter(Boolean));
+
+/**
+ * A page can be rebuilt in place when a control changes. The old DOM is held
+ * aside until the new one is complete, so a fault in a rebuild leaves the page
+ * standing with an explanation rather than blanking it.
+ */
+function rebuildable(host, build) {
+  const run = () => {
+    const old = Array.from(host.childNodes);
+    const frag = document.createDocumentFragment();
+    try {
+      build(frag, run);
+    } catch (err) {
+      console.error(err);
+      host.appendChild(el('div', { class:'warn',
+        text:'This view could not be rebuilt: ' + err.message }));
+      return;
+    }
+    PANELS = PANELS.filter(p => {
+      if (old.some(n => n.contains && n.contains(p.root))) { p.ro && p.ro.disconnect(); p.io && p.io.disconnect(); return false; }
+      return true;
+    });
+    old.forEach(n => n.remove());
+    host.appendChild(frag);
+    requestAnimationFrame(redrawVisiblePanels);
+    setTimeout(redrawVisiblePanels, 150);
+  };
+  run();
+}
+
+
+/* ============================================================ 7. PAGES ==
+   Each page is a function of the host element. The site and its climate are
+   read from STATE, which the boot sets before any page is built.
+   ====================================================================== */
+
+/* ------------------------------------------------------------ CLIMATE -- */
+function buildClimate(host) {
+  const S = STATE.site, C = STATE.clim, K = C.k;
+  pageHead(host, 'Climate',
+    'One code of two or three letters, computed from twelve temperatures and twelve rainfalls. Every page after this one is written against it.');
+
+  const mainName = KOPPEN_MAIN[K.main] ? KOPPEN_MAIN[K.main].name : '';
+  const letters = K.code.split('');
+  host.appendChild(stats([
+    statCard('Köppen–Geiger', K.code, null, t(mainName)),
+    statCard('Mean annual temperature', fmt(K.MAT, 1), '°C',
+      t('Coldest month') + ' ' + fmt(K.Tcold, 1) + ' · ' + t('warmest') + ' ' + fmt(K.Thot, 1)),
+    statCard('Mean annual precipitation', fmt(K.MAP, 0), 'mm',
+      fmt(100 * K.Psum / K.MAP, 0) + ' % ' + t('in the summer half-year')),
+    statCard('Months above 10 °C', fmt(K.Tmon10, 0), null, t('Decides the third letter'))
+  ]));
+
+  host.appendChild(hint('clim-method',
+    'The classification is Köppen–Geiger as Peel, Finlayson and McMahon (2007) state it — the formalisation that writes every criterion as an inequality rather than as a description. Nothing here was looked up: the code <b>%1</b> was computed from the normals you entered, and the table below shows which quantity decided each letter. The summer half-year is April to September in the northern hemisphere and October to March in the southern, which is a convention of the classification and not a season.',
+    [K.code]));
+
+  /* --- the climograph ----------------------------------------------------- */
+  const pMax = Math.max(10, Math.ceil(Math.max.apply(null, C.p) / 10) * 10);
+  const tLo = Math.min(0, Math.floor(Math.min.apply(null, C.t) / 5) * 5);
+  const tHi = Math.ceil(Math.max.apply(null, C.t) / 5) * 5;
+  const summer = K.south ? [9, 10, 11, 0, 1, 2] : [3, 4, 5, 6, 7, 8];
+
+  makePanel(host, {
+    title: 'The year, month by month',
+    note: 'Precipitation as bars against the left axis, mean temperature as a line against the right; the summer half-year is shaded',
+    aspect: 2.1,
+    render(ctx, W, H) {
+      const P = plotRect(54, 18, W - 54 - 54, H - 18 - 52, -0.5, 11.5, 0, pMax);
+      const T = plotRect(P.x, P.y, P.w, P.h, -0.5, 11.5, tLo, tHi);
+
+      // the summer half-year, behind everything
+      ctx.fillStyle = '#faf7f0';
+      summer.forEach(i => ctx.fillRect(P.sx(i - 0.5), P.y, P.w / 12, P.h));
+
+      drawAxes(ctx, P, { xTicks:[0,1,2,3,4,5,6,7,8,9,10,11], xFmt:i => MON3[i],
+                         yLabel:'Precipitation, mm', yCount:5 });
+
+      // precipitation bars
+      const bw = P.w / 12 * 0.56;
+      C.p.forEach((v, i) => {
+        const y = P.sy(v), h = P.y + P.h - y;
+        ctx.fillStyle = '#bcd2ea';
+        ctx.fillRect(P.sx(i) - bw / 2, y, bw, Math.max(0, h));
+      });
+
+      // the temperature line on its own scale
+      stroke(ctx, '#D97706', 2.2);
+      ctx.beginPath();
+      C.t.forEach((v, i) => { const x = T.sx(i), y = T.sy(v); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); });
+      ctx.stroke();
+      ctx.fillStyle = '#D97706';
+      C.t.forEach((v, i) => { ctx.beginPath(); ctx.arc(T.sx(i), T.sy(v), 2.6, 0, 6.284); ctx.fill(); });
+
+      // right-hand temperature axis
+      const tt = niceTicks(tLo, tHi, 5).ticks;
+      tt.forEach(v => label(ctx, fmt(v, 0), P.x + P.w + 7, T.sy(v), '#D97706', FM(10), 'left', 'middle'));
+      ctx.save();
+      ctx.translate(P.x + P.w + 38, P.y + P.h / 2); ctx.rotate(Math.PI / 2);
+      label(ctx, t('Mean temperature, °C'), 0, 0, '#D97706', F(10.5, '600'), 'center', 'middle');
+      ctx.restore();
+
+      swatchKey(ctx, P.x, P.y + P.h + 40,
+        [{ color:'#bcd2ea', label:'Precipitation' }, { color:'#D97706', label:'Mean temperature' }],
+        { cols:2, colWidth:160 });
+    },
+    csv: () => csvRows([['Month', 'Mean temperature (°C)', 'Precipitation (mm)']]
+      .concat(C.t.map((v, i) => [MONTHS_EN[i], v, C.p[i]])))
+  });
+
+  /* --- how each letter was decided ---------------------------------------- */
+  const rows = [];
+  const push = (letter, why, value, test) => rows.push([
+    '<b>' + letter + '</b>', t(why), value, test ]);
+
+  if (K.main === 'B') {
+    push(K.code[0], KOPPEN_MAIN.B.name, fmt(K.MAP, 0) + ' &lt; ' + fmt(10 * K.Pth, 0) + ' mm', KOPPEN_MAIN.B.test);
+    push(K.code[1], KOPPEN_SUB[K.code[1]].name,
+      fmt(K.MAP, 0) + (K.code[1] === 'W' ? ' &lt; ' : ' ≥ ') + fmt(5 * K.Pth, 0) + ' mm', KOPPEN_SUB[K.code[1]].test);
+    push(K.code[2], KOPPEN_SUB[K.code[2]].name, fmt(K.MAT, 1) + ' °C', KOPPEN_SUB[K.code[2]].test);
+  } else {
+    const m = KOPPEN_MAIN[K.main];
+    push(K.main, m.name,
+      K.main === 'A' ? fmt(K.Tcold, 1) + ' °C' :
+      K.main === 'E' ? fmt(K.Thot, 1) + ' °C' :
+      fmt(K.Thot, 1) + ' / ' + fmt(K.Tcold, 1) + ' °C', m.test);
+    for (let i = 1; i < letters.length; i++) {
+      const L = letters[i], sub = KOPPEN_SUB[L];
+      if (!sub) continue;
+      /* These read as symbols in either language — P<sub>sdry</sub> is not a
+         word — so they are assembled from literals and never sent to t(). */
+      let val = '';
+      if (L === 's') val = 'P<sub>sdry</sub> = ' + fmt(K.Psdry, 0) + ' mm · P<sub>wwet</sub> ÷ 3 = ' + fmt(K.Pwwet / 3, 0);
+      else if (L === 'w') val = 'P<sub>wdry</sub> = ' + fmt(K.Pwdry, 0) + ' mm · P<sub>swet</sub> ÷ 10 = ' + fmt(K.Pswet / 10, 0);
+      else if (L === 'f') val = 'P<sub>sdry</sub> = ' + fmt(K.Psdry, 0) + ' mm';
+      else if (L === 'a' || L === 'b' || L === 'c' || L === 'd')
+        val = fmt(K.Thot, 1) + ' °C · T<sub>mon10</sub> = ' + fmt(K.Tmon10, 0);
+      else if (L === 'm') val = 'P<sub>dry</sub> = ' + fmt(K.Pdry, 0) + ' mm';
+      else if (L === 'T' || L === 'F') val = fmt(K.Thot, 1) + ' °C';
+      push(L, sub.name, val, sub.test);
+    }
+  }
+
+  host.appendChild(section('How each letter was decided', 'Peel, Finlayson and McMahon (2007), Table 1',
+    'koppen-letters', () => csvRows([['Letter', 'Meaning', 'Value on this site', 'Criterion']]
+      .concat(rows.map(r => r.map(c => String(c).replace(/<[^>]+>/g, '').replace(/&lt;/g, '<').replace(/&gt;/g, '>')))))));
+  host.appendChild(dataTable(['Letter', 'Meaning', 'On this site', 'The criterion it tests'], rows, [1, 2, 3]));
+
+  host.appendChild(hint('clim-threshold',
+    'The aridity threshold <b>P<sub>th</sub></b> is what separates an arid climate from a merely dry-summered one, and it moves with <i>when</i> the rain falls rather than only how much: the same rainfall goes further in a cold month than in a hot one. On this site %1, so P<sub>th</sub> = <b>%2 mm</b> and the class B boundary sits at %3 mm of annual precipitation. This site has <b>%4 mm</b>.',
+    [t(K.thWhy === 'summer' ? 'at least 70 % of the rain falls in the summer half-year, so P th = 2 × MAT + 28'
+      : K.thWhy === 'winter' ? 'at least 70 % of the rain falls in the winter half-year, so P th = 2 × MAT'
+      : 'the rain is spread across both halves of the year, so P th = 2 × MAT + 14'),
+     fmt(K.Pth, 0), fmt(10 * K.Pth, 0), fmt(K.MAP, 0)]));
+
+  /* --- what the class asks of a building ---------------------------------- */
+  const note = KOPPEN_NOTE[K.code];
+  if (note) {
+    host.appendChild(section('What this climate asks of a building', K.code + ' · ' + t(mainName)));
+    host.appendChild(hint('clim-note-' + K.code, note));
+  } else {
+    host.appendChild(section('What this climate asks of a building', K.code));
+    host.appendChild(hint('clim-note-none',
+      'The shared bibliography is written for temperate and Mediterranean building and does not treat <b>%1</b> directly. The pages that follow still compute their geometry from this site’s own latitude and normals, but where a guideline is quoted from a book it will be a guideline written for another climate — read it as a method, not as a number to adopt.',
+      [K.code]));
+  }
+
+  /* --- the normals themselves, so the export carries them ----------------- */
+  host.appendChild(section('The normals this reading rests on', C.source || t('Source not named'),
+    'normals', () => csvRows([['Month', 'Mean temperature (°C)', 'Precipitation (mm)']]
+      .concat(C.t.map((v, i) => [MONTHS_EN[i], v, C.p[i]])))));
+  host.appendChild(dataTable(['Month', 'Mean temperature, °C', 'Precipitation, mm'],
+    C.t.map((v, i) => [MONTHS[i], fmt(v, 1), fmt(C.p[i], 0)]), [0]));
+  host.appendChild(hint('clim-normals',
+    'These are the twelve pairs you entered, and they are the whole of this application’s knowledge of the climate. If the station they come from is not the site — a coastal station read for an inland valley, a lowland station read for a site 400 m higher — then every page after this one inherits that difference. Name the station and the period in the field on the setup page and the export will carry it, so the reading can be audited later.'));
+}
+
+/* ------------------------------------------------------- ORIENTATION --
+   The best orientation for the selected site, from its latitude and its
+   Köppen class. Two computations, both geometric and both local:
+
+   1. the sun path — altitude against azimuth through solar time for 21 Jun,
+      20 Mar and 21 Dec, drawn from the NOAA formulation in sunPos();
+   2. the direct-sun hours each of the eight vertical facades receives,
+      month by month: the sun strikes a facade when it is above the horizon
+      and within 90° of the facade normal.
+
+   No weather, no obstructions and no reflections are assumed, so the hours
+   are a comparison between orientations, not a yield — cloud and horizon
+   cut every facade. Times are solar time (time zone = longitude ÷ 15), so
+   noon is the sun's culmination wherever the site sits. What to do with
+   each facade follows Gonçalves & Graça (2004), Olgyay (1963), Lechner
+   (2015) and DeKay & Brown (2014); the plan-level advice follows the
+   Köppen class from the previous tab. */
+const ORI_DAYS = [
+  { doy:172, key:'21 Jun' },
+  { doy:79,  key:'20 Mar' },
+  { doy:355, key:'21 Dec' }
+];
+const ORI_KEYS = ['N','NE','E','SE','S','SW','W','NW'];
+const ORI_GUIDE = {
+  S:  'Main solar aperture — living rooms here. Low winter sun enters deep; high summer sun is cut by a small overhang.',
+  SE: 'Good winter morning gain. Shade lightly against late-spring afternoons.',
+  SW: 'Winter afternoon gain, but summer heat peaks here — shade almost as aggressively as the west.',
+  E:  'Winter sun for a few morning hours only; full low sun on summer mornings. Modest glazing, exterior shade.',
+  W:  'The critical summer facade: low afternoon sun meets peak air temperature. Minimum glazing; fins, shutters, deciduous trees.',
+  N:  'No direct sun in the northern hemisphere: diffuse light and heat loss. Small openings; stairs, baths, storage.',
+  NE: 'Summer early-morning sun only; nothing in winter. Keep small.',
+  NW: 'Summer late-evening sun only; nothing in winter. Keep small and shaded.'
+};
+/** 0-based month of a non-leap day-of-year. */
+const DOY_MON = (() => {
+  const a = [];
+  MDAYS.forEach((n, m) => { for (let d = 0; d < n; d++) a.push(m); });
+  return a;
+})();
+/**
+ * Direct-sun hours per facade per month for a vertical unobstructed building.
+ * Step 0.5 h over the whole year: ~17,500 sun positions, each tested against
+ * the eight facade normals. Returns { monthly:12×8, winter:[8], summer:[8],
+ * annual:[8] } with the Köppen summer half-year (Apr–Sep north) as summer.
+ */
+function facadeSun(lat, lon) {
+  const tz = lon / 15;
+  const monthly = [];
+  for (let m = 0; m < 12; m++) monthly.push([0,0,0,0,0,0,0,0]);
+  for (let doy = 1; doy <= 365; doy++) {
+    const mo = DOY_MON[doy - 1];
+    for (let h = 0; h < 24; h += 0.5) {
+      const sp = sunPos(doy, h, lat, lon, tz);
+      if (sp.alt <= 0) continue;
+      for (let f = 0; f < 8; f++) {
+        let d = (sp.azi - f * 45) % 360;
+        if (d > 180) d -= 360; if (d < -180) d += 360;
+        if (Math.abs(d) < 90) monthly[mo][f] += 0.5;
+      }
+    }
+  }
+  const sumIdx = lat < 0 ? [9,10,11,0,1,2] : [3,4,5,6,7,8];
+  const winter = [0,0,0,0,0,0,0,0], summer = [0,0,0,0,0,0,0,0], annual = [0,0,0,0,0,0,0,0];
+  monthly.forEach((row, m) => row.forEach((v, f) => {
+    annual[f] += v;
+    (sumIdx.indexOf(m) >= 0 ? summer : winter)[f] += v;
+  }));
+  return { monthly, winter, summer, annual };
+}
+/** The plan-level recommendation for a Köppen code. Returns a PT_HINT id. */
+function orientationLead(code, main) {
+  if (main === 'B') return 'ori-lead-B';
+  if (code === 'Csa' || code === 'BSk') return 'ori-lead-Csa';
+  if (code === 'Csb') return 'ori-lead-Csb';
+  if (code === 'Cfb' || code === 'Cfa' || code === 'Csc' || code === 'Cfc') return 'ori-lead-Cfb';
+  return 'ori-lead-none';
+}
+
+function buildOrientation(host) {
+  const S = STATE.site, C = STATE.clim, K = C.k;
+  const lat = S.lat, lon = S.lon, tz = lon / 15;
+  pageHead(host, 'Orientation',
+    'Sun geometry for this latitude, and what each facade receives across the year. The recommendation follows the Köppen class from the previous tab.');
+
+  /* --- headline numbers --------------------------------------------------- */
+  const noon = doy => {
+    let best = -90;
+    for (let h = 0; h < 24; h += 0.1) {
+      const a = sunPos(doy, h, lat, lon, tz).alt;
+      if (a > best) best = a;
+    }
+    return best;
+  };
+  const dayLen = doy => {
+    const ss = sunriseSunset(doy, lat, lon, tz);
+    return ss ? ss.set - ss.rise : null;
+  };
+  const hh = v => v === null ? '–' : fmt(v, 1) + ' h';
+  host.appendChild(stats([
+    statCard('Latitude', fmt(Math.abs(lat), 1), lat < 0 ? '° S' : '° N', (S.place || S.nuts)),
+    statCard('Solar noon, 21 June', fmt(noon(172), 1), '°', t('culmination of the sun')),
+    statCard('Solar noon, 21 December', fmt(noon(355), 1), '°', t('low winter sun enters deep')),
+    statCard('Day length Jun / Dec', fmt(dayLen(172), 1) + ' / ' + fmt(dayLen(355), 1), 'h',
+      t('hours of possible sun'))
+  ]));
+
+  host.appendChild(hint('ori-method',
+    'Hours are counted geometrically — the sun above the horizon and striking the facade — in <b>solar time</b>, so noon is the culmination wherever the site sits. No cloud, no hills and no neighbouring buildings are assumed: treat the numbers as a comparison between orientations, not as energy. The summer half-year is April to September, the Köppen convention used on the previous tab.'));
+
+  /* --- the sun path -------------------------------------------------------- */
+  const tracks = ORI_DAYS.map(d => {
+    const pts = [];
+    for (let h = 0; h <= 24; h += 0.1) {
+      const sp = sunPos(d.doy, h, lat, lon, tz);
+      if (sp.alt > -0.5) pts.push({ h, alt:sp.alt, azi:sp.azi });
+    }
+    return { label:d.key, pts, noon:noon(d.doy) };
+  });
+  const yMax = Math.ceil((Math.max.apply(null, tracks.map(x => x.noon)) + 6) / 10) * 10;
+  const compass = v => COMPASS8[((Math.round(v / 45)) % 8 + 8) % 8];
+  makePanel(host, {
+    title: 'Sun path over the site',
+    note: 'Altitude against azimuth at the solstices and the equinox; dots mark solar noon',
+    aspect: 2.1,
+    render(ctx, W, H) {
+      const P = plotRect(46, 16, W - 46 - 14, H - 16 - 52, 0, 360, -2, yMax);
+      ctx.fillStyle = '#faf7f0';                       // the south quadrant
+      ctx.fillRect(P.sx(135), P.y, P.sx(225) - P.sx(135), P.h);
+      stroke(ctx, CH.line2, 1);
+      seg(ctx, P.x, px(P.sy(0)), P.x + P.w, px(P.sy(0)));
+      drawAxes(ctx, P, { xTicks:[0,45,90,135,180,225,270,315,360], xFmt:compass,
+                         yLabel:'Altitude, °', yCount:6 });
+      const cols = ['#DC2626', '#0D9488', '#2563EB'];
+      tracks.forEach((tr, i) => {
+        stroke(ctx, cols[i % 3], 2);
+        ctx.beginPath();
+        tr.pts.forEach((p, k) => { k ? ctx.lineTo(P.sx(p.azi), P.sy(p.alt)) : ctx.moveTo(P.sx(p.azi), P.sy(p.alt)); });
+        ctx.stroke();
+        const np = tr.pts.reduce((a, b) => b.alt > a.alt ? b : a, tr.pts[0]);
+        if (np) {
+          ctx.fillStyle = cols[i % 3];
+          ctx.beginPath(); ctx.arc(P.sx(np.azi), P.sy(np.alt), 3.4, 0, 6.284); ctx.fill();
+          label(ctx, tr.label + ' · ' + fmt(tr.noon, 0) + '°',
+            clamp(P.sx(np.azi) + 8, P.x, P.x + P.w - 92), P.sy(np.alt) - 7, CH.ink2, F(10), 'left', 'middle');
+        }
+      });
+      swatchKey(ctx, P.x, P.y + P.h + 40,
+        tracks.map((tr, i) => ({ color:cols[i % 3], label:tr.label })),
+        { cols:3, colWidth:130 });
+    },
+    csv: () => {
+      const rows = [['Solar time (h)', '21 Jun alt (°)', '21 Jun azi (°)',
+                     '20 Mar alt (°)', '20 Mar azi (°)', '21 Dec alt (°)', '21 Dec azi (°)']];
+      for (let h = 0; h <= 24; h += 0.5) {
+        const r = [h];
+        ORI_DAYS.forEach(d => { const sp = sunPos(d.doy, h, lat, lon, tz); r.push(+sp.alt.toFixed(1), +sp.azi.toFixed(1)); });
+        rows.push(r);
+      }
+      return csvRows(rows);
+    }
+  });
+
+  /* --- what each facade receives ------------------------------------------- */
+  const FS = facadeSun(lat, lon);
+  const sumLbl = lat < 0 ? 'Summer half-year (Oct–Mar)' : 'Summer half-year (Apr–Sep)';
+  const winLbl = lat < 0 ? 'Winter half-year (Apr–Sep)' : 'Winter half-year (Oct–Mar)';
+  makePanel(host, {
+    title: 'Direct-sun hours on each facade',
+    note: 'Unobstructed vertical facades over the whole year, split by half-year',
+    aspect: 2.1,
+    render(ctx, W, H) {
+      const yMaxB = niceDomain(0, Math.max.apply(null, FS.annual) * 1.02, 5, 0)[1];
+      const P = plotRect(52, 16, W - 52 - 14, H - 16 - 52, -0.6, 7.6, 0, yMaxB);
+      drawAxes(ctx, P, { xTicks:[0,1,2,3,4,5,6,7], xFmt:i => COMPASS8[i],
+                         yLabel:'Hours per year', yCount:5 });
+      const gw = P.w / 8, bw = Math.min(30, gw * 0.26);
+      for (let f = 0; f < 8; f++) {
+        const cx = P.sx(f);
+        const wv = FS.winter[f], sv = FS.summer[f];
+        ctx.fillStyle = '#2563EB';
+        const y1 = P.sy(wv);
+        ctx.fillRect(cx - bw - 1.5, y1, bw, P.y + P.h - y1);
+        ctx.fillStyle = '#D97706';
+        const y2 = P.sy(sv);
+        ctx.fillRect(cx + 1.5, y2, bw, P.y + P.h - y2);
+        label(ctx, fmt(wv + sv, 0), cx, Math.min(y1, y2) - 5, CH.ink2, FM(9.5), 'center', 'middle');
+      }
+      swatchKey(ctx, P.x, P.y + P.h + 40,
+        [{ color:'#2563EB', label:winLbl }, { color:'#D97706', label:sumLbl }],
+        { cols:2, colWidth:250 });
+    },
+    csv: () => csvRows([['Month'].concat(ORI_KEYS)]
+      .concat(FS.monthly.map((row, m) => [MONTHS_EN[m]].concat(row.map(v => +v.toFixed(1))))))
+  });
+
+  /* --- the recommendation --------------------------------------------------- */
+  host.appendChild(section('The recommendation for this site', K.code + ' · ' + fmt(Math.abs(lat), 1) + '° ' + (lat < 0 ? 'S' : 'N')));
+  const leadId = orientationLead(K.code, K.main);
+  host.appendChild(hint(leadId, {
+    'ori-lead-Csa': 'Elongate the plan east–west so the long facades face south and north; open the living rooms south with fixed plus movable shade; keep the west nearly blind; let mass and night ventilation carry July and August.',
+    'ori-lead-Csb': 'Elongate the plan east–west; generous south glass for the winter with light fixed shade for a short summer; cross ventilation and moderate mass.',
+    'ori-lead-Cfb': 'Daylight and wind govern, not heat: shallow plan for daylight, high windows to the south and south-east, shelter the north from prevailing Atlantic winds and driving rain, moderate inertia against condensation.',
+    'ori-lead-B': 'The daily swing is the resource: compact form, small openings except a south mass or Trombe wall, heavy mass discharged by night ventilation; patio or earth tempering where the slope allows.',
+    'ori-lead-none': 'Apply the hemisphere rule below: collect winter sun from the south, refuse summer sun from the east and above all the west.'
+  }[leadId]));
+
+  host.appendChild(hint('ori-form',
+    'Long axis east–west, short ends east and west (Ching &amp; Shapiro; DeKay &amp; Brown): the south facade collects the winter, the north gives diffuse light, and the two ends that no overhang can shade stay short.'));
+
+  /* --- the plan laboratory: stretch it, turn it, meet Olgyay ----------------
+     A top-down massing the student stretches in both directions and rotates,
+     against the green dashed optimum interpolated from Olgyay's anchors —
+     17° east of south for New York–New Jersey, 25° for Phoenix (1963,
+     p. 58), elongations 1:1.6 and 1:1.3 adopted (p. 88). Rotation is the
+     azimuth of the main (glazed) facade, clockwise from north. */
+  host.appendChild(section('Plan geometry — stretch it, turn it',
+    'The solid plan is yours; the green dashed plan is the Olgyay optimum for ' + K.code));
+  host.appendChild(hint('ori-lab',
+    'Olgyay put the most sun on the facade in the underheated period and the least in the overheated one: New York–New Jersey came out <b>17° east of south</b>, Phoenix <b>25° east of south</b>, heat weighted four-to-one (1963, p. 58). For form, the square is never the optimum, north–south elongation is worse than the square, and the optimum always lies somewhere along east–west — 1:1.6 adopted for New York, 1:1.3 for Phoenix (p. 88), with east–west elongation “definitely desirable” in the temperate zone (p. 90). The green form interpolates those anchors for <b>%1</b>; stretch and turn yours against it.',
+    [K.code]));
+
+  const OI = { Csa:{ az:160, r:1.3 }, Csb:{ az:163, r:1.6 },
+               Cfb:{ az:170, r:1.4 }, Cfa:{ az:170, r:1.4 }, Csc:{ az:170, r:1.4 },
+               BSk:{ az:160, r:1.3 }, BSh:{ az:160, r:1.3 } }[K.code] || { az:163, r:1.4 };
+  if (lat < 0) OI.az = (180 + OI.az) % 360;   // southern hemisphere: mirror to east of north
+  const G = { L:12, D:8, rot:180 };
+  const circDev = (a, b) => { const d = Math.abs(a - b) % 360; return d > 180 ? 360 - d : d; };
+  const labRatio = () => Math.max(G.L, G.D) / Math.min(G.L, G.D);
+  /** Long-axis direction in [0,180): 90 runs east–west, 0/180 north–south. */
+  const longAxis = () => ((G.L >= G.D ? G.rot - 90 : G.rot) % 180 + 180) % 180;
+  function formClass() {
+    if (labRatio() < 1.15) return 'sq';
+    const la = longAxis();
+    if (Math.abs(la - 90) <= 30) return 'ew';
+    if (Math.min(la, 180 - la) <= 30) return 'ns';
+    return 'diag';
+  }
+  /**
+   * The 0–100 Olgyay fit: 60 % orientation (full marks on the green normal,
+   * zero at 90° off) plus 40 % form (closeness to the 1:X elongation,
+   * discounted for diagonal, square and north–south plans). A didactic
+   * index, not an energy prediction.
+   */
+  function labScore() {
+    const dev = circDev(G.rot, OI.az);
+    const ori = Math.max(0, 100 - dev * (100 / 90));
+    const prox = Math.max(0, 1 - Math.abs(labRatio() - OI.r) / 1.5);
+    const k = { ew:1, diag:0.8, sq:0.6, ns:0.4 }[formClass()];
+    const form = 100 * prox * k;
+    return { total:Math.round(0.6 * ori + 0.4 * form), ori:Math.round(ori), form:Math.round(form) };
+  }
+  /** Frame shared by the render and the pointer handlers. */
+  const labFrame = (W, H) => {
+    const cx = W / 2, cy = (H + 18) / 2;
+    const R = Math.min(W, H - 18) * 0.40;
+    const A = G.L * G.D;
+    const Li = Math.sqrt(A * OI.r), Di = Math.sqrt(A / OI.r);
+    const arr = Math.max(2.5, 0.3 * Math.min(G.L, G.D));
+    const need = Math.max(Math.hypot(G.L, G.D), Math.hypot(Li, Di)) / 2 + arr + 1.5;
+    return { cx, cy, R, s:(R - 16) / need };
+  };
+
+  const pillOri = el('span', { class:'pill ok' });
+  const pillForm = el('span', { class:'pill ok' });
+  host.appendChild(el('div', { class:'limitrow' }, [pillOri, pillForm]));
+  function refreshLab() {
+    const dev = circDev(G.rot, OI.az), fc = formClass(), r = labRatio();
+    if (dev <= 10) { pillOri.className = 'pill ok'; pillOri.textContent = t('At the Olgyay optimum'); }
+    else if (dev <= 25) { pillOri.className = 'pill empty'; pillOri.textContent = t('Close — nudge it east of south'); }
+    else { pillOri.className = 'pill bad'; pillOri.textContent = t('Far from the optimum — follow the green normal'); }
+    if (fc === 'ew' && Math.abs(r - OI.r) <= 0.35) { pillForm.className = 'pill ok'; pillForm.textContent = t('East–west near 1 : ') + fmt(OI.r, 1); }
+    else if (fc === 'ns') { pillForm.className = 'pill bad'; pillForm.textContent = t('North–south — the least efficient'); }
+    else if (fc === 'sq') { pillForm.className = 'pill empty'; pillForm.textContent = t('Square — never the optimum'); }
+    else if (fc === 'ew') { pillForm.className = 'pill empty'; pillForm.textContent = t('East–west — stretch toward 1 : ') + fmt(OI.r, 1); }
+    else { pillForm.className = 'pill empty'; pillForm.textContent = t('Diagonal — settle the long axis east–west'); }
+  }
+
+  let labPanel = null;
+  const labDraw = () => { if (labPanel) labPanel.draw(); refreshLab(); };
+  const syncCtl = (c, v, f) => { c.range.value = v; c.out.textContent = f(v); };
+  const cL = rangeCtl('Length along main facade', 6, 24, 0.5, G.L, v => { G.L = v; labDraw(); }, v => fmt(v, 1) + ' m');
+  const cD = rangeCtl('Depth', 4, 16, 0.5, G.D, v => { G.D = v; labDraw(); }, v => fmt(v, 1) + ' m');
+  const cR = rangeCtl('Main facade faces', 0, 360, 1, G.rot, v => { G.rot = v; labDraw(); }, v => fmt(v, 0) + '°');
+  const snap = el('button', { class:'btn solid', text:'Snap to the Olgyay optimum', onclick: () => {
+    const A = G.L * G.D;
+    G.L = Math.round(Math.sqrt(A * OI.r) * 2) / 2;
+    G.D = Math.round(Math.sqrt(A / OI.r) * 2) / 2;
+    G.rot = Math.round(OI.az);
+    syncCtl(cL, G.L, v => fmt(v, 1) + ' m');
+    syncCtl(cD, G.D, v => fmt(v, 1) + ' m');
+    syncCtl(cR, G.rot, v => fmt(v, 0) + '°');
+    labDraw();
+    toast('Snapped to the Olgyay optimum');
+  }});
+  host.appendChild(controls([cL, cD, cR, snap]));
+
+  labPanel = makePanel(host, {
+    title: 'Your plan against the optimum',
+    note: 'Top-down view, north up. Drag the plan to stretch it, drag the black knob to turn it.',
+    aspect: 1.5,
+    render(ctx, W, H) {
+      const GREEN = '#16A34A';
+      const { cx, cy, R, s } = labFrame(W, H);
+      const A = G.L * G.D;
+      const Li = Math.sqrt(A * OI.r), Di = Math.sqrt(A / OI.r);
+      const arr = Math.max(2.5, 0.3 * Math.min(G.L, G.D));
+      const P2 = (x, y) => [cx + x * s, cy - y * s];
+      const rot = (x, y, cw) => {
+        const a = cw * RAD;
+        return [x * Math.cos(a) + y * Math.sin(a), -x * Math.sin(a) + y * Math.cos(a)];
+      };
+      const at = (x, y, beta) => { const q = rot(x, y, beta); return P2(q[0], q[1]); };
+      const arrow = (x1, y1, x2, y2, color, dash) => {
+        stroke(ctx, color, 2, dash || null); seg(ctx, x1, y1, x2, y2);
+        const a0 = Math.atan2(y2 - y1, x2 - x1), hl = 8;
+        seg(ctx, x2, y2, x2 - hl * Math.cos(a0 - 0.45), y2 - hl * Math.sin(a0 - 0.45));
+        seg(ctx, x2, y2, x2 - hl * Math.cos(a0 + 0.45), y2 - hl * Math.sin(a0 + 0.45));
+      };
+
+      // compass ring
+      stroke(ctx, CH.line, 1.2);
+      ctx.beginPath(); ctx.arc(cx, cy, R, 0, 6.284); ctx.stroke();
+      for (let a = 0; a < 360; a += 15) {
+        const big = a % 45 === 0, r1 = R - (big ? 7 : 4);
+        stroke(ctx, big ? CH.muted : CH.line, 1);
+        seg(ctx, cx + r1 * Math.sin(a * RAD), cy - r1 * Math.cos(a * RAD),
+                 cx + R * Math.sin(a * RAD), cy - R * Math.cos(a * RAD));
+      }
+      [['N', 0], ['E', 90], ['S', 180], ['W', 270]].forEach(([c, a]) =>
+        label(ctx, c, cx + (R + 13) * Math.sin(a * RAD), cy - (R + 13) * Math.cos(a * RAD),
+          a === 0 ? CH.ink : CH.muted, F(11, '600'), 'center', 'middle'));
+
+      // diurnal sun markers on the ring
+      [{ az:90, label:'morning', c:'#D97706' }, { az:180, label:'noon', c:'#EA580C' },
+       { az:270, label:'afternoon · hot', c:'#DC2626' }].forEach(sn => {
+        const dx = cx + R * Math.sin(sn.az * RAD), dy = cy - R * Math.cos(sn.az * RAD);
+        ctx.fillStyle = sn.c;
+        ctx.beginPath(); ctx.arc(dx, dy, 4, 0, 6.284); ctx.fill();
+      });
+
+      // the two plans
+      const rect = (L, D, beta, dashed) => {
+        const cs = [[L/2, D/2], [-L/2, D/2], [-L/2, -D/2], [L/2, -D/2]].map(pt => at(pt[0], pt[1], beta));
+        ctx.beginPath();
+        cs.forEach((p, i) => i ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1]));
+        ctx.closePath();
+        if (dashed) { stroke(ctx, GREEN, 2.2, [7, 5]); ctx.stroke(); }
+        else {
+          ctx.fillStyle = 'rgba(20,23,26,.05)'; ctx.fill();
+          stroke(ctx, CH.ink, 2); ctx.stroke();
+        }
+      };
+      const normalArrow = (L, D, beta, color, dashed, tag) => {
+        const mq = rot(0, -D / 2, beta), nq = rot(0, -1, beta);
+        const a = P2(mq[0], mq[1]), b = P2(mq[0] + nq[0] * arr, mq[1] + nq[1] * arr);
+        arrow(a[0], a[1], b[0], b[1], color, dashed ? [6, 4] : null);
+        if (tag) label(ctx, tag, b[0], b[1] - 9, color, F(10, '600'), 'center', 'middle');
+        return { a, b };
+      };
+      rect(Li, Di, OI.az - 180, true);
+      rect(G.L, G.D, G.rot - 180, false);
+      normalArrow(Li, Di, OI.az - 180, GREEN, true, 'Olgyay optimum');
+      const sa = normalArrow(G.L, G.D, G.rot - 180, CH.ink, false, null);
+      // the rotation knob: a black dot on the student's arrow-tip
+      ctx.fillStyle = '#fff';
+      ctx.beginPath(); ctx.arc(sa.b[0], sa.b[1], 9, 0, 6.284); ctx.fill();
+      ctx.fillStyle = CH.ink;
+      ctx.beginPath(); ctx.arc(sa.b[0], sa.b[1], 5.5, 0, 6.284); ctx.fill();
+
+      // dimensions of the student's plan
+      const dl = at(0, -G.D / 2 - 1.4, G.rot - 180);
+      label(ctx, fmt(G.L, 1) + ' m', dl[0], dl[1], CH.ink2, FM(9.5), 'center', 'middle');
+      const ds = at(G.L / 2 + 1.4, 0, G.rot - 180);
+      label(ctx, fmt(G.D, 1) + ' m', ds[0], ds[1], CH.ink2, FM(9.5), 'center', 'middle');
+
+      // readout and score badge
+      label(ctx, fmt(A, 0) + ' m² · 1 : ' + fmt(labRatio(), 2) + ' · Δ ' + fmt(circDev(G.rot, OI.az), 0) + '°',
+        8, 12, CH.ink2, FM(11), 'left', 'middle');
+      const sc = labScore();
+      const bcol = sc.total >= 80 ? GREEN : sc.total >= 50 ? '#D97706' : '#DC2626';
+      ctx.fillStyle = '#fff';
+      ctx.fillRect(W - 80, 6, 72, 52);
+      stroke(ctx, bcol, 1.5); ctx.strokeRect(W - 80, 6, 72, 52);
+      label(ctx, String(sc.total), W - 44, 31, bcol, FM(24), 'center', 'middle');
+      label(ctx, t('Olgyay fit') + ' /100', W - 44, 50, CH.muted, F(9), 'center', 'middle');
+      swatchKey(ctx, 8, H - 30,
+        [{ color:CH.ink, label:'Your plan' }, { color:GREEN, label:'Olgyay optimum' },
+         { color:'#D97706', label:'morning' }, { color:'#EA580C', label:'noon' },
+         { color:'#DC2626', label:'afternoon · hot' }],
+        { cols:3, colWidth:150, rowHeight:14 });
+    },
+    csv: () => csvRows([['Parameter', 'Value'],
+      ['Student length (m)', +G.L.toFixed(1)], ['Student depth (m)', +G.D.toFixed(1)],
+      ['Student main facade azimuth (°)', +G.rot.toFixed(0)],
+      ['Olgyay optimum azimuth (°)', +OI.az.toFixed(0)],
+      ['Olgyay elongation (long:short)', +OI.r.toFixed(2)],
+      ['Deviation (°)', +circDev(G.rot, OI.az).toFixed(0)],
+      ['Olgyay fit (0–100)', labScore().total],
+      ['Köppen–Geiger', STATE.clim.k.code]])
+  });
+  host.appendChild(hint('ori-score',
+    'The badge is a didactic index, not an energy prediction: 60 % orientation — full marks on the green normal, zero at 90° off — plus 40 % form — closeness to the 1:X elongation, discounted for square, diagonal and north–south plans. Two plans can share a score and behave differently; read it with the pills.'));
+
+  /* --- direct manipulation: drag the body to stretch, the knob to turn ----- */
+  const cv = labPanel.canvas;
+  cv.style.touchAction = 'none';
+  cv.style.cursor = 'grab';
+  const toPlan = (px, py) => {
+    const F = labFrame(labPanel.W, labPanel.H);
+    return { x:(px - F.cx) / F.s, y:-(py - F.cy) / F.s };
+  };
+  const toLocal = (x, y) => {
+    const a = (G.rot - 180) * RAD;
+    return { u:x * Math.cos(a) - y * Math.sin(a), v:x * Math.sin(a) + y * Math.cos(a) };
+  };
+  /** Student knob in plan metres: facade midpoint plus the normal times arr. */
+  const knobPlan = () => {
+    const a = (G.rot - 180) * RAD, c = Math.cos(a), q = Math.sin(a);
+    const arr = Math.max(2.5, 0.3 * Math.min(G.L, G.D));
+    return { x:(-G.D / 2) * q + (-q) * arr, y:(-G.D / 2) * c + (-c) * arr };
+  };
+  /** 'rotate' on the knob, 'stretch' on the body, null elsewhere. */
+  const hitAt = (clientX, clientY) => {
+    const r = cv.getBoundingClientRect();
+    const F = labFrame(labPanel.W, labPanel.H);
+    const px = clientX - r.left, py = clientY - r.top;
+    const k = knobPlan();
+    const kx = F.cx + k.x * F.s, ky = F.cy - k.y * F.s;
+    if (Math.hypot(px - kx, py - ky) <= 15) return 'rotate';
+    const p = { x:(px - F.cx) / F.s, y:-(py - F.cy) / F.s };
+    const l = toLocal(p.x, p.y);
+    if (Math.abs(l.u) <= G.L / 2 + 2.5 && Math.abs(l.v) <= G.D / 2 + 2.5) return 'stretch';
+    return null;
+  };
+  let drag = null;
+  cv.addEventListener('pointerdown', ev => {
+    const h = hitAt(ev.clientX, ev.clientY);
+    if (!h) return;
+    ev.preventDefault();
+    const r = cv.getBoundingClientRect();
+    const p = toPlan(ev.clientX - r.left, ev.clientY - r.top);
+    if (h === 'rotate') {
+      const az = (Math.atan2(p.x, p.y) / RAD + 360) % 360;
+      drag = { kind:'rotate', off:((az - G.rot) % 360 + 540) % 360 - 180 };
+    } else {
+      const l = toLocal(p.x, p.y);
+      drag = { kind:'stretch', L0:G.L, D0:G.D, e0:2 * Math.abs(l.u), f0:2 * Math.abs(l.v) };
+    }
+    try { cv.setPointerCapture(ev.pointerId); } catch (err) {}
+    cv.style.cursor = 'grabbing';
+  });
+  cv.addEventListener('pointermove', ev => {
+    if (!drag) {
+      const h = hitAt(ev.clientX, ev.clientY);
+      cv.style.cursor = h === 'rotate' ? 'grab' : h === 'stretch' ? 'nwse-resize' : 'default';
+      return;
+    }
+    ev.preventDefault();
+    const r = cv.getBoundingClientRect();
+    const p = toPlan(ev.clientX - r.left, ev.clientY - r.top);
+    if (drag.kind === 'rotate') {
+      const az = (Math.atan2(p.x, p.y) / RAD + 360) % 360;
+      G.rot = Math.round((((az - drag.off) % 360) + 360) % 360);
+      syncCtl(cR, G.rot, v => fmt(v, 0) + '°');
+    } else {
+      const l = toLocal(p.x, p.y);
+      G.L = Math.round(clamp(drag.L0 + (2 * Math.abs(l.u) - drag.e0), 6, 24) * 2) / 2;
+      G.D = Math.round(clamp(drag.D0 + (2 * Math.abs(l.v) - drag.f0), 4, 16) * 2) / 2;
+      syncCtl(cL, G.L, v => fmt(v, 1) + ' m');
+      syncCtl(cD, G.D, v => fmt(v, 1) + ' m');
+    }
+    labDraw();
+  });
+  const endDrag = () => { drag = null; cv.style.cursor = 'grab'; };
+  cv.addEventListener('pointerup', endDrag);
+  cv.addEventListener('pointercancel', endDrag);
+  cv.addEventListener('pointerleave', ev => { if (!drag) cv.style.cursor = 'grab'; });
+  refreshLab();
+
+  host.appendChild(section('What to do with each facade',
+    'After Gonçalves & Graça (2004), Olgyay (1963), Lechner (2015) and DeKay & Brown (2014)',
+    'facade-guidance', () => csvRows([['Facade', 'Winter sun (h)', 'Summer sun (h)', 'Annual sun (h)']]
+      .concat(ORI_KEYS.map((k, f) => [k, +FS.winter[f].toFixed(0), +FS.summer[f].toFixed(0), +FS.annual[f].toFixed(0)])))));
+  host.appendChild(dataTable(['Facade', 'Winter sun, h', 'Summer sun, h', 'Annual sun, h', 'What to do with it'],
+    ORI_KEYS.map((k, f) => ['<b>' + COMPASS8[f] + '</b>', fmt(FS.winter[f], 0), fmt(FS.summer[f], 0),
+      fmt(FS.annual[f], 0), t(ORI_GUIDE[k])]), [4]));
+}
+
+/* --------------------------------------------------------------- 8. BOOT -- */
+const TABS = [
+  { key:'climate', label:'Climate', build:buildClimate },
+  { key:'orientation', label:'Orientation', build:buildOrientation }
+];
+
+/* --- the references, built from one list so the footer and the pages agree - */
+const REFS = [
+  ['Peel, M. C., Finlayson, B. L., &amp; McMahon, T. A. (2007). Updated world map of the Köppen–Geiger climate classification. <i>Hydrology and Earth System Sciences, 11</i>(5), 1633–1644.',
+   'The formalisation of Köppen–Geiger this application computes: every criterion stated as an inequality, including the aridity threshold and the summer half-year convention.', 'https://doi.org/10.5194/hess-11-1633-2007'],
+  ['Olgyay, V. (1963). <i>Design with climate: Bioclimatic approach to architectural regionalism</i>. Princeton University Press.',
+   'The bioclimatic method itself, and the reading of orientation and form as climate responses before they are anything else.', null],
+  ['DeKay, M., &amp; Brown, G. Z. (2014). <i>Sun, wind, and light: Architectural design strategies</i> (3rd ed.). Wiley.',
+   'Design strategies stated as quantities a student can test a plan against — building depth for daylight, orientation, glazing area and the organisation of the plan.', null],
+  ['Lechner, N. (2015). <i>Heating, cooling, lighting: Sustainable design methods for architects</i> (4th ed.). Wiley.',
+   'Solar geometry, shading design, and the ordering of passive strategy before mechanical provision.', null],
+  ['Hyde, R. (Ed.). (2008). <i>Bioclimatic housing: Innovative designs for warm climates</i>. Earthscan.',
+   'Housing in warm and Mediterranean climates, and the regional reading of the Köppen classes the Iberian peninsula falls in.', null],
+  ['Ching, F. D. K., &amp; Shapiro, I. M. (2014). <i>Green building illustrated</i>. Wiley.',
+   'Surface-to-volume ratio, window-to-wall ratio, and the envelope read as one continuous surface.', null],
+  ['Brophy, V., &amp; Lewis, J. O. (2011). <i>A green Vitruvius: Principles and practice of sustainable architectural design</i> (2nd ed.). Earthscan.',
+   'The European reading of glazing strategy, buffer spaces and the envelope as a whole.', null],
+  ['Galloway, T. (2004). <i>Solar house: A guide for the solar designer</i>. Architectural Press.',
+   'Solar collection as a plan and section problem rather than an equipment problem.', null],
+  ['Phillips, D. (2004). <i>Daylighting: Natural light in architecture</i>. Architectural Press.',
+   'Daylight as the resource that sets plan depth and window position.', null],
+  ['Steane, M. A. (2011). <i>The architecture of light: Recent approaches to designing with natural light</i>. Routledge.',
+   'Daylight read qualitatively, against the quantitative guidance the other sources give.', null],
+  ['Sustainable Buildings Industry Council. (2007). <i>Green building guidelines: Meeting the demand for low-energy, resource-efficient homes</i> (5th ed.).',
+   'Guideline values for dwellings, used as a cross-check where the other sources disagree.', null],
+  ['Gonçalves, H., &amp; Mariz Graça, J. (2004). <i>Conceitos bioclimáticos para os edifícios em Portugal</i>. DGGE/IP-3E.',
+   'The Portuguese reading of bioclimatic strategy, and the character of the country’s own climatic zones.', null],
+  ['IPMA (2022). <i>Fichas Climatológicas 1981–2010</i>, v2.2. Divisão de Clima e Alterações Climáticas.',
+   'The observed monthly means and totals embedded for 28 stations — homogeneous series plus WRF-modelled infill after WMO-No. 1203.', 'https://www.ipma.pt/pt/oclima/normais.clima/']
+];
+function buildRefs() {
+  const ul = $('#refList');
+  if (!ul) return;
+  ul.innerHTML = '';
+  REFS.forEach(r => ul.appendChild(el('li', { html:
+    r[0] + (r[2] ? ' <a href="' + r[2] + '" target="_blank" rel="noopener noreferrer">doi</a>' : '')
+    + ' <span style="color:var(--faint)">' + t(r[1]) + '</span>' })));
+}
+
+/* --- the setup screen ------------------------------------------------------ */
+const LS_LANG = 'arca-lang', LS_CLIM = 'arca-normals';
+
+/** Twenty-four numbers is too many to retype after every reload, so the last
+ *  set entered is kept in this browser and offered back on the setup screen. */
+function loadNormals() {
+  try {
+    const raw = localStorage.getItem(LS_CLIM);
+    if (!raw) return CLIM_BLANK();
+    const o = JSON.parse(raw);
+    if (!o || !Array.isArray(o.t) || !Array.isArray(o.p) || o.t.length !== 12 || o.p.length !== 12)
+      return CLIM_BLANK();
+    return { t:o.t.map(v => (v === null ? null : +v)), p:o.p.map(v => (v === null ? null : +v)),
+             source: typeof o.source === 'string' ? o.source : '' };
+  } catch (e) { return CLIM_BLANK(); }
+}
+function saveNormals(c) {
+  try { localStorage.setItem(LS_CLIM, JSON.stringify(c)); } catch (e) {}
+}
+
+/* ------------------------------------------------------- EPW IMPORT --
+   An EnergyPlus weather file (.epw) holds 8,760 hourly records plus a
+   LOCATION header line. Monthly normals are aggregated locally:
+     T[m] = mean of field 7 (dry-bulb °C) over month m
+     P[m] = sum of field 34 (liquid precipitation depth, mm) over month m
+   Column indices are 0-based after splitting on commas. Missing dry-bulb
+   (99.9) and missing precipitation (>=999 or negative) are skipped. Many
+   TMY/INETI files ship with an all-zero precipitation column — that is
+   reported as pEmpty so the student keeps the IPMA totals by hand instead
+   of classifying on zeros. Nothing is uploaded: FileReader parses on this
+   computer. */
+function parseEPW(text, fileName) {
+  const lines = String(text || '').split(/\r?\n/);
+  if (lines.length < 20) throw new Error('Not an EPW file: too few lines');
+  const head = lines[0].trim().split(',');
+  if (head[0].trim().toUpperCase() !== 'LOCATION')
+    throw new Error('Not an EPW file: first line is not LOCATION');
+  const strip = s => String(s || '').trim().replace(/^"|"$/g, '');
+  const city = strip(head[1]) || (fileName || 'EPW station');
+  const lat = parseFloat(head[6]), lon = parseFloat(head[7]), alt = parseFloat(head[9]);
+  const tSum = new Array(12).fill(0), tN = new Array(12).fill(0);
+  const pSum = new Array(12).fill(0), pN = new Array(12).fill(0);
+  let nHours = 0;
+  for (let i = 1; i < lines.length; i++) {
+    const ln = lines[i].trim();
+    if (!ln || ln[0] < '0' || ln[0] > '9') continue;   // skip header lines
+    const c = ln.split(',');
+    if (c.length < 34) continue;
+    const mo = parseInt(c[1], 10);
+    if (!(mo >= 1 && mo <= 12)) continue;
+    const db = parseFloat(c[6]);
+    if (isFinite(db) && Math.abs(db) < 90) { tSum[mo - 1] += db; tN[mo - 1]++; }
+    const pr = parseFloat(c[33]);
+    if (isFinite(pr) && pr >= 0 && pr < 999) { pSum[mo - 1] += pr; pN[mo - 1]++; }
+    nHours++;
+  }
+  if (nHours < 8000) throw new Error('Not an EPW file: only ' + nHours + ' hourly records found');
+  for (let m = 0; m < 12; m++) if (!tN[m]) throw new Error('EPW has no usable dry-bulb data for month ' + (m + 1));
+  const t = tSum.map((s, m) => s / tN[m]);
+  const pTotal = pSum.reduce((a, b) => a + b, 0);
+  const pEmpty = !(pTotal > 0.05);   // TMY files often carry a zeroed column
+  return {
+    city: city, lat: isFinite(lat) ? lat : null, lon: isFinite(lon) ? lon : null,
+    alt: isFinite(alt) ? alt : null, t: t, p: pSum, pEmpty: pEmpty, nHours: nHours
+  };
+}
+
+/* --------------------------------------------------- IPMA NORMALS --
+   Official 1981–2010 climatological normals, transcribed from the IPMA
+   fichas climatológicas (v2.2, 2022; homogeneous observed series plus
+   WRF-modelled infill after WMO-No. 1203). TT = monthly mean of daily-mean
+   air temperature (°C); Prec = monthly mean total precipitation (mm).
+   Selecting one of these sources fills the twelve boxes and the station
+   coordinates — the altitude must then be corrected to the building, not
+   the station. No values are invented: stations without a ficha here stay
+   manual. */
+const IPMA_DATA = {
+  'IPMA, Lisboa/Gago Coutinho, 1981–2010': { st:'Lisboa / Gago Coutinho', lat:38.77, lon:-9.13, alt:104,
+    t:[10.8,12.0,14.2,15.4,17.7,21.0,23.0,23.5,22.0,18.4,14.3,11.7],
+    p:[99.5,82.9,50.8,63.4,50.2,15.3,4.3,5.7,31.4,100.6,124.1,116.4] },
+  'IPMA, Lisboa/Geofísico, 1981–2010': { st:'Lisboa / Instituto Geofísico', lat:38.72, lon:-9.15, alt:77,
+    t:[11.5,12.6,14.9,15.9,18.0,21.2,23.1,23.5,22.1,18.8,15.0,12.3],
+    p:[99.2,84.3,52.1,68.0,52.6,15.6,3.9,6.1,32.6,97.7,127.5,126.2] },
+  'IPMA, Porto/Pedras Rubras, 1981–2010': { st:'Porto / Pedras Rubras', lat:41.23, lon:-8.68, alt:68,
+    t:[10.0,10.9,12.8,13.7,15.7,18.6,19.9,20.1,19.1,16.4,13.2,11.1],
+    p:[137.1,96.7,89.2,102.1,83.0,36.2,17.4,29.5,70.0,142.7,166.9,168.8] },
+  'IPMA, Aveiro, 1981–2010': { st:'Aveiro / Universidade', lat:40.64, lon:-8.66, alt:4,
+    t:[10.4,11.4,13.3,14.3,16.3,18.9,20.1,20.3,19.5,17.0,13.6,11.4],
+    p:[119.8,87.5,67.2,91.2,74.9,29.2,13.5,19.3,49.3,129.3,127.8,134.5] },
+  'IPMA, Viana do Castelo, 1981–2010': { st:'Viana do Castelo / Meadela', lat:41.71, lon:-8.80, alt:16,
+    t:[9.7,10.5,12.6,13.7,15.9,19.2,20.8,20.8,19.2,16.1,12.7,10.8],
+    p:[180.8,131.0,112.5,125.9,99.0,52.0,29.1,38.5,94.5,190.0,199.9,213.3] },
+  'IPMA, Vila Real, 1981–2010': { st:'Vila Real', lat:41.27, lon:-7.72, alt:562,
+    t:[6.0,7.7,10.5,11.7,14.8,19.0,21.6,21.7,19.0,14.3,9.6,7.0],
+    p:[129.6,98.4,75.4,91.6,66.1,38.7,12.8,24.4,53.2,130.8,128.5,168.6] },
+  'IPMA, Bragança, 1981–2010': { st:'Bragança', lat:41.80, lon:-6.74, alt:691,
+    t:[4.5,6.1,9.1,10.7,14.0,18.7,21.7,21.6,18.3,13.1,8.2,5.4],
+    p:[92.8,63.7,53.9,65.2,65.0,35.4,15.4,17.4,47.7,102.2,92.4,121.6] },
+  'IPMA, Chaves, 1981–2010': { st:'Chaves / Aeródromo', lat:41.73, lon:-7.47, alt:353,
+    t:[6.0,7.5,10.3,12.2,15.2,19.5,21.9,21.8,18.9,14.3,9.6,6.9],
+    p:[79.6,52.8,50.4,61.2,53.7,27.8,15.2,21.0,37.5,93.0,82.4,104.1] },
+  'IPMA, Montalegre, 1981–2010': { st:'Montalegre', lat:41.82, lon:-7.79, alt:1005,
+    t:[4.1,4.9,7.1,8.2,11.2,15.6,18.1,18.2,15.5,11.0,7.2,5.0],
+    p:[197.6,136.8,123.7,126.1,112.2,52.6,21.8,30.6,72.0,199.0,178.1,243.8] },
+  'IPMA, Mirandela, 1981–2010': { st:'Mirandela', lat:41.51, lon:-7.19, alt:250,
+    t:[5.9,7.7,10.8,12.9,16.4,21.2,24.0,23.8,20.5,15.2,9.9,6.9],
+    p:[58.9,39.7,41.7,45.4,45.9,29.8,15.1,16.3,33.9,75.5,65.5,76.9] },
+  'IPMA, Viseu, 1981–2010': { st:'Viseu', lat:40.71, lon:-7.90, alt:644,
+    t:[7.1,8.4,11.0,11.8,14.5,18.7,21.1,21.6,18.5,14.5,10.0,7.7],
+    p:[183.2,103.5,98.2,118.7,98.2,37.6,19.5,28.5,60.4,173.7,161.8,201.0] },
+  'IPMA, Guarda, 1981–2010': { st:'Guarda', lat:40.54, lon:-7.27, alt:1019,
+    t:[4.1,5.2,7.8,8.8,12.1,16.9,20.1,19.9,16.9,11.9,7.6,5.0],
+    p:[96.0,74.0,64.2,82.9,76.7,32.5,15.3,13.0,55.7,131.1,118.7,135.7] },
+  'IPMA, Penhas Douradas, 1981–2010': { st:'Penhas Douradas', lat:40.41, lon:-7.56, alt:1380,
+    t:[3.1,3.7,6.0,6.5,9.8,14.9,18.0,18.2,15.1,10.1,6.2,4.1],
+    p:[189.2,148.4,110.8,143.2,110.3,49.3,20.0,23.2,72.4,202.3,223.6,242.8] },
+  'IPMA, Castelo Branco, 1981–2010': { st:'Castelo Branco', lat:39.84, lon:-7.48, alt:386,
+    t:[8.1,9.5,12.4,13.6,16.8,21.7,24.7,24.6,21.7,16.6,11.8,8.9],
+    p:[93.6,71.6,53.4,65.1,54.6,22.6,7.8,7.7,38.7,110.2,121.4,122.3] },
+  'IPMA, Portalegre, 1981–2010': { st:'Portalegre (st. 571)', lat:39.29, lon:-7.42, alt:597,
+    t:[8.6,9.6,12.2,13.0,16.1,21.0,24.0,24.1,21.4,16.5,12.0,9.4],
+    p:[104.2,81.6,62.2,78.1,61.9,24.6,7.1,9.0,40.7,113.0,122.4,128.3] },
+  'IPMA, Évora, 1981–2010': { st:'Évora / Cidade', lat:38.57, lon:-7.91, alt:309,
+    t:[9.4,10.5,13.0,14.0,16.8,21.1,23.6,23.7,21.6,17.3,13.1,10.3],
+    p:[66.5,54.1,41.8,57.6,48.1,16.6,3.9,7.7,29.8,82.9,85.9,91.9] },
+  'IPMA, Beja, 1981–2010': { st:'Beja', lat:38.03, lon:-7.87, alt:246,
+    t:[9.7,10.8,13.4,14.6,17.7,22.0,24.6,24.8,22.4,18.2,13.6,10.7],
+    p:[65.3,55.0,40.0,58.3,43.1,13.1,2.4,4.0,29.5,70.9,76.3,97.1] },
+  'IPMA, Setúbal, 1981–2010': { st:'Setúbal / Estação de Fruticultura', lat:38.55, lon:-8.89, alt:19,
+    t:[10.1,11.2,13.5,14.8,17.3,20.9,23.0,23.2,21.3,17.8,13.9,11.2],
+    p:[98.9,75.5,52.9,66.7,48.7,16.8,3.7,3.7,27.2,97.6,119.4,124.7] },
+  'IPMA, Sines, 1981–2010': { st:'Sines', lat:37.95, lon:-8.84, alt:98,
+    t:[11.5,12.2,13.9,14.7,16.9,19.4,20.5,21.1,19.9,18.0,14.6,12.5],
+    p:[74.1,58.1,45.1,50.4,35.4,10.4,1.2,3.3,24.9,85.9,90.7,98.5] },
+  'IPMA, Sagres, 1981–2010': { st:'Sagres / Quartel da Marinha', lat:37.01, lon:-8.95, alt:23,
+    t:[12.4,12.9,14.4,15.4,17.3,19.9,21.2,21.6,20.9,18.6,15.6,13.8],
+    p:[54.0,52.1,44.1,36.5,20.2,5.6,1.4,2.0,19.7,52.6,88.1,93.0] },
+  'IPMA, Faro, 1981–2010': { st:'Faro', lat:37.02, lon:-7.97, alt:5,
+    t:[12.0,12.8,14.7,16.1,18.4,21.8,24.2,24.1,22.3,19.3,15.6,13.3],
+    p:[59.7,52.0,39.4,38.8,21.6,4.3,1.8,3.9,22.5,60.6,91.2,115.8] },
+  'IPMA, Cabo Carvoeiro (Peniche), 1981–2010': { st:'Cabo Carvoeiro / Farol', lat:39.36, lon:-9.41, alt:32,
+    t:[11.9,12.3,13.6,14.2,15.8,17.8,18.6,19.0,18.7,17.1,14.8,12.8],
+    p:[78.8,63.5,40.9,53.1,37.8,14.6,6.2,10.3,27.5,86.1,101.0,86.4] },
+  'IPMA, Funchal, 1981–2010': { st:'Funchal', lat:32.65, lon:-16.89, alt:58,
+    t:[16.7,16.6,17.2,17.5,18.6,20.5,22.2,23.2,23.2,21.8,19.6,17.9],
+    p:[74.1,83.0,60.2,44.0,28.9,7.2,1.6,2.0,32.9,89.5,88.8,115.0] },
+  'IPMA, Porto Santo, 1981–2010': { st:'Porto Santo', lat:33.07, lon:-16.35, alt:78,
+    t:[15.8,15.7,16.3,16.8,18.2,20.1,21.7,22.8,22.6,20.9,18.7,17.0],
+    p:[42.8,41.8,32.5,25.6,15.0,10.0,4.0,4.2,21.5,40.2,55.4,70.2] },
+  'IPMA, Ponta Delgada, 1981–2010': { st:'Ponta Delgada / Observatório Afonso Chaves', lat:37.75, lon:-25.66, alt:35,
+    t:[14.8,14.4,15.0,15.6,17.0,19.2,21.4,22.6,21.8,19.5,17.2,15.6],
+    p:[111.5,95.2,98.6,83.3,70.2,45.9,28.1,47.3,87.9,109.6,116.0,158.9] },
+  'IPMA, Angra do Heroísmo, 1981–2010': { st:'Angra do Heroísmo / Observatório José Agostinho', lat:38.66, lon:-27.22, alt:90,
+    t:[14.1,13.8,14.2,14.9,16.2,18.5,21.0,22.1,21.2,18.9,16.4,14.9],
+    p:[107.4,110.2,109.5,87.7,72.0,53.7,28.8,48.0,92.4,114.4,122.1,154.9] },
+  'IPMA, Horta, 1981–2010': { st:'Horta / Observatório Príncipe Alberto do Mónaco', lat:38.53, lon:-28.63, alt:55,
+    t:[14.6,14.2,14.5,15.2,16.6,18.8,21.5,22.8,21.8,19.4,17.0,15.5],
+    p:[98.5,91.4,93.1,70.8,70.9,63.9,34.7,48.9,91.7,121.7,118.7,135.7] },
+  'IPMA, Santa Cruz das Flores, 1981–2010': { st:'Flores / Aeroporto', lat:39.46, lon:-31.13, alt:28,
+    t:[14.5,14.1,14.5,15.4,16.8,19.0,21.7,22.8,21.6,19.1,16.9,15.3],
+    p:[196.0,170.4,154.0,103.8,104.1,96.4,59.8,69.7,122.5,175.7,178.2,223.1] }
+};
+/* Older labels kept working: Peniche was the Cabo Carvoeiro lighthouse station. */
+const IPMA_ALIAS = {
+  'IPMA, Peniche, 1981–2010': 'IPMA, Cabo Carvoeiro (Peniche), 1981–2010'
+};
+/* Entries with a ficha at IPMA but no values embedded here — the boxes stay
+   manual and the note tells the student what to do. */
+const IPMA_NODATA = {
+  'IPMA, Coimbra, 1981–2010': 'No embedded values for Coimbra yet — nearest embedded stations are Aveiro, Viseu and Penhas Douradas; type the twelve pairs from the ficha by hand.',
+  'IPMA, Porto/Serra do Pilar, 1981–2010': 'No embedded values for Serra do Pilar yet — use Porto/Pedras Rubras, 20 km away on the coast.'
+};
+
+function initSetup() {
+  const dl = $('#concList'), sel = $('#selNuts');
+  dl.innerHTML = ''; sel.innerHTML = '';
+  Object.keys(CONCELHOS).sort((a, b) => a.localeCompare(b, 'pt'))
+    .forEach(c => dl.appendChild(el('option', { value:c })));
+  NUTS_LIST.forEach(n => sel.appendChild(el('option', { value:n, text:n })));
+  sel.value = 'Grande Lisboa';
+
+  const conc = $('#selConc'), lat = $('#inpLat'), lon = $('#inpLon'), alt = $('#inpAlt');
+  const use = $('#selUse'), srcInp = $('#inpSource');
+  const preview = $('#zonePreview'), sub = $('#concSub'), go = $('#btnGo');
+  const opBtns = $$('#segOp button');
+  opBtns.forEach(b => b.addEventListener('click', () => {
+    opBtns.forEach(x => x.setAttribute('aria-pressed', 'false'));
+    b.setAttribute('aria-pressed', 'true');
+  }));
+
+  const clim = loadNormals();
+  srcInp.value = clim.source || '';
+
+  /* --- the twelve pairs -------------------------------------------------- */
+  const grid = $('#normGrid');
+  const inputs = { t:[], p:[] };
+  grid.innerHTML = '';
+  for (let half = 0; half < 2; half++) {
+    const col = el('div');
+    col.appendChild(el('div', { class:'nrow head' }, [
+      el('span'), el('span', { text:'T, °C' }), el('span', { text:'P, mm' }) ]));
+    for (let k = 0; k < 6; k++) {
+      const i = half * 6 + k;
+      const ti = el('input', { type:'number', step:'0.1', inputmode:'decimal',
+        value: clim.t[i] === null ? '' : clim.t[i] });
+      const pi = el('input', { type:'number', step:'1', min:'0', inputmode:'decimal',
+        value: clim.p[i] === null ? '' : clim.p[i] });
+      inputs.t[i] = ti; inputs.p[i] = pi;
+      ti.addEventListener('input', refresh);
+      pi.addEventListener('input', refresh);
+      col.appendChild(el('div', { class:'nrow' }, [ el('b', { text:MON3[i] }), ti, pi ]));
+    }
+    grid.appendChild(col);
+  }
+
+  function readNormals() {
+    const num = inp => {
+      const v = inp.value.trim();
+      if (v === '') return null;
+      const n = +v.replace(',', '.');
+      return isFinite(n) ? n : null;
+    };
+    return { t:inputs.t.map(num), p:inputs.p.map(num), source:srcInp.value.trim() };
+  }
+
+  function refresh() {
+    const c = readNormals();
+    inputs.t.forEach((inp, i) => inp.classList.toggle('miss', c.t[i] === null));
+    inputs.p.forEach((inp, i) => inp.classList.toggle('miss', c.p[i] === null || c.p[i] < 0));
+    if (!climComplete(c)) {
+      const missing = c.t.filter(v => v === null).length + c.p.filter(v => v === null || v < 0).length;
+      preview.innerHTML = '<b>—</b> <small>' + t('Enter the normals') + ' · '
+        + missing + ' ' + t('of 24 still to fill') + '</small>';
+      go.disabled = true;
+      return;
+    }
+    go.disabled = false;
+    const K = koppen(c.t, c.p, (+lat.value || 0) < 0);
+    const nm = KOPPEN_MAIN[K.main] ? KOPPEN_MAIN[K.main].name : '';
+    preview.innerHTML = '<b>' + K.code + '</b> <small>' + t(nm) + ' · '
+      + fmt(K.MAT, 1) + ' °C · ' + fmt(K.MAP, 0) + ' mm</small>';
+  }
+
+  conc.addEventListener('input', () => {
+    const v = conc.value.trim();
+    const hit = Object.keys(CONCELHOS).find(c => c.toLowerCase() === v.toLowerCase());
+    if (hit) {
+      sel.value = CONCELHOS[hit][0];
+      sub.textContent = hit + ' → ' + CONCELHOS[hit].join(' / ');
+      seedLat();
+    } else sub.textContent = t('Type a Portuguese municipality, or any name you want the exports to carry.');
+  });
+
+  /* --- EPW import: fill the twelve pairs from a weather file --------------- */
+  const epwFile = $('#epwFile'), epwBox = $('#epwBox'), epwStatus = $('#epwStatus');
+  function applyEPW(res, fileName) {
+    res.t.forEach((v, i) => { inputs.t[i].value = v.toFixed(1); });
+    if (!res.pEmpty) res.p.forEach((v, i) => { inputs.p[i].value = (v < 20 ? v.toFixed(1) : Math.round(v)); });
+    else res.p.forEach((v, i) => { if (inputs.p[i].value === '') inputs.p[i].value = ''; });
+    if (res.lat !== null) lat.value = res.lat.toFixed(2);
+    if (res.lon !== null) lon.value = res.lon.toFixed(2);
+    if (res.alt !== null) alt.value = Math.round(res.alt);
+    srcInp.value = 'EPW: ' + res.city + ' — ' + fileName;
+    const pMsg = res.pEmpty
+      ? t('precipitation column is empty in this EPW — enter the IPMA totals by hand')
+      : (t('MAP') + ' ' + fmt(res.p.reduce((a, b) => a + b, 0), 0) + ' mm');
+    epwStatus.textContent = res.city + ' · ' + res.nHours + 'h · '
+      + fmt(res.t.reduce((a, b) => a + b, 0) / 12, 1) + ' °C · ' + pMsg;
+    refresh();
+    toast(res.pEmpty
+      ? 'EPW temperatures imported — add precipitation by hand'
+      : 'EPW imported: temperatures and precipitation filled in');
+  }
+  function readEPWFile(f) {
+    if (!f) return;
+    if (!/\.epw$/i.test(f.name)) { toast('Choose a .epw file'); return; }
+    const rd = new FileReader();
+    rd.onload = () => {
+      try { applyEPW(parseEPW(rd.result, f.name), f.name); }
+      catch (err) { epwStatus.textContent = String(err.message || err); toast(String(err.message || err)); }
+    };
+    rd.onerror = () => toast('Could not read that file');
+    rd.readAsText(f);
+  }
+  if (epwFile) epwFile.addEventListener('change', e => readEPWFile(e.target.files[0]));
+  if (epwBox) {
+    ['dragenter', 'dragover'].forEach(ev => epwBox.addEventListener(ev, e => { e.preventDefault(); epwBox.classList.add('dragover'); }));
+    ['dragleave', 'drop'].forEach(ev => epwBox.addEventListener(ev, e => { e.preventDefault(); epwBox.classList.remove('dragover'); }));
+    epwBox.addEventListener('drop', e => {
+      const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+      readEPWFile(f);
+    });
+  }
+  function seedLat() {
+    const L = NUTS_LAT[sel.value];
+    if (L !== undefined) lat.value = L;
+  }
+  sel.addEventListener('change', seedLat);
+  lat.addEventListener('input', refresh);
+  srcInp.addEventListener('input', refresh);
+
+  /* --- IPMA station autofill: a chosen source fills the boxes ------------- */
+  const srcStatus = $('#srcStatus');
+  function fillFromSource(showMsg) {
+    const raw = srcInp.value.trim();
+    const key = IPMA_ALIAS[raw] || raw;
+    const d = IPMA_DATA[key];
+    if (!d) {
+      if (showMsg) {
+        if (IPMA_NODATA[raw]) {
+          if (srcStatus) srcStatus.textContent = t(IPMA_NODATA[raw]);
+          toast('No embedded values for that entry — see the note');
+        } else if (/^IPMA,/i.test(raw)) {
+          if (srcStatus) srcStatus.textContent = t('Not an embedded IPMA station — type the twelve pairs from the ficha by hand');
+        }
+      }
+      return false;
+    }
+    d.t.forEach((v, i) => { inputs.t[i].value = v.toFixed(1); });
+    d.p.forEach((v, i) => { inputs.p[i].value = v.toFixed(1); });
+    lat.value = d.lat.toFixed(2); lon.value = d.lon.toFixed(2); alt.value = Math.round(d.alt);
+    if (srcStatus) srcStatus.textContent = d.st + ' · ' + d.alt + ' m · '
+      + t('station values filled — correct the altitude to the building');
+    refresh();
+    return true;
+  }
+  const btnFill = $('#btnSrcFill');
+  if (btnFill) btnFill.addEventListener('click', () => {
+    if (fillFromSource(true)) toast('Station normals filled in — check the boxes');
+  });
+  srcInp.addEventListener('change', () => fillFromSource(true));
+
+  go.addEventListener('click', () => {
+    const c = readNormals();
+    if (!climComplete(c)) { toast('The twelve pairs of normals are not complete'); return; }
+    saveNormals(c);
+    const v = conc.value.trim();
+    const opBtn = $('#segOp button[aria-pressed="true"]');
+    mountApp({
+      place: v || null, nuts: sel.value,
+      lat: +lat.value || 0, lon: +lon.value || 0,
+      alt: Math.max(0, +alt.value || 0), use: use.value,
+      operation: opBtn ? opBtn.dataset.op : 'new'
+    }, c);
+  });
+
+  seedLat();
+  refresh();
+}
+
+/* --- the application ------------------------------------------------------- */
+function mountApp(site, clim, keepTab) {
+  STATE.site = site;
+  if (clim) STATE.clim = Object.assign({}, clim, { k: koppen(clim.t, clim.p, site.lat < 0) });
+  if (!STATE.clim) { toast('No climate has been entered'); return; }
+
+  PANELS.forEach(p => { p.ro && p.ro.disconnect(); p.io && p.io.disconnect(); });
+  PANELS = [];
+  const app = $('#app');
+  app.innerHTML = '';
+  app.hidden = false;
+  $('#empty').hidden = true;
+  $('#tabsNav').hidden = false;
+  $('#sitechip').classList.add('on');
+  $('#chipLoc').textContent = site.place || site.nuts;
+  $('#chipMeta').innerHTML = fmt(Math.abs(site.lat), 2) + '° ' + (site.lat < 0 ? 'S' : 'N') + ' '
+    + fmt(Math.abs(site.lon), 2) + '° ' + (site.lon < 0 ? 'W' : 'E') + ' · '
+    + fmt(site.alt, 0) + ' m <span class="zn">' + STATE.clim.k.code + '</span>';
+  document.title = APP.name + ' — ' + (site.place || site.nuts);
+
+  const tl = $('#tablist'); tl.innerHTML = '';
+  TABS.forEach((tab, i) => {
+    const sect = el('section', { class:'page', id:'page-' + tab.key, role:'tabpanel' });
+    app.appendChild(sect);
+    tl.appendChild(el('button', { class:'tab', role:'tab', id:'tab-' + tab.key, 'aria-selected':'false',
+      html:'<span class="n">' + String(i + 1).padStart(2, '0') + '</span>' + t(tab.label),
+      onclick: () => activate(tab.key) }));
+  });
+  activate(TABS.some(x => x.key === keepTab) ? keepTab : TABS[0].key);
+
+  function activate(key) {
+    STATE.tab = key;
+    TABS.forEach(tab => {
+      const on = tab.key === key;
+      $('#tab-' + tab.key).setAttribute('aria-selected', on ? 'true' : 'false');
+      const sect = $('#page-' + tab.key);
+      sect.classList.toggle('on', on);
+      if (on && !sect.dataset.built) {
+        sect.dataset.built = '1';
+        try { tab.build(sect); }
+        catch (err) {
+          console.error(err);
+          sect.appendChild(el('div', { class:'warn',
+            text:'This view could not be built: ' + err.message }));
+        }
+      }
+    });
+    requestAnimationFrame(redrawVisiblePanels);
+    setTimeout(redrawVisiblePanels, 150);
+    window.scrollTo(0, 0);
+  }
+}
+
+window.addEventListener('resize', () => {
+  clearTimeout(mountApp._t);
+  mountApp._t = setTimeout(redrawVisiblePanels, 180);
+});
+
+const subtitleFor = () => LANG === 'pt' ? 'Desenho Bioclimático' : 'Bioclimatic Design';
+
+$('#btnReload').addEventListener('click', () => {
+  $('#app').hidden = true;
+  $('#empty').hidden = false;
+  $('#tabsNav').hidden = true;
+  $('#sitechip').classList.remove('on');
+  document.title = APP.name + ' — ' + subtitleFor();
+  window.scrollTo(0, 0);
+});
+
+/* --- static markup and language -------------------------------------------- */
+function applyStatic() {
+  $$('[data-t]').forEach(n => {
+    const k = n.getAttribute('data-t');
+    if (n.dataset.en === undefined) n.dataset.en = n.innerHTML;
+    const pt = STATIC_PT[k];
+    n.innerHTML = (LANG === 'pt' && pt !== undefined) ? pt : n.dataset.en;
+  });
+  $('#footVer').textContent = 'v' + APP.version;
+  buildRefs();
+}
+
+function setLanguage(lang) {
+  if (lang !== 'en' && lang !== 'pt') lang = 'en';
+  LANG = lang;
+  try { localStorage.setItem(LS_LANG, lang); } catch (e) {}
+  applyLanguage();
+  applyStatic();
+  $$('#langsel button').forEach(b => b.setAttribute('aria-pressed', b.dataset.lang === lang ? 'true' : 'false'));
+  document.title = STATE.site ? APP.name + ' — ' + (STATE.site.place || STATE.site.nuts)
+                              : APP.name + ' — ' + subtitleFor();
+  if (STATE.site) mountApp(STATE.site, null, STATE.tab);   // rebuild every page in the new language
+  else initSetup();                                        // the month labels change with the language
+}
+
+$$('#langsel button').forEach(b =>
+  b.addEventListener('click', () => setLanguage(b.dataset.lang)));
+
+(function boot() {
+  let saved = null;
+  try { saved = localStorage.getItem(LS_LANG); } catch (e) {}
+  if (!saved && /^pt\b/i.test(navigator.language || '')) saved = 'pt';
+  setLanguage(saved || 'en');
+})();
+
+/* ==================================== 9. EUROPEAN PORTUGUESE ==
+   One entry per string, resolved. Keys are the exact English, with numbers
+   abstracted to {} by t(); the long captions are keyed by identifier instead,
+   through PT_HINT, so that editing a sentence in English does not silently
+   drop its translation.
+
+   The orthography is pre-AO90, as the Portuguese technical literature the
+   application cites still is.
+   ============================================================== */
+
+/* --- the static markup of the page, keyed by data-t --------------------- */
+Object.assign(STATIC_PT, {
+  brandsub: 'Desenho Bioclimático',
+  btnReload: 'Mudar de local',
+  setupTitle: 'Onde vai construir, e em que clima?',
+  setupBody: 'Esta aplicação nada pede a um regulamento. Trabalha a partir da posição do edifício e do clima em que essa posição se encontra, classificado por <b>Köppen–Geiger</b>, porque é essa a classificação com que a literatura de projecto está escrita. Indique o lugar e as suas coordenadas, e depois introduza as normais mensais da estação mais próxima. O que se segue é orientação, compacidade, cobertura, envidraçado, sombreamento, a organização da planta e o movimento do ar — as decisões que se tomam antes de lhes poder ser aplicado qualquer limite.',
+  fldConc: 'Lugar',
+  fldConcSub: 'Escreva um concelho português, ou o nome que quiser que as exportações levem.',
+  fldNuts: 'Região',
+  fldNutsSub: 'Serve apenas para semear a latitude e identificar o local. Nada nesta aplicação está indexado a ela.',
+  fldLat: 'Latitude',
+  fldLatSub: 'Graus, norte positivo. Semeada a partir da região; substitua-a pela do próprio edifício.',
+  fldLon: 'Longitude',
+  fldLonSub: 'Graus, este positivo. Leia-a num mapa, sobre o próprio local.',
+  fldAlt: 'Altitude do local',
+  fldAltSub: 'Metros acima do nível do mar, no edifício, não na câmara municipal.',
+  fldUse: 'Utilização do edifício',
+  useHab: 'Habitação',
+  useCS: 'Comércio e serviços',
+  fldUseSub: 'Decide como se lê a planta: uma habitação zona-se pela hora de ocupação, um local de trabalho pelo ganho interno.',
+  fldOp: 'Tipo de intervenção',
+  opNew: 'Construção nova',
+  opRenovation: 'Grande intervenção',
+  fldOpSub: 'Um edifício novo ainda pode escolher a sua orientação e a sua forma; uma reabilitação tem de tomar ambas como as encontra.',
+  normTitle: 'Normais mensais',
+  normBody: 'Köppen–Geiger é calculado, não consultado, pelo que precisa das doze temperaturas médias mensais e dos doze totais mensais de precipitação. Esta aplicação não traz nenhuns: as normais são dados medidos e ela não tem autoridade para os inventar. Tome-os das <i>normais climatológicas</i> do IPMA para a estação mais próxima, de outro serviço nacional, ou de um produto em grelha como o WorldClim, e identifique a fonte para que a exportação a leve consigo. Escolha abaixo uma estação do IPMA e carregue em Preencher caixas — os doze pares e as coordenadas da estação são introduzidos por si. Se tiver um ficheiro meteorológico EnergyPlus (.epw) — por exemplo Lisboa, Porto, Faro, Funchal ou Ponta Delgada de climate.onebuilding.org — largue-o abaixo e os doze pares, as coordenadas e a altitude são preenchidos automaticamente.',
+  epwTitle: 'Preencher a partir de um ficheiro EPW',
+  epwSub: 'Largue aqui um .epw ou escolha um. A temperatura média mensal e a precipitação mensal são agregadas a partir dos seus 8 760 registos horários, e a latitude, a longitude e a altitude da estação são lidas da linha LOCATION. O ficheiro é processado neste computador — nada é carregado. Verifique depois a altitude: a estação raramente está no edifício.',
+  epwChoose: 'Escolher .epw',
+  srcFill: 'Preencher caixas',
+  fldSource: 'De onde vêm as normais',
+  fldSourceSub: 'Escrita em cada CSV e cada PNG que esta aplicação exporta. Escolha uma estação do IPMA e carregue em Preencher caixas — fichas em ipma.pt/oclima/normais.clima — ou indique o seu ficheiro EPW.',
+  btnGo: 'Percorrer o projecto',
+  ex1h: 'Fundada na literatura de projecto',
+  ex1p: 'Olgyay, Lechner, DeKay e Brown, Hyde, Ching e Shapiro, Brophy e Lewis. Cada orientação nomeia o livro de onde vem, e onde os livros divergem a aplicação di-lo em vez de os reduzir a uma média.',
+  ex2h: 'As decisões que precedem os limites',
+  ex2p: 'Para onde o edifício se volta, quão compacto é, o que faz a sua cobertura, quanto vidro leva cada fachada, onde ficam os compartimentos em relação ao sol, e como o ar atravessa a planta. Nenhuma destas se resolve com um coeficiente de transmissão térmica máximo.',
+  ex3h: 'Um companheiro, não um substituto',
+  ex3p: 'O Construction Advisor responde ao SCE e diz o que uma envolvente não pode exceder. Este não traz nada desse regulamento. Use-os por essa ordem: dê forma ao edifício aqui, e leve-o depois ali para ser verificado.',
+  privacyNote: 'Nada é carregado para lado nenhum. A aplicação corre inteiramente neste computador.',
+  footTag: 'Um conselheiro de desenho bioclimático para estudantes de arquitectura, escrito para as decisões que se tomam antes de um regulamento ter algo a dizer sobre elas.',
+  footAuthor: 'Autor',
+  footInst: 'Instituição',
+  footDev: 'Desenvolvido com',
+  footClass: 'Classificação',
+  footClassBody: 'Köppen–Geiger, na formalização de Peel, Finlayson e McMahon (2007), calculada a partir das normais que introduzir.',
+  footPriv: 'Privacidade',
+  footPrivBody: 'Nenhum dado do local sai do navegador. Nada é carregado.',
+  footMethods: 'Métodos e fontes',
+  footLegal: '© 2026 Nuno Dinis Cortiços. Este é um instrumento pedagógico. Reporta o que a literatura de projecto recomenda e nomeia a fonte de cada recomendação, mas uma orientação não é um cálculo e esta aplicação não é um modelo energético. Nada do que reporta constitui declaração de conformidade, e nada disto substitui as verificações exigidas no âmbito do SCE.'
+});
+
+/* --- everything the pages ask for through t() --------------------------- */
+Object.assign(PT, {
+  /* the setup preview */
+  "Enter the normals": "Introduza as normais",
+  "of 24 still to fill": "de 24 por preencher",
+  "The twelve pairs of normals are not complete": "Os doze pares de normais não estão completos",
+  "No climate has been entered": "Não foi introduzido nenhum clima",
+  "Choose a .epw file": "Escolha um ficheiro .epw",
+  "Could not read that file": "Não foi possível ler esse ficheiro",
+  "Not an EPW file: too few lines": "Não é um ficheiro EPW: poucas linhas",
+  "Not an EPW file: first line is not LOCATION": "Não é um ficheiro EPW: a primeira linha não é LOCATION",
+  "EPW temperatures imported — add precipitation by hand": "Temperaturas do EPW importadas — introduza a precipitação à mão",
+  "EPW imported: temperatures and precipitation filled in": "EPW importado: temperaturas e precipitação preenchidas",
+  "precipitation column is empty in this EPW — enter the IPMA totals by hand":
+    "a coluna de precipitação deste EPW está vazia — introduza os totais do IPMA à mão",
+  "MAP": "MAP",
+  "Fill boxes": "Preencher caixas",
+  "Station normals filled in — check the boxes": "Normais da estação preenchidas — verifique as caixas",
+  "station values filled — correct the altitude to the building":
+    "valores da estação preenchidos — corrija a altitude para o edifício",
+  "Not an embedded IPMA station — type the twelve pairs from the ficha by hand":
+    "Estação do IPMA não incorporada — introduza os doze pares a partir da ficha à mão",
+  "No embedded values for that entry — see the note":
+    "Sem valores incorporados para essa entrada — ver a nota",
+  "No embedded values for Coimbra yet — nearest embedded stations are Aveiro, Viseu and Penhas Douradas; type the twelve pairs from the ficha by hand.":
+    "Sem valores incorporados para Coimbra — as estações incorporadas mais próximas são Aveiro, Viseu e Penhas Douradas; introduza os doze pares a partir da ficha à mão.",
+  "No embedded values for Serra do Pilar yet — use Porto/Pedras Rubras, 20 km away on the coast.":
+    "Sem valores incorporados para a Serra do Pilar — use Porto/Pedras Rubras, a 20 km, na costa.",
+  "Type a Portuguese municipality, or any name you want the exports to carry.":
+    "Escreva um concelho português, ou o nome que quiser que as exportações levem.",
+
+  /* the classification */
+  "Tropical": "Tropical",
+  "Arid": "Árido",
+  "Temperate": "Temperado",
+  "Cold": "Frio",
+  "Polar": "Polar",
+  "Desert": "Deserto",
+  "Steppe": "Estepe",
+  "Without dry season": "Sem estação seca",
+  "Dry summer": "Verão seco",
+  "Dry winter": "Inverno seco",
+  "Monsoon": "Monção",
+  "Hot": "Quente",
+  "Hot summer": "Verão quente",
+  "Warm summer": "Verão ameno",
+  "Cold summer": "Verão frio",
+  "Very cold winter": "Inverno muito frio",
+  "Tundra": "Tundra",
+  "Frost": "Gelo permanente",
+
+  /* the climate page */
+  "Climate": "Clima",
+  "One code of two or three letters, computed from twelve temperatures and twelve rainfalls. Every page after this one is written against it.":
+    "Um código de duas ou três letras, calculado a partir de doze temperaturas e doze precipitações. Todas as páginas seguintes estão escritas contra ele.",
+  "Köppen–Geiger": "Köppen–Geiger",
+  "Mean annual temperature": "Temperatura média anual",
+  "Mean annual precipitation": "Precipitação média anual",
+  "Months above 10 °C": "Meses acima de 10 °C",
+  "Coldest month": "Mês mais frio",
+  "warmest": "mais quente",
+  "in the summer half-year": "no semestre de Verão",
+  "The year, month by month": "O ano, mês a mês",
+  "Precipitation as bars against the left axis, mean temperature as a line against the right; the summer half-year is shaded":
+    "Precipitação em barras contra o eixo esquerdo, temperatura média em linha contra o direito; o semestre de Verão está sombreado",
+  "Precipitation, mm": "Precipitação, mm",
+  "Mean temperature, °C": "Temperatura média, °C",
+  "Precipitation": "Precipitação",
+  "Mean temperature": "Temperatura média",
+  "Month": "Mês",
+  "How each letter was decided": "Como se decidiu cada letra",
+  "Peel, Finlayson and McMahon (2007), Table 1": "Peel, Finlayson e McMahon (2007), Quadro 1",
+  "Letter": "Letra",
+  "Meaning": "Significado",
+  "On this site": "Neste local",
+  "The criterion it tests": "O critério que testa",
+  "What this climate asks of a building": "O que este clima exige de um edifício",
+  "The normals this reading rests on": "As normais em que assenta esta leitura",
+  "Source not named": "Fonte não identificada",
+  "at least 70 % of the rain falls in the summer half-year, so P th = 2 × MAT + 28":
+    "pelo menos 70 % da chuva cai no semestre de Verão, pelo que P th = 2 × MAT + 28",
+  "at least 70 % of the rain falls in the winter half-year, so P th = 2 × MAT":
+    "pelo menos 70 % da chuva cai no semestre de Inverno, pelo que P th = 2 × MAT",
+  "the rain is spread across both halves of the year, so P th = 2 × MAT + 14":
+    "a chuva reparte-se pelos dois semestres do ano, pelo que P th = 2 × MAT + 14",
+
+  "Decides the third letter": "Decide a terceira letra",
+
+  /* the criteria that carry words rather than only symbols */
+  "Neither the summer-dry nor the winter-dry criterion is met":
+    "Não se verifica nem o critério de Verão seco nem o de Inverno seco",
+  "Not a, and T<sub>mon10</sub> ≥ 4": "Não é a, e T<sub>mon10</sub> ≥ 4",
+  "T<sub>hot</sub> &gt; 10 °C and 0 &lt; T<sub>cold</sub> &lt; 18 °C":
+    "T<sub>hot</sub> &gt; 10 °C e 0 &lt; T<sub>cold</sub> &lt; 18 °C",
+  "T<sub>hot</sub> &gt; 10 °C and T<sub>cold</sub> ≤ 0 °C":
+    "T<sub>hot</sub> &gt; 10 °C e T<sub>cold</sub> ≤ 0 °C",
+  "P<sub>sdry</sub> &lt; 40 mm and P<sub>sdry</sub> &lt; P<sub>wwet</sub> ÷ 3":
+    "P<sub>sdry</sub> &lt; 40 mm e P<sub>sdry</sub> &lt; P<sub>wwet</sub> ÷ 3",
+  "Not a or b, and 1 ≤ T<sub>mon10</sub> &lt; 4": "Não é a nem b, e 1 ≤ T<sub>mon10</sub> &lt; 4",
+  "As c, and T<sub>cold</sub> &lt; −38 °C": "Como c, e T<sub>cold</sub> &lt; −38 °C",
+
+  /* the chart and table tools of the shared engine */
+  "Export this table as CSV": "Exportar esta tabela em CSV",
+  "Export the underlying numbers as CSV": "Exportar os números subjacentes em CSV",
+  "Export this chart as a PNG image at {}× resolution": "Exportar este gráfico como imagem PNG a {}× de resolução",
+  "PNG exported at {} × {} px": "PNG exportado a {} × {} px",
+  "CSV exported": "CSV exportado",
+
+  /* what each reference is used for */
+  "The formalisation of Köppen–Geiger this application computes: every criterion stated as an inequality, including the aridity threshold and the summer half-year convention.":
+    "A formalização de Köppen–Geiger que esta aplicação calcula: cada critério enunciado como desigualdade, incluindo o limiar de aridez e a convenção do semestre de Verão.",
+  "The bioclimatic method itself, and the reading of orientation and form as climate responses before they are anything else.":
+    "O próprio método bioclimático, e a leitura da orientação e da forma como respostas ao clima antes de serem qualquer outra coisa.",
+  "Design strategies stated as quantities a student can test a plan against — building depth for daylight, orientation, glazing area and the organisation of the plan.":
+    "Estratégias de projecto enunciadas como grandezas contra as quais um aluno pode testar uma planta — profundidade do edifício para a luz natural, orientação, área envidraçada e organização da planta.",
+  "Solar geometry, shading design, and the ordering of passive strategy before mechanical provision.":
+    "Geometria solar, desenho do sombreamento, e a precedência da estratégia passiva sobre o recurso mecânico.",
+  "Housing in warm and Mediterranean climates, and the regional reading of the Köppen classes the Iberian peninsula falls in.":
+    "Habitação em climas quentes e mediterrânicos, e a leitura regional das classes de Köppen em que a península ibérica se inscreve.",
+  "Surface-to-volume ratio, window-to-wall ratio, and the envelope read as one continuous surface.":
+    "Relação entre superfície e volume, relação entre vão e fachada, e a envolvente lida como uma superfície contínua.",
+  "The European reading of glazing strategy, buffer spaces and the envelope as a whole.":
+    "A leitura europeia da estratégia de envidraçado, dos espaços tampão e da envolvente no seu conjunto.",
+  "Solar collection as a plan and section problem rather than an equipment problem.":
+    "A captação solar como problema de planta e de corte, e não como problema de equipamento.",
+  "Daylight as the resource that sets plan depth and window position.":
+    "A luz natural como o recurso que fixa a profundidade da planta e a posição do vão.",
+  "Daylight read qualitatively, against the quantitative guidance the other sources give.":
+    "A luz natural lida qualitativamente, contra a orientação quantitativa que as outras fontes dão.",
+  "Guideline values for dwellings, used as a cross-check where the other sources disagree.":
+    "Valores de referência para habitação, usados como confronto onde as outras fontes divergem.",
+  "The Portuguese reading of bioclimatic strategy, and the character of the country’s own climatic zones.":
+    "A leitura portuguesa da estratégia bioclimática, e o carácter das zonas climáticas do próprio país.",
+  "The observed monthly means and totals embedded for 28 stations — homogeneous series plus WRF-modelled infill after WMO-No. 1203.":
+    "As médias e os totais mensais observados incorporados para 28 estações — séries homogéneas com preenchimento por modelação WRF segundo a WMO-No. 1203.",
+
+  /* the orientation page */
+  "Orientation": "Orientação",
+  "Sun geometry for this latitude, and what each facade receives across the year. The recommendation follows the Köppen class from the previous tab.":
+    "Geometria solar para esta latitude, e o que cada fachada recebe ao longo do ano. A recomendação segue a classe de Köppen da página anterior.",
+  "Latitude": "Latitude",
+  "Solar noon, 21 June": "Meio-dia solar, 21 de Junho",
+  "Solar noon, 21 December": "Meio-dia solar, 21 de Dezembro",
+  "culmination of the sun": "culminação do sol",
+  "low winter sun enters deep": "o sol baixo de Inverno entra fundo",
+  "Day length Jun / Dec": "Duração do dia Jun / Dez",
+  "hours of possible sun": "horas de sol possível",
+  "Sun path over the site": "Percurso do sol sobre o local",
+  "Altitude against azimuth at the solstices and the equinox; dots mark solar noon":
+    "Altura contra azimute nos solstícios e no equinócio; os pontos marcam o meio-dia solar",
+  "Direct-sun hours on each facade": "Horas de sol directo em cada fachada",
+  "Unobstructed vertical facades over the whole year, split by half-year":
+    "Fachadas verticais sem obstruções ao longo de todo o ano, por semestre",
+  "Summer half-year (Oct–Mar)": "Semestre de Verão (Out–Mar)",
+  "Summer half-year (Apr–Sep)": "Semestre de Verão (Abr–Set)",
+  "Winter half-year (Apr–Sep)": "Semestre de Inverno (Abr–Set)",
+  "Winter half-year (Oct–Mar)": "Semestre de Inverno (Out–Mar)",
+  "Hours per year": "Horas por ano",
+  "Altitude, °": "Altura, °",
+  "The recommendation for this site": "A recomendação para este local",
+  "What to do with each facade": "O que fazer com cada fachada",
+  "After Gonçalves & Graça (2004), Olgyay (1963), Lechner (2015) and DeKay & Brown (2014)":
+    "Segundo Gonçalves & Graça (2004), Olgyay (1963), Lechner (2015) e DeKay & Brown (2014)",
+  "Facade": "Fachada",
+  "Winter sun, h": "Sol de Inverno, h",
+  "Summer sun, h": "Sol de Verão, h",
+  "Annual sun, h": "Sol anual, h",
+  "What to do with it": "O que lhe fazer",
+  "{} Jun": "{} jun",
+  "{} Mar": "{} mar",
+  "{} Dec": "{} dez",
+  "Main solar aperture — living rooms here. Low winter sun enters deep; high summer sun is cut by a small overhang.":
+    "Abertura solar principal — salas aqui. O sol baixo de Inverno entra fundo; o sol alto de Verão corta-se com uma pequena pala.",
+  "Good winter morning gain. Shade lightly against late-spring afternoons.":
+    "Bom ganho das manhãs de Inverno. Sombrear ligeiramente contra as tardes do fim da Primavera.",
+  "Winter afternoon gain, but summer heat peaks here — shade almost as aggressively as the west.":
+    "Ganho das tardes de Inverno, mas o calor de Verão atinge aqui o pico — sombrear quase tão agressivamente como a poente.",
+  "Winter sun for a few morning hours only; full low sun on summer mornings. Modest glazing, exterior shade.":
+    "Sol de Inverno só por poucas horas da manhã; sol baixo cheio nas manhãs de Verão. Envidraçado modesto, sombreamento exterior.",
+  "The critical summer facade: low afternoon sun meets peak air temperature. Minimum glazing; fins, shutters, deciduous trees.":
+    "A fachada crítica de Verão: sol baixo da tarde encontra o pico da temperatura do ar. Envidraçado mínimo; palas verticais, portadas, caducifólias.",
+  "No direct sun in the northern hemisphere: diffuse light and heat loss. Small openings; stairs, baths, storage.":
+    "Sem sol directo no hemisfério norte: luz difusa e perda de calor. Vãos pequenos; escadas, banhos, arrumos.",
+  "Summer early-morning sun only; nothing in winter. Keep small.":
+    "Só sol das primeiras horas nas manhãs de Verão; nada no Inverno. Manter pequeno.",
+  "Summer late-evening sun only; nothing in winter. Keep small and shaded.":
+    "Só sol do fim da tarde no Verão; nada no Inverno. Manter pequeno e sombreado.",
+
+  /* the plan laboratory */
+  "Plan geometry — stretch it, turn it": "Geometria da planta — estique-a, rode-a",
+  "Length along main facade": "Comprimento na fachada principal",
+  "Depth": "Profundidade",
+  "Main facade faces": "Fachada principal para",
+  "Snap to the Olgyay optimum": "Acertar pelo óptimo de Olgyay",
+  "Snapped to the Olgyay optimum": "Acertado pelo óptimo de Olgyay",
+  "Your plan against the optimum": "A sua planta contra o óptimo",
+  "Top-down view, north up. Drag the plan to stretch it, drag the black knob to turn it.":
+    "Vista de cima, norte para cima. Arraste a planta para a esticar, arraste o botão preto para a rodar.",
+  "Edit on canvas": "Editar no desenho",
+  "Stretch": "Esticar",
+  "Rotate": "Rodar",
+  "Olgyay fit": "Ajuste a Olgyay",
+  "At the Olgyay optimum": "No óptimo de Olgyay",
+  "Close — nudge it east of south": "Perto — puxe-a para leste do sul",
+  "Far from the optimum — follow the green normal": "Longe do óptimo — siga a normal verde",
+  "East–west near 1 : ": "Nascente–poente perto de 1 : ",
+  "North–south — the least efficient": "Norte–sul — a menos eficiente",
+  "Square — never the optimum": "Quadrada — nunca o óptimo",
+  "East–west — stretch toward 1 : ": "Nascente–poente — estique para 1 : ",
+  "Diagonal — settle the long axis east–west": "Diagonal — assente o eixo longo de nascente a poente",
+  "Your plan": "A sua planta",
+  "Olgyay optimum": "Óptimo de Olgyay",
+  "morning": "manhã",
+  "noon": "meio-dia",
+  "afternoon · hot": "tarde · quente"
+});
+
+/* --- the long captions, keyed by identifier ----------------------------- */
+Object.assign(PT_HINT, {
+  'clim-method':
+    'A classificação é a de Köppen–Geiger tal como Peel, Finlayson e McMahon (2007) a enunciam — a formalização que escreve cada critério como uma desigualdade e não como uma descrição. Nada aqui foi consultado: o código <b>%1</b> foi calculado a partir das normais que introduziu, e o quadro abaixo mostra que grandeza decidiu cada letra. O semestre de Verão vai de Abril a Setembro no hemisfério norte e de Outubro a Março no sul, o que é uma convenção da classificação e não uma estação.',
+  'clim-threshold':
+    'O limiar de aridez <b>P<sub>th</sub></b> é o que separa um clima árido de um clima apenas de Verão seco, e desloca-se com <i>quando</i> a chuva cai e não apenas com quanta: a mesma precipitação rende mais num mês frio do que num mês quente. Neste local %1, pelo que P<sub>th</sub> = <b>%2 mm</b> e a fronteira da classe B fica em %3 mm de precipitação anual. Este local tem <b>%4 mm</b>.',
+  'clim-note-none':
+    'A bibliografia partilhada está escrita para construção temperada e mediterrânica e não trata <b>%1</b> directamente. As páginas seguintes continuam a calcular a sua geometria a partir da latitude e das normais deste local, mas onde citarem uma orientação tirada de um livro, essa orientação foi escrita para outro clima — leia-a como método, não como número a adoptar.',
+  /* the design reading of each class, keyed by the class itself */
+  'clim-note-Csa':
+    'O clima mediterrânico de Verão seco com Verão quente. O problema de projecto é assimétrico: um Inverno ameno que uma quantidade modesta de envidraçado a sul resolve, contra um Verão que castiga qualquer superfície deixada sem sombra. O sombreamento, a massa térmica e a ventilação nocturna fazem aqui mais do que o isolamento sozinho.',
+  'clim-note-Csb':
+    'O mesmo regime de Verão seco, com Verão ameno em vez de quente — a costa atlântica da península ibérica. O Inverno pesa mais do que em Csa e o pico de Verão é mais suave, pelo que o ganho solar na estação de aquecimento vale mais e o problema de arrefecimento é mais curto.',
+  'clim-note-Csc':
+    'Verão seco com um Verão curto e fresco, que só ocorre em altitude. O aquecimento domina o ano e o Verão é demasiado breve para comandar a forma.',
+  'clim-note-Cfa':
+    'Temperado sem estação seca e com Verão quente. É a humidade, e não o calor seco, que define o problema de Verão, pelo que o movimento do ar importa mais do que a massa.',
+  'clim-note-Cfb':
+    'Temperado sem estação seca e com Verão ameno — o clima oceânico do noroeste ibérico e de boa parte do norte da Europa. O céu encoberto faz da luz natural o recurso escasso, e o arrefecimento raramente é o caso condicionante.',
+  'clim-note-BSk':
+    'Estepe semi-árida fria. A grande amplitude térmica diária é o recurso: a massa carregada pela noite fria leva o edifício ao longo do dia. O interior sudeste português toca esta classe.',
+  'clim-note-BSh':
+    'Estepe semi-árida quente. A amplitude diária continua a ser o recurso, mas a noite já não desce o suficiente para descarregar a massa por si só.',
+  'clim-normals':
+    'Estes são os doze pares que introduziu, e são todo o conhecimento que esta aplicação tem do clima. Se a estação de onde vêm não for o local — uma estação costeira lida para um vale do interior, uma estação de baixa altitude lida para um local 400 m acima — então todas as páginas seguintes herdam essa diferença. Identifique a estação e o período no campo da página inicial e a exportação levá-los-á consigo, para que a leitura possa ser auditada mais tarde.',
+  'ori-method':
+    'As horas contam-se geometricamente — o sol acima do horizonte e a incidir na fachada — em <b>hora solar</b>, pelo que o meio-dia é a culminação onde quer que esteja o local. Sem nuvens, sem relevo e sem edifícios vizinhos: tome os números como comparação entre orientações, não como energia. O semestre de Verão vai de Abril a Setembro, a convenção de Köppen usada na página anterior.',
+  'ori-lead-Csa':
+    'Alongue a planta de nascente a poente, de modo que as fachadas longas se voltem a sul e a norte; abra as salas a sul com sombreamento fixo mais móvel; deixe o poente quase cego; que a massa e a ventilação nocturna levem Julho e Agosto.',
+  'ori-lead-Csb':
+    'Alongue a planta de nascente a poente; vidro generoso a sul para o Inverno, com sombreamento fixo ligeiro para um Verão curto; ventilação transversal e massa moderada.',
+  'ori-lead-Cfb':
+    'A luz natural e o vento mandam, não o calor: planta pouco profunda para a luz do dia, vãos altos a sul e a sudeste, resguardo a norte dos ventos atlânticos dominantes e da chuva batida, inércia moderada contra condensações.',
+  'ori-lead-B':
+    'A amplitude diária é o recurso: forma compacta, vãos pequenos excepto uma parede maciça ou Trombe a sul, massa pesada descarregada pela ventilação nocturna; pátio ou tempero pela terra onde a pendente o permitir.',
+  'ori-lead-none':
+    'Aplique a regra do hemisfério abaixo: recolha o sol de Inverno a sul, recuse o sol de Verão a nascente e sobretudo a poente.',
+  'ori-form':
+    'Eixo longo de nascente a poente, topos curtos a nascente e poente (Ching &amp; Shapiro; DeKay &amp; Brown): a fachada sul recolhe o Inverno, a norte dá luz difusa, e os dois topos que nenhuma pala consegue sombrear ficam curtos.',
+  'ori-lab':
+    'Olgyay pôs o máximo sol na fachada no período subaquecido e o mínimo no sobreaquecido: Nova Iorque–Nova Jérsia deu <b>17° a leste do sul</b>, Phoenix <b>25° a leste do sul</b>, com o calor pesado quatro-para-um (1963, p. 58). Para a forma, o quadrado nunca é o óptimo, o alongamento norte–sul é pior que o quadrado, e o óptimo está sempre algures ao longo de nascente–poente — 1:1,6 adoptado para Nova Iorque, 1:1,3 para Phoenix (p. 88), sendo o alongamento nascente–poente “definitivamente desejável” na zona temperada (p. 90). A forma verde interpola essas âncoras para <b>%1</b>; estique e rode a sua contra ela.',
+  'ori-score':
+    'A nota é um índice didáctico, não uma previsão energética: 60 % orientação — nota máxima sobre a normal verde, zero a 90° de desvio — mais 40 % forma — proximidade do alongamento 1:X, com desconto para plantas quadradas, diagonais e norte–sul. Duas plantas podem partilhar a nota e comportar-se de modo diferente; leia-a com as pastilhas.'
+});
+</script>
+</body>
+</html>
