@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Architecture Advisor — Bioclimatic Design</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='32' r='32' fill='%23000'/%3E%3Ctext x='32' y='43' font-family='Helvetica, Arial, sans-serif' font-size='26' font-weight='700' fill='%23fff' text-anchor='middle' letter-spacing='-1'%3EAA%3C/text%3E%3C/svg%3E">
 <style>
 :root{
   --bg:#ffffff;
@@ -623,7 +624,7 @@ footer{border-top:1px solid var(--line); margin-top:26px; background:var(--wash)
 /* ------------------------------------------------------------ 0. IDENTITY -- */
 const APP = {
   name:        'Architecture Advisor',
-  version:     '1.4.1',
+  version:     '1.10.1',
   author:      'Nuno Dinis Cortiços',
   institution: 'Lisbon School of Architecture, Universidade de Lisboa',
   builtWith:   'Claude Opus 5 (Anthropic)',
@@ -977,6 +978,12 @@ function hideTip() { TIP.style.display = 'none'; }
 
 
 let PANELS = [];
+/* The plan massing and the roof geometry are edited on separate tabs (Site
+   and Roof) but score each other — the Form-factor badge on Site follows
+   the roof pitch, and the roof's south-collector area follows the plan's
+   footprint — so both tabs read and write the same two objects, reset
+   fresh each time a site is mounted. */
+let MASS = null, ROOF = null;
 /**
  * Build a titled panel that owns one canvas. `o.render(ctx, W, H)` draws in CSS
  * pixels; the panel handles device-pixel scaling, resize and 3× PNG export, so
@@ -1823,7 +1830,7 @@ function orientationLead(code, main) {
 function buildOrientation(host) {
   const S = STATE.site, C = STATE.clim, K = C.k;
   const lat = S.lat, lon = S.lon, tz = lon / 15;
-  pageHead(host, 'Orientation',
+  pageHead(host, 'Solar Geometry',
     'Sun geometry for this latitude, and what each facade receives across the year. The recommendation follows the Köppen class from the previous tab.');
 
   /* --- headline numbers --------------------------------------------------- */
@@ -1951,6 +1958,21 @@ function buildOrientation(host) {
   host.appendChild(hint('ori-form',
     'Long axis east–west, short ends east and west (Ching &amp; Shapiro; DeKay &amp; Brown): the south facade collects the winter, the north gives diffuse light, and the two ends that no overhang can shade stay short.'));
 
+  host.appendChild(section('What to do with each facade',
+    'After Gonçalves & Graça (2004), Olgyay (1963), Lechner (2015) and DeKay & Brown (2014)',
+    'facade-guidance', () => csvRows([['Facade', 'Winter sun (h)', 'Summer sun (h)', 'Annual sun (h)']]
+      .concat(ORI_KEYS.map((k, f) => [k, +FS.winter[f].toFixed(0), +FS.summer[f].toFixed(0), +FS.annual[f].toFixed(0)])))));
+  host.appendChild(dataTable(['Facade', 'Winter sun, h', 'Summer sun, h', 'Annual sun, h', 'What to do with it'],
+    ORI_KEYS.map((k, f) => ['<b>' + COMPASS8[f] + '</b>', fmt(FS.winter[f], 0), fmt(FS.summer[f], 0),
+      fmt(FS.annual[f], 0), t(ORI_GUIDE[k])]), [4]));
+}
+
+function buildSite(host) {
+  const S = STATE.site, C = STATE.clim, K = C.k;
+  const lat = S.lat, lon = S.lon, tz = lon / 15;
+  pageHead(host, 'Site',
+    "Test a plan's massing against the Olgyay optimum — scored against the Köppen class from Climate and the sun path from Solar Geometry.");
+
   /* --- the plan laboratory: stretch it, turn it, meet Olgyay ----------------
      A top-down massing the student stretches in both directions and rotates,
      against the green dashed optimum interpolated from Olgyay's anchors —
@@ -1967,7 +1989,19 @@ function buildOrientation(host) {
                Cfb:{ az:170, r:1.4 }, Cfa:{ az:170, r:1.4 }, Csc:{ az:170, r:1.4 },
                BSk:{ az:160, r:1.3 }, BSh:{ az:160, r:1.3 } }[K.code] || { az:163, r:1.4 };
   if (lat < 0) OI.az = (180 + OI.az) % 360;   // southern hemisphere: mirror to east of north
-  const G = { L:12, D:8, rot:180 };
+  const G = MASS;              // fh = floor-to-floor height, m; shared with the Roof tab
+  const RF = ROOF;              // read here only, to score the Form factor against the roof pitch
+  /** Sun position at solar culmination for a day-of-year. */
+  const noonSun = doy => {
+    let best = null;
+    for (let h = 0; h < 24; h += 0.1) {
+      const sp = sunPos(doy, h, lat, lon, tz);
+      if (!best || sp.alt > best.alt) best = sp;
+    }
+    return best;
+  };
+  /** Shadow length for a height at a given sun altitude. */
+  const shadowLen = (hgt, alt) => hgt / Math.max(0.08, Math.tan(Math.max(0.5, alt) * RAD));
   const circDev = (a, b) => { const d = Math.abs(a - b) % 360; return d > 180 ? 360 - d : d; };
   const labRatio = () => Math.max(G.L, G.D) / Math.min(G.L, G.D);
   /** Long-axis direction in [0,180): 90 runs east–west, 0/180 north–south. */
@@ -1993,15 +2027,49 @@ function buildOrientation(host) {
     const form = 100 * prox * k;
     return { total:Math.round(0.6 * ori + 0.4 * form), ori:Math.round(ori), form:Math.round(form) };
   }
-  /** Frame shared by the render and the pointer handlers. */
+  /**
+   * Form factor of the whole volume: exterior envelope ÷ heated volume.
+   * Single-zone box carrying the pitched roof above: walls to the eaves,
+   * gable triangles, roof planes and ground floor, all exterior. The same
+   * ratio the REH calls factor de forma — stated here as pure geometry,
+   * with no limits attached.
+   */
+  const labFF = () => {
+    const H0 = G.fl * G.fh;
+    const th = (RF.n === 0 ? 0 : RF.th) * RAD;   // a flat roof pitches nothing
+    const span = RF.n === 2 ? G.D / 2 : G.D;
+    const rise = span * Math.tan(th);
+    const slope = span / Math.cos(th);
+    const wallEW = 2 * G.L * H0 + (RF.n === 2 ? 0 : G.L * rise);
+    const wallNS = 2 * (G.D * H0 + (G.D * rise) / 2);
+    const roof = (RF.n === 2 ? 2 * slope : slope) * G.L;
+    const A = wallEW + wallNS + roof + G.L * G.D;
+    const V = G.L * G.D * (H0 + rise / 2);
+    return { H:H0 + rise, V, A, ff:A / V };
+  };
+  const SUN_DEC = noonSun(355), SUN_JUN = noonSun(172);   // site constants, CSV only
+  /** Frame shared by the render and the pointer handlers; the shadow is clipped to the ring. */
+  /* Isometric camera: the ground plane is viewed from the south-west at a
+     30° tilt, so a world offset (x east, y north, z up) projects as
+     screenX = (x − y)·cos30·s, screenY = −(x + y)·sin30·s − z·s. A ground
+     circle becomes the ellipse the compass ring is drawn as; height simply
+     lifts a point straight up the screen. */
+  const ISO_C = Math.cos(30 * RAD), ISO_S = Math.sin(30 * RAD);
   const labFrame = (W, H) => {
-    const cx = W / 2, cy = (H + 18) / 2;
-    const R = Math.min(W, H - 18) * 0.40;
+    const cx = W / 2;
     const A = G.L * G.D;
     const Li = Math.sqrt(A * OI.r), Di = Math.sqrt(A / OI.r);
     const arr = Math.max(2.5, 0.3 * Math.min(G.L, G.D));
-    const need = Math.max(Math.hypot(G.L, G.D), Math.hypot(Li, Di)) / 2 + arr + 1.5;
-    return { cx, cy, R, s:(R - 16) / need };
+    const half = Math.max(Math.hypot(G.L, G.D), Math.hypot(Li, Di)) / 2;
+    const need = half + arr + 1.5;             // world footprint radius, metres
+    const Hgt = G.fl * G.fh;                    // world height to clear above the ring
+    const top = 14, bottom = H - 34;             // leave room for the legend strip
+    const availV = Math.max(40, bottom - top);
+    const sByW = (W / 2 - 16) / (need * ISO_C * Math.SQRT2);
+    const sByH = availV / (need * ISO_S * Math.SQRT2 * 2 + Hgt);
+    const s = Math.max(4, Math.min(sByW, sByH));
+    const cy = bottom - need * ISO_S * Math.SQRT2 * s;
+    return { cx, cy, s, R:need };
   };
 
   const pillOri = el('span', { class:'pill ok' });
@@ -2025,6 +2093,46 @@ function buildOrientation(host) {
   const cL = rangeCtl('Length along main facade', 6, 24, 0.5, G.L, v => { G.L = v; labDraw(); }, v => fmt(v, 1) + ' m');
   const cD = rangeCtl('Depth', 4, 16, 0.5, G.D, v => { G.D = v; labDraw(); }, v => fmt(v, 1) + ' m');
   const cR = rangeCtl('Main facade faces', 0, 360, 1, G.rot, v => { G.rot = v; labDraw(); }, v => fmt(v, 0) + '°');
+  const cF = numCtl('Floors above ground', 1, 3, 1, G.fl, v => { G.fl = v; labDraw(); }, null);
+  const cFH = numCtl('Floor height', 2.4, 4.5, 0.1, G.fh, v => {
+    G.fh = +v.toFixed(1); cFH.input.value = G.fh.toFixed(1); labDraw();
+  }, 'm');
+
+  /* --- the driven sun: pick a day, drag the hour, or play it ---------------- */
+  const SH = { doy:355, key:'21 Dec', h:12, rise:6, set:18 };
+  const hFmt = v => fmt(v, 2) + ' h';
+  const cH = rangeCtl('Solar time', 0, 24, 0.25, 12, v => { SH.h = v; labDraw(); }, hFmt);
+  function setDay(doy) {
+    SH.doy = doy;
+    const hit = ORI_DAYS.filter(d => d.doy === doy)[0];
+    SH.key = hit ? hit.key : ('day ' + doy);
+    const ss = sunriseSunset(doy, lat, lon, tz);
+    SH.rise = Math.ceil(ss.rise * 4) / 4; SH.set = Math.floor(ss.set * 4) / 4;
+    SH.h = Math.round(ss.noon * 4) / 4;
+    cH.range.min = SH.rise; cH.range.max = SH.set;
+    syncCtl(cH, SH.h, hFmt);
+    labDraw();
+  }
+  const segDay = segCtl('Sun day', ORI_DAYS.map(d => ({ value:d.doy, label:d.key })), SH.doy, v => setDay(v));
+  let playing = null;
+  const playBtn = el('button', { class:'btn', text:'Play the day', onclick: () => {
+    if (playing) {
+      clearInterval(playing); playing = null;
+      playBtn.textContent = t('Play the day');
+      return;
+    }
+    if (SH.h >= SH.set - 1e-6) { SH.h = SH.rise; syncCtl(cH, SH.h, hFmt); }
+    playBtn.textContent = t('Pause');
+    playing = setInterval(() => {
+      SH.h = Math.min(SH.set, +(SH.h + (SH.set - SH.rise) / 60).toFixed(3));
+      syncCtl(cH, SH.h, hFmt);
+      labDraw();
+      if (SH.h >= SH.set - 1e-9) {
+        clearInterval(playing); playing = null;
+        playBtn.textContent = t('Play the day');
+      }
+    }, 150);
+  }});
   const snap = el('button', { class:'btn solid', text:'Snap to the Olgyay optimum', onclick: () => {
     const A = G.L * G.D;
     G.L = Math.round(Math.sqrt(A * OI.r) * 2) / 2;
@@ -2036,123 +2144,255 @@ function buildOrientation(host) {
     labDraw();
     toast('Snapped to the Olgyay optimum');
   }});
-  host.appendChild(controls([cL, cD, cR, snap]));
+  host.appendChild(controls([cL, cD, cR, cF, cFH, snap]));
+  host.appendChild(controls([segDay, cH, playBtn]));
 
   labPanel = makePanel(host, {
     title: 'Your plan against the optimum',
-    note: 'Top-down view, north up. Drag the plan to stretch it, drag the black knob to turn it.',
+    note: 'Isometric view, tilted from the south-west. Drag the plan to stretch it, drag the black knob to turn it, drive the sun through its day below.',
     aspect: 1.5,
     render(ctx, W, H) {
       const GREEN = '#16A34A';
-      const { cx, cy, R, s } = labFrame(W, H);
+      const { cx, cy, s, R } = labFrame(W, H);
       const A = G.L * G.D;
       const Li = Math.sqrt(A * OI.r), Di = Math.sqrt(A / OI.r);
       const arr = Math.max(2.5, 0.3 * Math.min(G.L, G.D));
-      const P2 = (x, y) => [cx + x * s, cy - y * s];
+      const proj = (x, y, z) => [cx + (x - y) * ISO_C * s, cy - (x + y) * ISO_S * s - (z || 0) * s];
       const rot = (x, y, cw) => {
         const a = cw * RAD;
         return [x * Math.cos(a) + y * Math.sin(a), -x * Math.sin(a) + y * Math.cos(a)];
       };
-      const at = (x, y, beta) => { const q = rot(x, y, beta); return P2(q[0], q[1]); };
+      const at = (x, y, beta, z) => { const q = rot(x, y, beta); return proj(q[0], q[1], z || 0); };
       const arrow = (x1, y1, x2, y2, color, dash) => {
         stroke(ctx, color, 2, dash || null); seg(ctx, x1, y1, x2, y2);
         const a0 = Math.atan2(y2 - y1, x2 - x1), hl = 8;
         seg(ctx, x2, y2, x2 - hl * Math.cos(a0 - 0.45), y2 - hl * Math.sin(a0 - 0.45));
         seg(ctx, x2, y2, x2 - hl * Math.cos(a0 + 0.45), y2 - hl * Math.sin(a0 + 0.45));
       };
+      const ring = (rad, z) => {
+        const pts = [];
+        for (let a = 0; a <= 360; a += 6) pts.push(proj(rad * Math.sin(a * RAD), rad * Math.cos(a * RAD), z || 0));
+        return pts;
+      };
+      const ringPath = pts => {
+        ctx.beginPath();
+        pts.forEach((p, i) => i ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1]));
+        ctx.closePath();
+      };
 
-      // compass ring
-      stroke(ctx, CH.line, 1.2);
-      ctx.beginPath(); ctx.arc(cx, cy, R, 0, 6.284); ctx.stroke();
+      // the ground plane, tilted into an isometric ellipse
+      ringPath(ring(R, 0));
+      ctx.fillStyle = 'rgba(20,23,26,.025)'; ctx.fill();
+      stroke(ctx, CH.line, 1.2); ctx.stroke();
       for (let a = 0; a < 360; a += 15) {
-        const big = a % 45 === 0, r1 = R - (big ? 7 : 4);
+        const big = a % 45 === 0, r1 = R * (big ? 0.90 : 0.95);
         stroke(ctx, big ? CH.muted : CH.line, 1);
-        seg(ctx, cx + r1 * Math.sin(a * RAD), cy - r1 * Math.cos(a * RAD),
-                 cx + R * Math.sin(a * RAD), cy - R * Math.cos(a * RAD));
+        const p0 = proj(r1 * Math.sin(a * RAD), r1 * Math.cos(a * RAD), 0);
+        const p1 = proj(R * Math.sin(a * RAD), R * Math.cos(a * RAD), 0);
+        seg(ctx, p0[0], p0[1], p1[0], p1[1]);
       }
-      [['N', 0], ['E', 90], ['S', 180], ['W', 270]].forEach(([c, a]) =>
-        label(ctx, c, cx + (R + 13) * Math.sin(a * RAD), cy - (R + 13) * Math.cos(a * RAD),
-          a === 0 ? CH.ink : CH.muted, F(11, '600'), 'center', 'middle'));
-
-      // diurnal sun markers on the ring
-      [{ az:90, label:'morning', c:'#D97706' }, { az:180, label:'noon', c:'#EA580C' },
-       { az:270, label:'afternoon · hot', c:'#DC2626' }].forEach(sn => {
-        const dx = cx + R * Math.sin(sn.az * RAD), dy = cy - R * Math.cos(sn.az * RAD);
-        ctx.fillStyle = sn.c;
-        ctx.beginPath(); ctx.arc(dx, dy, 4, 0, 6.284); ctx.fill();
+      [['N', 0], ['E', 90], ['S', 180], ['W', 270]].forEach(([c, a]) => {
+        const p = proj((R + 1.3) * Math.sin(a * RAD), (R + 1.3) * Math.cos(a * RAD), 0);
+        label(ctx, c, p[0], p[1], a === 0 ? CH.ink : CH.muted, F(11, '600'), 'center', 'middle');
       });
 
-      // the two plans
-      const rect = (L, D, beta, dashed) => {
-        const cs = [[L/2, D/2], [-L/2, D/2], [-L/2, -D/2], [L/2, -D/2]].map(pt => at(pt[0], pt[1], beta));
-        ctx.beginPath();
-        cs.forEach((p, i) => i ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1]));
-        ctx.closePath();
-        if (dashed) { stroke(ctx, GREEN, 2.2, [7, 5]); ctx.stroke(); }
-        else {
-          ctx.fillStyle = 'rgba(20,23,26,.05)'; ctx.fill();
-          stroke(ctx, CH.ink, 2); ctx.stroke();
-        }
+      // the driven sun, lifted off the ring by its altitude
+      const sun = sunPos(SH.doy, SH.h, lat, lon, tz);
+      const Hgt = G.fl * G.fh, beta = G.rot - 180;
+      const altR = Math.max(0, sun.alt) * RAD;
+      const sp = proj(R * Math.sin(sun.azi * RAD) * Math.cos(altR), R * Math.cos(sun.azi * RAD) * Math.cos(altR), R * Math.sin(altR));
+      ctx.fillStyle = '#D97706';
+      ctx.beginPath(); ctx.arc(sp[0], sp[1], 5, 0, 6.284); ctx.fill();
+      ctx.fillStyle = '#fff';
+      ctx.beginPath(); ctx.arc(sp[0], sp[1], 2, 0, 6.284); ctx.fill();
+
+      // live shadow on the ground, clipped to the ring
+      const hull = pts => {
+        const p = pts.slice().sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+        const cross = (o, a, b) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
+        const lo = [], hi = [];
+        p.forEach(pt => { while (lo.length >= 2 && cross(lo[lo.length - 2], lo[lo.length - 1], pt) <= 0) lo.pop(); lo.push(pt); });
+        p.slice().reverse().forEach(pt => { while (hi.length >= 2 && cross(hi[hi.length - 2], hi[hi.length - 1], pt) <= 0) hi.pop(); hi.push(pt); });
+        lo.pop(); hi.pop();
+        return lo.concat(hi);
       };
+      const Lsh = shadowLen(Hgt, sun.alt);
+      const saz = (sun.azi + 180) * RAD;
+      const ox = Lsh * Math.sin(saz), oy = Lsh * Math.cos(saz);
+      const scs = [[G.L/2, G.D/2], [-G.L/2, G.D/2], [-G.L/2, -G.D/2], [G.L/2, -G.D/2]]
+        .map(pt => rot(pt[0], pt[1], beta));
+      const hp = hull(scs.concat(scs.map(p => [p[0] + ox, p[1] + oy])));
+      ctx.save();
+      ringPath(ring(R * 0.985, 0)); ctx.clip();
+      ctx.beginPath();
+      hp.forEach((p, i) => { const q = proj(p[0], p[1], 0); i ? ctx.lineTo(q[0], q[1]) : ctx.moveTo(q[0], q[1]); });
+      ctx.closePath();
+      ctx.fillStyle = 'rgba(20,23,26,.13)'; ctx.fill();
+      stroke(ctx, 'rgba(20,23,26,.35)', 1); ctx.stroke();
+      ctx.restore();
+      let far = scs[0], best = -1e9;
+      scs.forEach(p => { const d = p[0] * ox + p[1] * oy; if (d > best) { best = d; far = p; } });
+      let tq = proj(far[0] + ox, far[1] + oy, 0);
+      const vx = tq[0] - cx, vy = tq[1] - cy, vd = Math.hypot(vx, vy);
+      const clampR = R * s * (ISO_C + ISO_S) * 0.92;
+      if (vd > clampR) tq = [cx + vx / vd * clampR, cy + vy / vd * clampR];
+      label(ctx, fmt(Lsh, 1) + ' m', tq[0] + 5, tq[1] - 5, CH.ink2, FM(9.5), 'left', 'middle');
+
+      // only the two faces the south-west camera can see get drawn on either box
+      const camDir = { x:-1, y:-1 };
+      const faceVerts = (L, D, beta, hgt) => {
+        const local = [[L/2, D/2], [-L/2, D/2], [-L/2, -D/2], [L/2, -D/2]];
+        const base = local.map(pt => rot(pt[0], pt[1], beta));
+        return { base, baseS: base.map(p => proj(p[0], p[1], 0)), topS: base.map(p => proj(p[0], p[1], hgt)) };
+      };
+
+      // the Olgyay optimum: the same target footprint, extruded to the
+      // student's height so the two volumes read against each other
+      const drawBoxOutline = (L, D, beta, hgt, color) => {
+        const { base, baseS, topS } = faceVerts(L, D, beta, hgt);
+        for (let i = 0; i < 4; i++) {
+          const a = base[i], b = base[(i + 1) % 4];
+          const mx = (a[0] + b[0]) / 2, my = (a[1] + b[1]) / 2;
+          if (mx * camDir.x + my * camDir.y <= 0) continue;   // back-facing: hidden
+          const bottomA = baseS[i], bottomB = baseS[(i + 1) % 4];
+          const topA = topS[i], topB = topS[(i + 1) % 4];
+          ctx.beginPath();
+          ctx.moveTo(bottomA[0], bottomA[1]); ctx.lineTo(bottomB[0], bottomB[1]);
+          ctx.lineTo(topB[0], topB[1]); ctx.lineTo(topA[0], topA[1]); ctx.closePath();
+          ctx.fillStyle = 'rgba(22,163,74,.06)'; ctx.fill();
+          stroke(ctx, color, 1.6, [6, 4]); ctx.stroke();
+        }
+        for (let i = 0; i < 4; i++) {   // vertical edges, so the volume reads even on hidden sides
+          stroke(ctx, color, 1.6, [6, 4]);
+          seg(ctx, baseS[i][0], baseS[i][1], topS[i][0], topS[i][1]);
+        }
+        stroke(ctx, color, 2.2, [7, 5]);
+        [baseS, topS].forEach(ring => {
+          ctx.beginPath();
+          ring.forEach((p, i) => i ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1]));
+          ctx.closePath(); ctx.stroke();
+        });
+      };
+      drawBoxOutline(Li, Di, OI.az - 180, Hgt, GREEN);
+
+      // the student's plan, extruded to its actual height
+      const drawBox = (L, D, beta, hgt) => {
+        const { base, baseS, topS } = faceVerts(L, D, beta, hgt);
+        for (let i = 0; i < 4; i++) {
+          const a = base[i], b = base[(i + 1) % 4];
+          const mx = (a[0] + b[0]) / 2, my = (a[1] + b[1]) / 2;
+          if (mx * camDir.x + my * camDir.y <= 0) continue;   // back-facing: hidden
+          const bottomA = baseS[i], bottomB = baseS[(i + 1) % 4];
+          const topA = topS[i], topB = topS[(i + 1) % 4];
+          ctx.beginPath();
+          ctx.moveTo(bottomA[0], bottomA[1]); ctx.lineTo(bottomB[0], bottomB[1]);
+          ctx.lineTo(topB[0], topB[1]); ctx.lineTo(topA[0], topA[1]); ctx.closePath();
+          ctx.fillStyle = i % 2 === 0 ? 'rgba(20,23,26,.14)' : 'rgba(20,23,26,.08)';
+          ctx.fill();
+          stroke(ctx, CH.ink, 1.4); ctx.stroke();
+        }
+        ctx.beginPath();
+        topS.forEach((p, i) => i ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1]));
+        ctx.closePath();
+        ctx.fillStyle = 'rgba(20,23,26,.05)'; ctx.fill();
+        stroke(ctx, CH.ink, 2); ctx.stroke();
+      };
+      drawBox(G.L, G.D, beta, Hgt);
+
+      // facade-normal arrows, at ground level so they clear the box
       const normalArrow = (L, D, beta, color, dashed, tag) => {
         const mq = rot(0, -D / 2, beta), nq = rot(0, -1, beta);
-        const a = P2(mq[0], mq[1]), b = P2(mq[0] + nq[0] * arr, mq[1] + nq[1] * arr);
+        const a = proj(mq[0], mq[1], 0), b = proj(mq[0] + nq[0] * arr, mq[1] + nq[1] * arr, 0);
         arrow(a[0], a[1], b[0], b[1], color, dashed ? [6, 4] : null);
         if (tag) label(ctx, tag, b[0], b[1] - 9, color, F(10, '600'), 'center', 'middle');
         return { a, b };
       };
-      rect(Li, Di, OI.az - 180, true);
-      rect(G.L, G.D, G.rot - 180, false);
       normalArrow(Li, Di, OI.az - 180, GREEN, true, 'Olgyay optimum');
-      const sa = normalArrow(G.L, G.D, G.rot - 180, CH.ink, false, null);
+      const sa = normalArrow(G.L, G.D, beta, CH.ink, false, null);
       // the rotation knob: a black dot on the student's arrow-tip
       ctx.fillStyle = '#fff';
       ctx.beginPath(); ctx.arc(sa.b[0], sa.b[1], 9, 0, 6.284); ctx.fill();
       ctx.fillStyle = CH.ink;
       ctx.beginPath(); ctx.arc(sa.b[0], sa.b[1], 5.5, 0, 6.284); ctx.fill();
 
-      // dimensions of the student's plan
-      const dl = at(0, -G.D / 2 - 1.4, G.rot - 180);
+      // dimensions of the student's plan, at ground level
+      const dl = at(0, -G.D / 2 - 1.4, beta, 0);
       label(ctx, fmt(G.L, 1) + ' m', dl[0], dl[1], CH.ink2, FM(9.5), 'center', 'middle');
-      const ds = at(G.L / 2 + 1.4, 0, G.rot - 180);
+      const ds = at(G.L / 2 + 1.4, 0, beta, 0);
       label(ctx, fmt(G.D, 1) + ' m', ds[0], ds[1], CH.ink2, FM(9.5), 'center', 'middle');
 
       // readout and score badge
-      label(ctx, fmt(A, 0) + ' m² · 1 : ' + fmt(labRatio(), 2) + ' · Δ ' + fmt(circDev(G.rot, OI.az), 0) + '°',
+      label(ctx, fmt(A, 0) + ' m² · 1 : ' + fmt(labRatio(), 2) + ' · Δ ' + fmt(circDev(G.rot, OI.az), 0) + '°'
+        + ' · H ' + fmt(G.fl * G.fh, 1) + ' m · ' + SH.key + ' ' + fmt(SH.h, 2) + ' h',
         8, 12, CH.ink2, FM(11), 'left', 'middle');
-      const sc = labScore();
+      const sc = labScore(), ff = labFF();
       const bcol = sc.total >= 80 ? GREEN : sc.total >= 50 ? '#D97706' : '#DC2626';
+      const fcol = ff.ff <= 0.7 ? GREEN : ff.ff <= 1.1 ? '#D97706' : '#DC2626';
       ctx.fillStyle = '#fff';
-      ctx.fillRect(W - 80, 6, 72, 52);
-      stroke(ctx, bcol, 1.5); ctx.strokeRect(W - 80, 6, 72, 52);
-      label(ctx, String(sc.total), W - 44, 31, bcol, FM(24), 'center', 'middle');
-      label(ctx, t('Olgyay fit') + ' /100', W - 44, 50, CH.muted, F(9), 'center', 'middle');
+      ctx.fillRect(W - 92, 6, 84, 52);
+      stroke(ctx, bcol, 1.5); ctx.strokeRect(W - 92, 6, 84, 52);
+      label(ctx, String(sc.total), W - 50, 31, bcol, FM(24), 'center', 'middle');
+      label(ctx, t('Olgyay fit') + ' /100', W - 50, 50, CH.muted, F(9), 'center', 'middle');
+      ctx.fillStyle = '#fff';
+      ctx.fillRect(W - 92, 64, 84, 52);
+      stroke(ctx, fcol, 1.5); ctx.strokeRect(W - 92, 64, 84, 52);
+      label(ctx, fmt(ff.ff, 2), W - 50, 89, fcol, FM(24), 'center', 'middle');
+      label(ctx, t('Form factor'), W - 50, 107, CH.muted, F(9), 'center', 'middle');
       swatchKey(ctx, 8, H - 30,
         [{ color:CH.ink, label:'Your plan' }, { color:GREEN, label:'Olgyay optimum' },
-         { color:'#D97706', label:'morning' }, { color:'#EA580C', label:'noon' },
-         { color:'#DC2626', label:'afternoon · hot' }],
-        { cols:3, colWidth:150, rowHeight:14 });
+         { color:'#D97706', label:'Sun' }, { color:'rgba(20,23,26,.45)', label:'Shadow' }],
+        { cols:4, colWidth:140, rowHeight:14 });
     },
-    csv: () => csvRows([['Parameter', 'Value'],
+    csv: () => {
+      const sn = sunPos(SH.doy, SH.h, lat, lon, tz);
+      const ff0 = labFF();
+      return csvRows([['Parameter', 'Value'],
       ['Student length (m)', +G.L.toFixed(1)], ['Student depth (m)', +G.D.toFixed(1)],
       ['Student main facade azimuth (°)', +G.rot.toFixed(0)],
       ['Olgyay optimum azimuth (°)', +OI.az.toFixed(0)],
       ['Olgyay elongation (long:short)', +OI.r.toFixed(2)],
       ['Deviation (°)', +circDev(G.rot, OI.az).toFixed(0)],
       ['Olgyay fit (0–100)', labScore().total],
-      ['Köppen–Geiger', STATE.clim.k.code]])
+      ['Floors above ground', G.fl],
+      ['Floor height (m)', +G.fh.toFixed(1)],
+      ['Building height (m)', +(G.fl * G.fh).toFixed(1)],
+      ['Heated volume (m³)', +ff0.V.toFixed(1)],
+      ['Envelope area (m²)', +ff0.A.toFixed(1)],
+      ['Form factor FF (m⁻¹)', +ff0.ff.toFixed(2)],
+      ['Sun day', SH.key], ['Solar time (h)', +SH.h.toFixed(2)],
+      ['Sun altitude (°)', +sn.alt.toFixed(1)], ['Sun azimuth (°)', +sn.azi.toFixed(1)],
+      ['Shadow length (m)', +shadowLen(G.fl * G.fh, sn.alt).toFixed(1)],
+      ['Shadow azimuth (°)', +((sn.azi + 180) % 360).toFixed(0)],
+      ['Dec noon shadow (m)', +shadowLen(G.fl * G.fh, SUN_DEC.alt).toFixed(1)],
+      ['Jun noon shadow (m)', +shadowLen(G.fl * G.fh, SUN_JUN.alt).toFixed(1)],
+      ['Köppen–Geiger', STATE.clim.k.code]]);
+    }
   });
   host.appendChild(hint('ori-score',
     'The badge is a didactic index, not an energy prediction: 60 % orientation — full marks on the green normal, zero at 90° off — plus 40 % form — closeness to the 1:X elongation, discounted for square, diagonal and north–south plans. Two plans can share a score and behave differently; read it with the pills.'));
+  host.appendChild(hint('ori-height',
+    'The two boxes extrude the plan — floors above ground times an editable floor height. The sun below it is driven, not decorative: pick 21 December, 20 March or 21 June, drag the solar hour — or press play — and the shadow follows the trajectory, long and northern in the December morning, short and tight at the June noon. The December noon shadow stays the governing case for spacing. Height does not move the fit badge, which only knows orientation and plan form.'));
+  host.appendChild(hint('ori-ff',
+    'Form factor FF = exterior envelope ÷ heated volume, in m⁻¹ — walls to the eaves, gable triangles, roof planes and ground floor over the volume they enclose, one single zone, everything exterior. Lower is more compact: the round shepherd shelters of Monchique are the vernacular extreme (Gonçalves & Graça). It is the same ratio the REH calls <i>factor de forma</i>, stated here as pure geometry with no limits attached — Construction Advisor takes it from there. The badge paints it green at or below 0.7 (compact), amber to 1.1 (moderate) and red above (dispersed): didactic bands, not limits. It does not move the fit badge.'));
 
   /* --- direct manipulation: drag the body to stretch, the knob to turn ----- */
   const cv = labPanel.canvas;
   cv.style.touchAction = 'none';
   cv.style.cursor = 'grab';
-  const toPlan = (px, py) => {
+  // a <canvas> is natively draggable as an "image" in some browsers, which
+  // hijacks the gesture into an OS drag before our own handlers see it
+  cv.draggable = false;
+  cv.addEventListener('dragstart', ev => ev.preventDefault());
+  /** Inverts the isometric projection at a given world height z back to
+      plan metres — used at z = 0 for dragging and again at the box's own
+      height so a click anywhere on its visible walls still registers. */
+  const toPlanZ = (px, py, z) => {
     const F = labFrame(labPanel.W, labPanel.H);
-    return { x:(px - F.cx) / F.s, y:-(py - F.cy) / F.s };
+    const U = (px - F.cx) / (ISO_C * F.s);
+    const V = (F.cy - py - (z || 0) * F.s) / (ISO_S * F.s);
+    return { x:(U + V) / 2, y:(V - U) / 2 };
   };
+  const toPlan = (px, py) => toPlanZ(px, py, 0);
   const toLocal = (x, y) => {
     const a = (G.rot - 180) * RAD;
     return { u:x * Math.cos(a) - y * Math.sin(a), v:x * Math.sin(a) + y * Math.cos(a) };
@@ -2163,17 +2403,19 @@ function buildOrientation(host) {
     const arr = Math.max(2.5, 0.3 * Math.min(G.L, G.D));
     return { x:(-G.D / 2) * q + (-q) * arr, y:(-G.D / 2) * c + (-c) * arr };
   };
-  /** 'rotate' on the knob, 'stretch' on the body, null elsewhere. */
+  /** 'rotate' on the knob, 'stretch' anywhere on the body's visible walls, null elsewhere. */
   const hitAt = (clientX, clientY) => {
     const r = cv.getBoundingClientRect();
     const F = labFrame(labPanel.W, labPanel.H);
     const px = clientX - r.left, py = clientY - r.top;
     const k = knobPlan();
-    const kx = F.cx + k.x * F.s, ky = F.cy - k.y * F.s;
+    const kx = F.cx + (k.x - k.y) * ISO_C * F.s, ky = F.cy - (k.x + k.y) * ISO_S * F.s;
     if (Math.hypot(px - kx, py - ky) <= 15) return 'rotate';
-    const p = { x:(px - F.cx) / F.s, y:-(py - F.cy) / F.s };
-    const l = toLocal(p.x, p.y);
-    if (Math.abs(l.u) <= G.L / 2 + 2.5 && Math.abs(l.v) <= G.D / 2 + 2.5) return 'stretch';
+    for (const z of [0, G.fl * G.fh]) {
+      const p = toPlanZ(px, py, z);
+      const l = toLocal(p.x, p.y);
+      if (Math.abs(l.u) <= G.L / 2 + 2.5 && Math.abs(l.v) <= G.D / 2 + 2.5) return 'stretch';
+    }
     return null;
   };
   let drag = null;
@@ -2220,20 +2462,257 @@ function buildOrientation(host) {
   cv.addEventListener('pointercancel', endDrag);
   cv.addEventListener('pointerleave', ev => { if (!drag) cv.style.cursor = 'grab'; });
   refreshLab();
+  setDay(355);   // bounds the hour slider to the December day and starts at its noon
+}
 
-  host.appendChild(section('What to do with each facade',
-    'After Gonçalves & Graça (2004), Olgyay (1963), Lechner (2015) and DeKay & Brown (2014)',
-    'facade-guidance', () => csvRows([['Facade', 'Winter sun (h)', 'Summer sun (h)', 'Annual sun (h)']]
-      .concat(ORI_KEYS.map((k, f) => [k, +FS.winter[f].toFixed(0), +FS.summer[f].toFixed(0), +FS.annual[f].toFixed(0)])))));
-  host.appendChild(dataTable(['Facade', 'Winter sun, h', 'Summer sun, h', 'Annual sun, h', 'What to do with it'],
-    ORI_KEYS.map((k, f) => ['<b>' + COMPASS8[f] + '</b>', fmt(FS.winter[f], 0), fmt(FS.summer[f], 0),
-      fmt(FS.annual[f], 0), t(ORI_GUIDE[k])]), [4]));
+function buildRoof(host) {
+  const S = STATE.site, C = STATE.clim;
+  const lat = S.lat;
+  pageHead(host, 'Roof',
+    'Pitch a roof to catch the low sun — the winter and summer solar ideals for this latitude, using the heating–cooling balance from Climate.');
+  const G = MASS, RF = ROOF;
+
+  /* --- pitched roof: slopes, angle, and the sun it catches ----------------------
+     The roof is the largest summer collector, so its pitch decides between
+     winter gain and summer rejection. A south surface collects most when the
+     noon ray meets it near-perpendicularly: winter ideal = latitude + 15°,
+     summer ideal = latitude − 15°, year-round = latitude (Galloway; Lechner).
+     Heating-led sites lean to the winter figure, cooling-led to the summer. */
+  const latN = Math.abs(lat);
+  const idealW = Math.min(75, latN + 15), idealS = Math.max(10, latN - 15);
+  const idealB = Math.round(latN);
+  const Hm = C.t.filter(v => v < 18).length, Cm = C.t.filter(v => v > 22).length;
+  const lean = Hm > Cm ? 'this site leans heating — favour the winter figure'
+             : Cm > Hm ? 'this site leans cooling — favour the summer figure'
+             : 'heating and cooling balance here — hold the middle figure';
+  host.appendChild(section('Pitched roof — catch the low sun',
+    'South slope as a solar collector; the same geometry explains deep winter glass'));
+  host.appendChild(hint('ori-roof',
+    'A south surface collects most when the noon ray meets it near-perpendicularly: <b>winter = latitude + 15°, summer = latitude − 15°, year-round = latitude</b> (Galloway; Lechner) — here <b>%1° / %2° / %3°</b>. %4. Traditional Portuguese tile roofs sit far shallower, so collectors usually need their own frame — the tension is the lesson.',
+    [fmt(idealW, 0), fmt(idealS, 0), fmt(idealB, 0), t(lean)]));
+
+  const cN = segCtl('Roof slopes', [{ value:0, label:'Flat' }, { value:1, label:'Shed' }, { value:2, label:'Gable' }], 2,
+    v => { RF.n = v; cP.range.disabled = v === 0; roofDraw(); });
+  const cP = rangeCtl('Pitch', 10, 60, 1, RF.th, v => { RF.th = v; roofDraw(); }, v => fmt(v, 0) + '°');
+  const pillRoof = el('span', { class:'pill ok' });
+  host.appendChild(stats([
+    statCard('Winter ideal', fmt(idealW, 0), '°', t('steep for the low sun')),
+    statCard('Summer ideal', fmt(idealS, 0), '°', t('shallow against the high sun')),
+    statCard('Year-round ideal', fmt(idealB, 0), '°', t('the latitude itself')),
+    statCard('South collector', fmt(((RF.n === 2 ? G.D / 2 : G.D) / Math.cos(RF.th * RAD)) * G.L, 0), 'm²',
+      t('at your pitch — live below'))
+  ]));
+  host.appendChild(controls([cN, cP]));
+  host.appendChild(el('div', { class:'limitrow' }, [pillRoof]));
+  function refreshRoof() {
+    if (RF.n === 0) { pillRoof.className = 'pill empty'; pillRoof.textContent = t('Flat — frame the collectors, insulate for summer'); return; }
+    const d = Math.abs(RF.th - idealB);
+    if (d <= 5) { pillRoof.className = 'pill ok'; pillRoof.textContent = t('Near the year-round solar ideal'); }
+    else if (d <= 12) { pillRoof.className = 'pill empty'; pillRoof.textContent = t('Between the seasonal ideals — decide by use'); }
+    else { pillRoof.className = 'pill bad'; pillRoof.textContent = t('Far from any solar ideal'); }
+  }
+  /* The same fixed south-west isometric camera as the Site tab — this view
+     never orbits, so the model always shows exactly the two faces (south
+     and west) it's built to draw. screenX = (x−y)·cos30·s,
+     screenY = −(x+y)·sin30·s − z·s, x east, y north, z up. */
+  const ISO_C = Math.cos(30 * RAD), ISO_S = Math.sin(30 * RAD);
+  const projF = (FR, x, y, z) => [FR.cx + (x - y) * ISO_C * FR.s, FR.cy - (x + y) * ISO_S * FR.s - (z || 0) * FR.s];
+  const roofFrame = (W, H) => {
+    const cx = W / 2;
+    const H0 = G.fl * G.fh;
+    const th = (RF.n === 0 ? 0 : RF.th) * RAD;
+    const span = RF.n === 2 ? G.D / 2 : G.D;
+    const ridge = H0 + span * Math.tan(th);
+    const fanTop = H0 + span * Math.tan(idealW * RAD);   // winter is always the steepest ideal marker
+    const margin = 3;                          // room for the sun rays
+    const half = G.L / 2 + G.D / 2 + margin;
+    const top = 14, bottom = H - 34;
+    const availV = Math.max(40, bottom - top);
+    const sByW = (W / 2 - 16) / (half * ISO_C);
+    const sByH = availV / (half * ISO_S * 2 + Math.max(ridge, fanTop));
+    const s = Math.max(3, Math.min(sByW, sByH));
+    const cy = bottom - half * ISO_S * s;
+    return { cx, cy, s, H0, th, span, ridge };
+  };
+
+  let roofPanel = null;
+  const roofDraw = () => { if (roofPanel) roofPanel.draw(); refreshRoof(); };
+
+  roofPanel = makePanel(host, {
+    title: 'The roof in three dimensions',
+    note: 'Isometric view, matching the Site tab — the plan comes from there. Drag the black handle to re-pitch the roof; the green ticks show how far to drag it for each ideal pitch.',
+    aspect: 1.7,
+    render(ctx, W, H) {
+      const FR = roofFrame(W, H);
+      const { H0, th, ridge } = FR;
+      const proj = (x, y, z) => projF(FR, x, y, z);
+      const poly = (pts3, fill, strokeColor, width, dash) => {
+        const p = pts3.map(q => proj(q[0], q[1], q[2]));
+        ctx.beginPath();
+        p.forEach((q, i) => i ? ctx.lineTo(q[0], q[1]) : ctx.moveTo(q[0], q[1]));
+        ctx.closePath();
+        if (fill) { ctx.fillStyle = fill; ctx.fill(); }
+        if (strokeColor) { stroke(ctx, strokeColor, width || 1.4, dash || null); ctx.stroke(); }
+      };
+
+      // the ground the box sits on
+      const gm = 1.2;
+      poly([[-G.L/2 - gm, -G.D/2 - gm, 0], [G.L/2 + gm, -G.D/2 - gm, 0],
+            [G.L/2 + gm, G.D/2 + gm, 0], [-G.L/2 - gm, G.D/2 + gm, 0]],
+           'rgba(20,23,26,.025)', CH.line, 1.2);
+
+      /** Wall/roof height at a given north offset y: flat has none, shed
+          ramps south (low) to north (high), gable peaks at the centre. */
+      const topZ = y => RF.n === 0 ? H0
+        : RF.n === 1 ? H0 + (y + G.D / 2) * Math.tan(th)
+        : H0 + Math.max(0, G.D / 2 - Math.abs(y)) * Math.tan(th);
+
+      // south wall — always a plain rectangle to the eave
+      poly([[-G.L/2, -G.D/2, 0], [G.L/2, -G.D/2, 0], [G.L/2, -G.D/2, H0], [-G.L/2, -G.D/2, H0]],
+           'rgba(20,23,26,.14)', CH.ink, 1.4);
+
+      // west wall — a rectangle (flat/shed) or a pentagon with a gable
+      const westBreaks = RF.n === 2 ? [G.D / 2, 0, -G.D / 2] : [G.D / 2, -G.D / 2];
+      const westPts = [[-G.L/2, -G.D/2, 0], [-G.L/2, G.D/2, 0]].concat(westBreaks.map(y => [-G.L/2, y, topZ(y)]));
+      poly(westPts, 'rgba(20,23,26,.08)', CH.ink, 1.4);
+
+      // the roof surface(s) a south-west viewer can see
+      if (RF.n === 0) {
+        poly([[-G.L/2,-G.D/2,H0], [G.L/2,-G.D/2,H0], [G.L/2,G.D/2,H0], [-G.L/2,G.D/2,H0]],
+             'rgba(20,23,26,.05)', CH.ink, 2);
+      } else if (RF.n === 1) {
+        poly([[-G.L/2,-G.D/2,H0], [G.L/2,-G.D/2,H0], [G.L/2,G.D/2,ridge], [-G.L/2,G.D/2,ridge]],
+             'rgba(20,23,26,.05)', CH.ink, 2);
+      } else {
+        poly([[-G.L/2,-G.D/2,H0], [G.L/2,-G.D/2,H0], [G.L/2,0,ridge], [-G.L/2,0,ridge]],
+             'rgba(20,23,26,.05)', CH.ink, 2);
+        // the ridge line itself, since the north-facing half stays hidden
+        const r0 = proj(-G.L/2, 0, ridge), r1 = proj(G.L/2, 0, ridge);
+        stroke(ctx, CH.ink, 1.6); seg(ctx, r0[0], r0[1], r1[0], r1[1]);
+      }
+      const ridgeMid = proj(0, RF.n === 2 ? 0 : G.D / 2, ridge);
+      label(ctx, fmt(ridge, 1) + ' m', ridgeMid[0] + 7, ridgeMid[1] - 9, CH.ink2, FM(10), 'left', 'middle');
+
+      // the ideal-pitch fan: from the same eave point the pitch drag pivots
+      // on, out to the real roof's horizontal run — so each line runs
+      // alongside the actual slope, at the height that angle would reach
+      const span = RF.n === 2 ? G.D / 2 : G.D;
+      const topY = -G.D / 2 + span;
+      const eave = proj(-G.L / 2, -G.D / 2, H0);
+      [{ a:idealW, tag:'winter' }, { a:idealS, tag:'summer' }, { a:idealB, tag:'year' }].forEach(gd => {
+        const idealZ = H0 + span * Math.tan(gd.a * RAD);
+        const p1 = proj(-G.L / 2, topY, idealZ);
+        stroke(ctx, '#16A34A', 1.4, [5, 4]); seg(ctx, eave[0], eave[1], p1[0], p1[1]);
+        ctx.fillStyle = '#16A34A';
+        ctx.beginPath(); ctx.arc(p1[0], p1[1], 2.5, 0, 6.284); ctx.fill();
+        label(ctx, t(gd.tag) + ' ' + fmt(gd.a, 0) + '°', p1[0] + 5, p1[1], '#15803d', F(9), 'left', 'middle');
+      });
+
+      // the pitch handle: the one point on the model that drags — a white
+      // ring with a black centre, the same affordance the Site tab uses
+      const handle = proj(-G.L / 2, topY, ridge);
+      ctx.fillStyle = '#fff';
+      ctx.beginPath(); ctx.arc(handle[0], handle[1], 8, 0, 6.284); ctx.fill();
+      ctx.fillStyle = CH.ink;
+      ctx.beginPath(); ctx.arc(handle[0], handle[1], 4.5, 0, 6.284); ctx.fill();
+
+      // live readout
+      const coll = span / Math.cos(th) * G.L;
+      label(ctx, 'θ ' + fmt(RF.n === 0 ? 0 : RF.th, 0) + '° · ' + t('South collector') + ' ' + fmt(coll, 0) + ' m² · '
+        + t('ridge') + ' ' + fmt(ridge, 1) + ' m',
+        8, 12, CH.ink2, FM(11), 'left', 'middle');
+    },
+    csv: () => {
+      const sp = RF.n === 2 ? G.D / 2 : G.D;
+      const thE = RF.n === 0 ? 0 : RF.th;
+      const rg = G.fl * G.fh + sp * Math.tan(thE * RAD);
+      return csvRows([['Parameter', 'Value'],
+      ['Roof slopes', RF.n], ['Pitch (°)', thE],
+      ['Winter solar ideal (°)', +idealW.toFixed(0)],
+      ['Summer solar ideal (°)', +idealS.toFixed(0)],
+      ['Year-round solar ideal (°)', idealB],
+      ['South collector area (m²)', +((sp / Math.cos(thE * RAD)) * G.L).toFixed(1)],
+      ['Ridge height (m)', +rg.toFixed(1)],
+      ['Köppen–Geiger', STATE.clim.k.code]]);
+    }
+  });
+  refreshRoof();
+
+  /* --- direct pitch: drag the west slope up or down -------------------------
+     The floor plan (length, depth, floors, height) is read-only here — it
+     comes from the Site tab. Point interaction on this canvas does exactly
+     one thing: re-pitch the roof. */
+  const rcv = roofPanel.canvas;
+  rcv.style.touchAction = 'none';
+  rcv.style.cursor = 'ns-resize';
+  // a <canvas> is natively draggable as an "image" in some browsers, which
+  // hijacks the gesture into an OS drag (a grab-hand cursor, no pointermove)
+  // before our own handlers ever see it — kill that native behaviour outright
+  rcv.draggable = false;
+  rcv.addEventListener('dragstart', ev => ev.preventDefault());
+  /** Inverts the fixed west-wall plane (x = −L/2) by sampling the projection's
+      local slope there — exact, since that plane always projects affinely. */
+  const invWest = (FR, px, py) => {
+    const p00 = projF(FR, -G.L / 2, 0, 0), p10 = projF(FR, -G.L / 2, 1, 0), p01 = projF(FR, -G.L / 2, 0, 1);
+    let dXdy = p10[0] - p00[0], dYdy = p10[1] - p00[1], dYdz = p01[1] - p00[1];
+    if (Math.abs(dXdy) < 1e-6) dXdy = dXdy < 0 ? -1e-6 : 1e-6;
+    if (Math.abs(dYdz) < 1e-6) dYdz = dYdz < 0 ? -1e-6 : 1e-6;
+    const y = (px - p00[0]) / dXdy;
+    const z = (py - p00[1] - y * dYdy) / dYdz;
+    return { y, z };
+  };
+  const slopeEnds = FR => {
+    const topY = RF.n === 2 ? 0 : G.D / 2;
+    return { p1: projF(FR, -G.L / 2, -G.D / 2, FR.H0), p2: projF(FR, -G.L / 2, topY, FR.ridge) };
+  };
+  /** True near the drawn west slope (client coordinates) — a generous circle
+      around the handle dot itself, widened further by the line it sits on,
+      so the visible target is the reliable thing to grab. */
+  const nearSlope = (clientX, clientY) => {
+    if (RF.n === 0) return false;
+    const r = rcv.getBoundingClientRect();
+    const FR = roofFrame(roofPanel.W, roofPanel.H);
+    const { p1, p2 } = slopeEnds(FR);
+    const px = clientX - r.left, py = clientY - r.top;
+    if (Math.hypot(px - p2[0], py - p2[1]) <= 22) return true;
+    const dx = p2[0] - p1[0], dy = p2[1] - p1[1], L2 = dx * dx + dy * dy || 1;
+    const u = clamp(((px - p1[0]) * dx + (py - p1[1]) * dy) / L2, 0, 1);
+    return Math.hypot(px - (p1[0] + u * dx), py - (p1[1] + u * dy)) <= 18;
+  };
+  let rdrag = false;
+  rcv.addEventListener('pointerdown', ev => {
+    if (!nearSlope(ev.clientX, ev.clientY)) return;
+    ev.preventDefault();
+    rdrag = true;
+    try { rcv.setPointerCapture(ev.pointerId); } catch (err) {}
+    rcv.style.cursor = 'grabbing';
+  });
+  rcv.addEventListener('pointermove', ev => {
+    if (!rdrag) {
+      rcv.style.cursor = nearSlope(ev.clientX, ev.clientY) ? 'ns-resize' : 'default';
+      return;
+    }
+    ev.preventDefault();
+    const r = rcv.getBoundingClientRect();
+    const FR = roofFrame(roofPanel.W, roofPanel.H);
+    const { y, z } = invWest(FR, ev.clientX - r.left, ev.clientY - r.top);
+    const run = y + G.D / 2, rise = z - FR.H0;
+    RF.th = Math.round(clamp(Math.atan2(rise, Math.max(0.5, run)) / RAD, 10, 60));
+    syncCtl(cP, RF.th, v => fmt(v, 0) + '°');
+    roofDraw();
+  });
+  const endRDrag = () => { rdrag = false; rcv.style.cursor = RF.n === 0 ? 'default' : 'ns-resize'; };
+  rcv.addEventListener('pointerup', endRDrag);
+  rcv.addEventListener('pointercancel', endRDrag);
+  rcv.addEventListener('pointerleave', ev => { if (!rdrag) rcv.style.cursor = 'default'; });
 }
 
 /* --------------------------------------------------------------- 8. BOOT -- */
 const TABS = [
   { key:'climate', label:'Climate', build:buildClimate },
-  { key:'orientation', label:'Orientation', build:buildOrientation }
+  { key:'orientation', label:'Solar Geometry', build:buildOrientation },
+  { key:'site', label:'Site', build:buildSite },
+  { key:'roof', label:'Roof', build:buildRoof }
 ];
 
 /* --- the references, built from one list so the footer and the pages agree - */
@@ -2632,6 +3111,8 @@ function mountApp(site, clim, keepTab) {
 
   PANELS.forEach(p => { p.ro && p.ro.disconnect(); p.io && p.io.disconnect(); });
   PANELS = [];
+  MASS = { L:12, D:8, rot:180, fl:1, fh:3.0 };
+  ROOF = { n:2, th:Math.round(Math.abs(site.lat)) };
   const app = $('#app');
   app.innerHTML = '';
   app.hidden = false;
@@ -2926,8 +3407,18 @@ Object.assign(PT, {
   "The observed monthly means and totals embedded for 28 stations — homogeneous series plus WRF-modelled infill after WMO-No. 1203.":
     "As médias e os totais mensais observados incorporados para 28 estações — séries homogéneas com preenchimento por modelação WRF segundo a WMO-No. 1203.",
 
+  /* the site page */
+  "Site": "Local",
+  "Test a plan's massing against the Olgyay optimum — scored against the Köppen class from Climate and the sun path from Solar Geometry.":
+    "Teste uma planta contra o óptimo de Olgyay — avaliada contra a classe de Köppen de Clima e o percurso solar de Geometria Solar.",
+
+  /* the roof page */
+  "Roof": "Telhado",
+  "Pitch a roof to catch the low sun — the winter and summer solar ideals for this latitude, using the heating–cooling balance from Climate.":
+    "Incline um telhado para apanhar o sol baixo — os ideais solares de Inverno e de Verão para esta latitude, usando o equilíbrio entre aquecimento e arrefecimento de Clima.",
+
   /* the orientation page */
-  "Orientation": "Orientação",
+  "Solar Geometry": "Geometria Solar",
   "Sun geometry for this latitude, and what each facade receives across the year. The recommendation follows the Köppen class from the previous tab.":
     "Geometria solar para esta latitude, e o que cada fachada recebe ao longo do ano. A recomendação segue a classe de Köppen da página anterior.",
   "Latitude": "Latitude",
@@ -2983,15 +3474,25 @@ Object.assign(PT, {
   "Length along main facade": "Comprimento na fachada principal",
   "Depth": "Profundidade",
   "Main facade faces": "Fachada principal para",
+  "Floors above ground": "Pisos acima do solo",
+  "Floor height": "Altura do piso",
+  "× 3.0 m": "× 3,0 m",
   "Snap to the Olgyay optimum": "Acertar pelo óptimo de Olgyay",
   "Snapped to the Olgyay optimum": "Acertado pelo óptimo de Olgyay",
   "Your plan against the optimum": "A sua planta contra o óptimo",
-  "Top-down view, north up. Drag the plan to stretch it, drag the black knob to turn it.":
-    "Vista de cima, norte para cima. Arraste a planta para a esticar, arraste o botão preto para a rodar.",
+  "Isometric view, tilted from the south-west. Drag the plan to stretch it, drag the black knob to turn it, drive the sun through its day below.":
+    "Vista isométrica, inclinada a partir de sudoeste. Arraste a planta para a esticar, arraste o botão preto para a rodar, conduza o sol ao longo do seu dia abaixo.",
+  "Sun day": "Dia de sol",
+  "Solar time": "Hora solar",
+  "Play the day": "Reproduzir o dia",
+  "Pause": "Pausa",
+  "Sun": "Sol",
+  "Shadow": "Sombra",
   "Edit on canvas": "Editar no desenho",
   "Stretch": "Esticar",
   "Rotate": "Rodar",
   "Olgyay fit": "Ajuste a Olgyay",
+  "Form factor": "Fator de forma",
   "At the Olgyay optimum": "No óptimo de Olgyay",
   "Close — nudge it east of south": "Perto — puxe-a para leste do sul",
   "Far from the optimum — follow the green normal": "Longe do óptimo — siga a normal verde",
@@ -3004,7 +3505,46 @@ Object.assign(PT, {
   "Olgyay optimum": "Óptimo de Olgyay",
   "morning": "manhã",
   "noon": "meio-dia",
-  "afternoon · hot": "tarde · quente"
+  "afternoon · hot": "tarde · quente",
+  "Dec noon shadow": "Sombra Dez meio-dia",
+  "Jun noon shadow": "Sombra Jun meio-dia",
+
+  /* the pitched roof */
+  "Pitched roof — catch the low sun": "Telhado inclinado — apanhar o sol baixo",
+  "South slope as a solar collector; the same geometry explains deep winter glass":
+    "A vertente sul como colector solar; a mesma geometria explica o vidro fundo de Inverno",
+  "this site leans heating — favour the winter figure":
+    "este local puxa aquecimento — favorecer a figura de Inverno",
+  "this site leans cooling — favour the summer figure":
+    "este local puxa arrefecimento — favorecer a figura de Verão",
+  "heating and cooling balance here — hold the middle figure":
+    "aquecimento e arrefecimento equilibram-se — manter a figura intermédia",
+  "Roof slopes": "Vertentes",
+  "Flat": "Plana",
+  "Shed": "Uma água",
+  "Gable": "Duas águas",
+  "Pitch": "Inclinação",
+  "Flat — frame the collectors, insulate for summer": "Plana — colectores em estrutura, isolar para o Verão",
+  "Winter ideal": "Ideal de Inverno",
+  "Summer ideal": "Ideal de Verão",
+  "Year-round ideal": "Ideal anual",
+  "South collector": "Colector sul",
+  "steep for the low sun": "empinado para o sol baixo",
+  "shallow against the high sun": "baixo contra o sol alto",
+  "the latitude itself": "a própria latitude",
+  "at your pitch — live below": "à sua inclinação — em directo abaixo",
+  "Near the year-round solar ideal": "Perto do ideal solar anual",
+  "Between the seasonal ideals — decide by use": "Entre os ideais sazonais — decidir pelo uso",
+  "Far from any solar ideal": "Longe de qualquer ideal solar",
+  "The roof in three dimensions": "O telhado em três dimensões",
+  "Isometric view, matching the Site tab — the plan comes from there. Drag the black handle to re-pitch the roof; the green ticks show how far to drag it for each ideal pitch.":
+    "Vista isométrica, como no separador Local — a planta vem de lá. Arraste o botão preto para mudar a inclinação do telhado; as marcas verdes mostram quanto arrastar até cada inclinação ideal.",
+  "winter": "inverno",
+  "summer": "verão",
+  "year": "ano",
+  "Dec {}°": "Dez {}°",
+  "Jun {}°": "Jun {}°",
+  "ridge": "cumeeira"
 });
 
 /* --- the long captions, keyed by identifier ----------------------------- */
@@ -3049,7 +3589,13 @@ Object.assign(PT_HINT, {
   'ori-lab':
     'Olgyay pôs o máximo sol na fachada no período subaquecido e o mínimo no sobreaquecido: Nova Iorque–Nova Jérsia deu <b>17° a leste do sul</b>, Phoenix <b>25° a leste do sul</b>, com o calor pesado quatro-para-um (1963, p. 58). Para a forma, o quadrado nunca é o óptimo, o alongamento norte–sul é pior que o quadrado, e o óptimo está sempre algures ao longo de nascente–poente — 1:1,6 adoptado para Nova Iorque, 1:1,3 para Phoenix (p. 88), sendo o alongamento nascente–poente “definitivamente desejável” na zona temperada (p. 90). A forma verde interpola essas âncoras para <b>%1</b>; estique e rode a sua contra ela.',
   'ori-score':
-    'A nota é um índice didáctico, não uma previsão energética: 60 % orientação — nota máxima sobre a normal verde, zero a 90° de desvio — mais 40 % forma — proximidade do alongamento 1:X, com desconto para plantas quadradas, diagonais e norte–sul. Duas plantas podem partilhar a nota e comportar-se de modo diferente; leia-a com as pastilhas.'
+    'A nota é um índice didáctico, não uma previsão energética: 60 % orientação — nota máxima sobre a normal verde, zero a 90° de desvio — mais 40 % forma — proximidade do alongamento 1:X, com desconto para plantas quadradas, diagonais e norte–sul. Duas plantas podem partilhar a nota e comportar-se de modo diferente; leia-a com as pastilhas.',
+  'ori-height':
+    'As duas caixas extrudem a planta — pisos acima do solo vezes uma altura de piso editável. O sol abaixo é comandado, não decorativo: escolha 21 de Dezembro, 20 de Março ou 21 de Junho, arraste a hora solar — ou carregue em reproduzir — e a sombra segue a trajectória, longa e para norte na manhã de Dezembro, curta e contida no meio-dia de Junho. A sombra do meio-dia de Dezembro continua a ser o caso condicionante para afastamentos. A altura não move a nota de ajuste, que só conhece orientação e forma da planta.',
+  'ori-roof':
+    'Uma superfície a sul recolhe o máximo quando o raio do meio-dia lhe chega quase perpendicular: <b>Inverno = latitude + 15°, Verão = latitude − 15°, anual = latitude</b> (Galloway; Lechner) — aqui <b>%1° / %2° / %3°</b>. %4. Os telhados tradicionais portugueses de telha ficam muito mais baixos, pelo que os colectores pedem em geral a sua própria estrutura — a tensão é a lição.',
+  'ori-ff':
+    'Fator de forma FF = envolvente exterior ÷ volume aquecido, em m⁻¹ — paredes até ao beirado, triângulos de empena, vertentes e piso térreo sobre o volume que encerram, uma única zona, tudo exterior. Mais baixo é mais compacto: os abrigos redondos de pastores da Monchique são o extremo vernacular (Gonçalves & Graça). É o mesmo rácio a que o REH chama <i>factor de forma</i>, aqui enunciado como pura geometria sem limites — o Construction Advisor continua daí. A pastilha pinta-o de verde até 0,7 (compacto), âmbar até 1,1 (moderado) e vermelho acima (disperso): faixas didácticas, não limites. Não move a nota de ajuste.'
 });
 </script>
 </body>
