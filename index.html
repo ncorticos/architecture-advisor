@@ -321,17 +321,7 @@ footer{border-top:1px solid var(--line); margin-top:26px; background:var(--wash)
 }
 .nrow input:focus{outline:2px solid var(--c1); outline-offset:-1px; border-color:var(--c1)}
 .nrow input.miss{border-color:#D97706; background:rgba(217,119,6,.05)}
-/* EPW import: a dashed box that fills the twelve pairs from a weather file.
-   Everything is parsed locally with FileReader — the file never leaves the
-   browser, like the rest of this application. */
-.epwbox{display:flex; gap:14px; align-items:center; justify-content:space-between;
-  border:1px dashed var(--line); border-radius:10px; background:var(--wash);
-  padding:12px 14px; margin:0 0 14px}
-.epwbox b{font-size:12.5px}
-.epwbox .sub{display:block; font-size:11.5px; color:var(--muted); margin-top:2px; max-width:78ch; line-height:1.55}
-.epwbox .epwstatus{display:block; color:var(--ink2); font-family:var(--mono); font-size:11px; margin-top:6px}
-.epwbox.dragover{border-color:var(--c1); background:#eef4ff}
-.epwbtns{flex:0 0 auto}
+.fieldstatus{display:block; color:var(--ink2); font-family:var(--mono); font-size:11px; margin-top:6px}
 .setup .cta{display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-top:6px}
 /* The classification the site resolves to, shown live as it is typed. */
 .zonechip{
@@ -458,21 +448,7 @@ footer{border-top:1px solid var(--line); margin-top:26px; background:var(--wash)
           measured data and it has no authority to invent them. Take them from the IPMA <i>normais climatológicas</i>
           for the nearest station, from another national service, or from a gridded product such as WorldClim, and
           name the source so the export carries it. Pick an IPMA station below and press
-          Fill boxes — the twelve pairs and the station coordinates are entered for you.
-          If you have an EnergyPlus weather file (.epw) — for example
-          Lisboa, Porto, Faro, Funchal or Ponta Delgada from climate.onebuilding.org — drop it below and the
-          twelve pairs, the coordinates and the altitude are filled in automatically.</p>
-        <div class="epwbox" id="epwBox">
-          <div>
-            <b data-t="epwTitle">Fill from an EPW file</b>
-            <span class="sub" data-t="epwSub">Drop a .epw here or choose one. Monthly mean temperature and monthly precipitation are aggregated from its 8,760 hourly records, and latitude, longitude and station elevation are read from its LOCATION line. The file is parsed on this computer — nothing is uploaded. Check the altitude afterwards: the station is rarely at the building.</span>
-            <span class="epwstatus" id="epwStatus"></span>
-          </div>
-          <div class="epwbtns">
-            <label class="btn solid" for="epwFile" data-t="epwChoose" style="cursor:pointer">Choose .epw</label>
-            <input type="file" id="epwFile" accept=".epw,.txt,.csv" hidden>
-          </div>
-        </div>
+          Fill boxes — the twelve pairs and the station coordinates are entered for you.</p>
         <div id="normGrid"></div>
         <div class="fld" style="margin-top:12px;max-width:520px">
           <label for="inpSource" data-t="fldSource">Where the normals come from</label>
@@ -513,8 +489,8 @@ footer{border-top:1px solid var(--line); margin-top:26px; background:var(--wash)
             <option value="IPMA, Santa Cruz das Flores, 1981–2010"></option>
             <option value="WorldClim v2.1, 1970–2000"></option>
           </datalist>
-          <span class="sub" data-t="fldSourceSub">Written into every CSV and PNG this application exports. Pick an IPMA station and press Fill boxes — fichas at ipma.pt/oclima/normais.clima — or name your EPW file.</span>
-          <span class="epwstatus" id="srcStatus"></span>
+          <span class="sub" data-t="fldSourceSub">Written into every CSV and PNG this application exports. Pick an IPMA station and press Fill boxes — fichas at ipma.pt/oclima/normais.clima — or name your own source.</span>
+          <span class="fieldstatus" id="srcStatus"></span>
         </div>
       </div>
 
@@ -624,7 +600,7 @@ footer{border-top:1px solid var(--line); margin-top:26px; background:var(--wash)
 /* ------------------------------------------------------------ 0. IDENTITY -- */
 const APP = {
   name:        'Architecture Advisor',
-  version:     '1.10.1',
+  version:     '1.10.2',
   author:      'Nuno Dinis Cortiços',
   institution: 'Lisbon School of Architecture, Universidade de Lisboa',
   builtWith:   'Claude Opus 5 (Anthropic)',
@@ -2773,53 +2749,6 @@ function saveNormals(c) {
   try { localStorage.setItem(LS_CLIM, JSON.stringify(c)); } catch (e) {}
 }
 
-/* ------------------------------------------------------- EPW IMPORT --
-   An EnergyPlus weather file (.epw) holds 8,760 hourly records plus a
-   LOCATION header line. Monthly normals are aggregated locally:
-     T[m] = mean of field 7 (dry-bulb °C) over month m
-     P[m] = sum of field 34 (liquid precipitation depth, mm) over month m
-   Column indices are 0-based after splitting on commas. Missing dry-bulb
-   (99.9) and missing precipitation (>=999 or negative) are skipped. Many
-   TMY/INETI files ship with an all-zero precipitation column — that is
-   reported as pEmpty so the student keeps the IPMA totals by hand instead
-   of classifying on zeros. Nothing is uploaded: FileReader parses on this
-   computer. */
-function parseEPW(text, fileName) {
-  const lines = String(text || '').split(/\r?\n/);
-  if (lines.length < 20) throw new Error('Not an EPW file: too few lines');
-  const head = lines[0].trim().split(',');
-  if (head[0].trim().toUpperCase() !== 'LOCATION')
-    throw new Error('Not an EPW file: first line is not LOCATION');
-  const strip = s => String(s || '').trim().replace(/^"|"$/g, '');
-  const city = strip(head[1]) || (fileName || 'EPW station');
-  const lat = parseFloat(head[6]), lon = parseFloat(head[7]), alt = parseFloat(head[9]);
-  const tSum = new Array(12).fill(0), tN = new Array(12).fill(0);
-  const pSum = new Array(12).fill(0), pN = new Array(12).fill(0);
-  let nHours = 0;
-  for (let i = 1; i < lines.length; i++) {
-    const ln = lines[i].trim();
-    if (!ln || ln[0] < '0' || ln[0] > '9') continue;   // skip header lines
-    const c = ln.split(',');
-    if (c.length < 34) continue;
-    const mo = parseInt(c[1], 10);
-    if (!(mo >= 1 && mo <= 12)) continue;
-    const db = parseFloat(c[6]);
-    if (isFinite(db) && Math.abs(db) < 90) { tSum[mo - 1] += db; tN[mo - 1]++; }
-    const pr = parseFloat(c[33]);
-    if (isFinite(pr) && pr >= 0 && pr < 999) { pSum[mo - 1] += pr; pN[mo - 1]++; }
-    nHours++;
-  }
-  if (nHours < 8000) throw new Error('Not an EPW file: only ' + nHours + ' hourly records found');
-  for (let m = 0; m < 12; m++) if (!tN[m]) throw new Error('EPW has no usable dry-bulb data for month ' + (m + 1));
-  const t = tSum.map((s, m) => s / tN[m]);
-  const pTotal = pSum.reduce((a, b) => a + b, 0);
-  const pEmpty = !(pTotal > 0.05);   // TMY files often carry a zeroed column
-  return {
-    city: city, lat: isFinite(lat) ? lat : null, lon: isFinite(lon) ? lon : null,
-    alt: isFinite(alt) ? alt : null, t: t, p: pSum, pEmpty: pEmpty, nHours: nHours
-  };
-}
-
 /* --------------------------------------------------- IPMA NORMALS --
    Official 1981–2010 climatological normals, transcribed from the IPMA
    fichas climatológicas (v2.2, 2022; homogeneous observed series plus
@@ -3006,46 +2935,6 @@ function initSetup() {
     } else sub.textContent = t('Type a Portuguese municipality, or any name you want the exports to carry.');
   });
 
-  /* --- EPW import: fill the twelve pairs from a weather file --------------- */
-  const epwFile = $('#epwFile'), epwBox = $('#epwBox'), epwStatus = $('#epwStatus');
-  function applyEPW(res, fileName) {
-    res.t.forEach((v, i) => { inputs.t[i].value = v.toFixed(1); });
-    if (!res.pEmpty) res.p.forEach((v, i) => { inputs.p[i].value = (v < 20 ? v.toFixed(1) : Math.round(v)); });
-    else res.p.forEach((v, i) => { if (inputs.p[i].value === '') inputs.p[i].value = ''; });
-    if (res.lat !== null) lat.value = res.lat.toFixed(2);
-    if (res.lon !== null) lon.value = res.lon.toFixed(2);
-    if (res.alt !== null) alt.value = Math.round(res.alt);
-    srcInp.value = 'EPW: ' + res.city + ' — ' + fileName;
-    const pMsg = res.pEmpty
-      ? t('precipitation column is empty in this EPW — enter the IPMA totals by hand')
-      : (t('MAP') + ' ' + fmt(res.p.reduce((a, b) => a + b, 0), 0) + ' mm');
-    epwStatus.textContent = res.city + ' · ' + res.nHours + 'h · '
-      + fmt(res.t.reduce((a, b) => a + b, 0) / 12, 1) + ' °C · ' + pMsg;
-    refresh();
-    toast(res.pEmpty
-      ? 'EPW temperatures imported — add precipitation by hand'
-      : 'EPW imported: temperatures and precipitation filled in');
-  }
-  function readEPWFile(f) {
-    if (!f) return;
-    if (!/\.epw$/i.test(f.name)) { toast('Choose a .epw file'); return; }
-    const rd = new FileReader();
-    rd.onload = () => {
-      try { applyEPW(parseEPW(rd.result, f.name), f.name); }
-      catch (err) { epwStatus.textContent = String(err.message || err); toast(String(err.message || err)); }
-    };
-    rd.onerror = () => toast('Could not read that file');
-    rd.readAsText(f);
-  }
-  if (epwFile) epwFile.addEventListener('change', e => readEPWFile(e.target.files[0]));
-  if (epwBox) {
-    ['dragenter', 'dragover'].forEach(ev => epwBox.addEventListener(ev, e => { e.preventDefault(); epwBox.classList.add('dragover'); }));
-    ['dragleave', 'drop'].forEach(ev => epwBox.addEventListener(ev, e => { e.preventDefault(); epwBox.classList.remove('dragover'); }));
-    epwBox.addEventListener('drop', e => {
-      const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
-      readEPWFile(f);
-    });
-  }
   function seedLat() {
     const L = NUTS_LAT[sel.value];
     if (L !== undefined) lat.value = L;
@@ -3244,13 +3133,10 @@ Object.assign(STATIC_PT, {
   opRenovation: 'Grande intervenção',
   fldOpSub: 'Um edifício novo ainda pode escolher a sua orientação e a sua forma; uma reabilitação tem de tomar ambas como as encontra.',
   normTitle: 'Normais mensais',
-  normBody: 'Köppen–Geiger é calculado, não consultado, pelo que precisa das doze temperaturas médias mensais e dos doze totais mensais de precipitação. Esta aplicação não traz nenhuns: as normais são dados medidos e ela não tem autoridade para os inventar. Tome-os das <i>normais climatológicas</i> do IPMA para a estação mais próxima, de outro serviço nacional, ou de um produto em grelha como o WorldClim, e identifique a fonte para que a exportação a leve consigo. Escolha abaixo uma estação do IPMA e carregue em Preencher caixas — os doze pares e as coordenadas da estação são introduzidos por si. Se tiver um ficheiro meteorológico EnergyPlus (.epw) — por exemplo Lisboa, Porto, Faro, Funchal ou Ponta Delgada de climate.onebuilding.org — largue-o abaixo e os doze pares, as coordenadas e a altitude são preenchidos automaticamente.',
-  epwTitle: 'Preencher a partir de um ficheiro EPW',
-  epwSub: 'Largue aqui um .epw ou escolha um. A temperatura média mensal e a precipitação mensal são agregadas a partir dos seus 8 760 registos horários, e a latitude, a longitude e a altitude da estação são lidas da linha LOCATION. O ficheiro é processado neste computador — nada é carregado. Verifique depois a altitude: a estação raramente está no edifício.',
-  epwChoose: 'Escolher .epw',
+  normBody: 'Köppen–Geiger é calculado, não consultado, pelo que precisa das doze temperaturas médias mensais e dos doze totais mensais de precipitação. Esta aplicação não traz nenhuns: as normais são dados medidos e ela não tem autoridade para os inventar. Tome-os das <i>normais climatológicas</i> do IPMA para a estação mais próxima, de outro serviço nacional, ou de um produto em grelha como o WorldClim, e identifique a fonte para que a exportação a leve consigo. Escolha abaixo uma estação do IPMA e carregue em Preencher caixas — os doze pares e as coordenadas da estação são introduzidos por si.',
   srcFill: 'Preencher caixas',
   fldSource: 'De onde vêm as normais',
-  fldSourceSub: 'Escrita em cada CSV e cada PNG que esta aplicação exporta. Escolha uma estação do IPMA e carregue em Preencher caixas — fichas em ipma.pt/oclima/normais.clima — ou indique o seu ficheiro EPW.',
+  fldSourceSub: 'Escrita em cada CSV e cada PNG que esta aplicação exporta. Escolha uma estação do IPMA e carregue em Preencher caixas — fichas em ipma.pt/oclima/normais.clima — ou indique a sua própria fonte.',
   btnGo: 'Percorrer o projecto',
   ex1h: 'Fundada na literatura de projecto',
   ex1p: 'Olgyay, Lechner, DeKay e Brown, Hyde, Ching e Shapiro, Brophy e Lewis. Cada orientação nomeia o livro de onde vem, e onde os livros divergem a aplicação di-lo em vez de os reduzir a uma média.',
@@ -3278,15 +3164,6 @@ Object.assign(PT, {
   "of 24 still to fill": "de 24 por preencher",
   "The twelve pairs of normals are not complete": "Os doze pares de normais não estão completos",
   "No climate has been entered": "Não foi introduzido nenhum clima",
-  "Choose a .epw file": "Escolha um ficheiro .epw",
-  "Could not read that file": "Não foi possível ler esse ficheiro",
-  "Not an EPW file: too few lines": "Não é um ficheiro EPW: poucas linhas",
-  "Not an EPW file: first line is not LOCATION": "Não é um ficheiro EPW: a primeira linha não é LOCATION",
-  "EPW temperatures imported — add precipitation by hand": "Temperaturas do EPW importadas — introduza a precipitação à mão",
-  "EPW imported: temperatures and precipitation filled in": "EPW importado: temperaturas e precipitação preenchidas",
-  "precipitation column is empty in this EPW — enter the IPMA totals by hand":
-    "a coluna de precipitação deste EPW está vazia — introduza os totais do IPMA à mão",
-  "MAP": "MAP",
   "Fill boxes": "Preencher caixas",
   "Station normals filled in — check the boxes": "Normais da estação preenchidas — verifique as caixas",
   "station values filled — correct the altitude to the building":
