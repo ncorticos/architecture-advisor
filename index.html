@@ -601,7 +601,7 @@ footer{border-top:1px solid var(--line); margin-top:26px; background:var(--wash)
 /* ------------------------------------------------------------ 0. IDENTITY -- */
 const APP = {
   name:        'Architecture Advisor',
-  version:     '1.10.4',
+  version:     '1.10.5',
   author:      'Nuno Dinis Cortiços',
   institution: 'Lisbon School of Architecture, Universidade de Lisboa',
   builtWith:   'Claude Opus 5 (Anthropic)',
@@ -2626,8 +2626,6 @@ function buildRoof(host) {
   // before our own handlers ever see it — kill that native behaviour outright
   rcv.draggable = false;
   rcv.addEventListener('dragstart', ev => ev.preventDefault());
-  /** Inverts the fixed west-wall plane (x = −L/2) by sampling the projection's
-      local slope there — exact, since that plane always projects affinely. */
   const invWest = (FR, px, py) => {
     const p00 = projF(FR, -G.L / 2, 0, 0), p10 = projF(FR, -G.L / 2, 1, 0), p01 = projF(FR, -G.L / 2, 0, 1);
     let dXdy = p10[0] - p00[0], dYdy = p10[1] - p00[1], dYdz = p01[1] - p00[1];
@@ -2641,21 +2639,30 @@ function buildRoof(host) {
     const topY = RF.n === 2 ? 0 : G.D / 2;
     return { p1: projF(FR, -G.L / 2, -G.D / 2, FR.H0), p2: projF(FR, -G.L / 2, topY, FR.ridge) };
   };
-  /** True near the drawn west slope (client coordinates) — a generous circle
-      around the handle dot itself, widened further by the line it sits on,
-      so the visible target is the reliable thing to grab. */
   const nearSlope = (clientX, clientY) => {
     if (RF.n === 0) return false;
+    if (!roofPanel.W || !roofPanel.H) return false;
     const r = rcv.getBoundingClientRect();
     const FR = roofFrame(roofPanel.W, roofPanel.H);
     const { p1, p2 } = slopeEnds(FR);
-    const px = clientX - r.left, py = clientY - r.top;
-    if (Math.hypot(px - p2[0], py - p2[1]) <= 22) return true;
+    const mx = clientX - r.left, my = clientY - r.top;
+    if (Math.hypot(mx - p2[0], my - p2[1]) <= 24) return true;
     const dx = p2[0] - p1[0], dy = p2[1] - p1[1], L2 = dx * dx + dy * dy || 1;
-    const u = clamp(((px - p1[0]) * dx + (py - p1[1]) * dy) / L2, 0, 1);
-    return Math.hypot(px - (p1[0] + u * dx), py - (p1[1] + u * dy)) <= 18;
+    const u = clamp(((mx - p1[0]) * dx + (my - p1[1]) * dy) / L2, 0, 1);
+    return Math.hypot(mx - (p1[0] + u * dx), my - (p1[1] + u * dy)) <= 20;
+  };
+  const doDrag = (clientX, clientY) => {
+    const r = rcv.getBoundingClientRect();
+    const FR = roofFrame(roofPanel.W, roofPanel.H);
+    const { y, z } = invWest(FR, clientX - r.left, clientY - r.top);
+    const run = y + G.D / 2, rise = z - FR.H0;
+    RF.th = Math.round(clamp(Math.atan2(rise, Math.max(0.5, run)) / RAD, 10, 60));
+    syncCtl(cP, RF.th, v => fmt(v, 0) + '°');
+    roofDraw();
   };
   let rdrag = false;
+
+  /* --- pointer events (pen / touch) --- */
   rcv.addEventListener('pointerdown', ev => {
     if (!nearSlope(ev.clientX, ev.clientY)) return;
     ev.preventDefault();
@@ -2669,17 +2676,24 @@ function buildRoof(host) {
       return;
     }
     ev.preventDefault();
-    const r = rcv.getBoundingClientRect();
-    const FR = roofFrame(roofPanel.W, roofPanel.H);
-    const { y, z } = invWest(FR, ev.clientX - r.left, ev.clientY - r.top);
-    const run = y + G.D / 2, rise = z - FR.H0;
-    RF.th = Math.round(clamp(Math.atan2(rise, Math.max(0.5, run)) / RAD, 10, 60));
-    syncCtl(cP, RF.th, v => fmt(v, 0) + '°');
-    roofDraw();
+    doDrag(ev.clientX, ev.clientY);
   });
-  const endRDrag = () => { rdrag = false; rcv.style.cursor = 'ns-resize'; };
-  rcv.addEventListener('pointerup', endRDrag);
-  rcv.addEventListener('pointercancel', endRDrag);
+  rcv.addEventListener('pointerup', () => { rdrag = false; rcv.style.cursor = 'ns-resize'; });
+  rcv.addEventListener('pointercancel', () => { rdrag = false; rcv.style.cursor = 'ns-resize'; });
+
+  /* --- mouse fallback (trackpad / old browsers) --- */
+  rcv.addEventListener('mousedown', ev => {
+    if (!nearSlope(ev.clientX, ev.clientY)) return;
+    ev.preventDefault();
+    rdrag = true;
+    rcv.style.cursor = 'grabbing';
+    const onMove = ev => { ev.preventDefault(); doDrag(ev.clientX, ev.clientY); };
+    const onUp = () => { rdrag = false; rcv.style.cursor = 'ns-resize';
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp); };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  });
 }
 
 /* --------------------------------------------------------------- 8. BOOT -- */
