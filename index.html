@@ -66,6 +66,7 @@ header{
 }
 .btn:hover{border-color:#c6cbc4; color:var(--ink); background:var(--wash)}
 .btn:active{background:#f2f4f0}
+.btn:disabled,.btn[disabled]{opacity:.45;cursor:not-allowed;pointer-events:none}
 .btn.solid{background:var(--ink); color:#fff; border-color:var(--ink)}
 .btn.solid:hover{background:#000; color:#fff}
 
@@ -600,7 +601,7 @@ footer{border-top:1px solid var(--line); margin-top:26px; background:var(--wash)
 /* ------------------------------------------------------------ 0. IDENTITY -- */
 const APP = {
   name:        'Architecture Advisor',
-  version:     '1.10.2',
+  version:     '1.10.3',
   author:      'Nuno Dinis Cortiços',
   institution: 'Lisbon School of Architecture, Universidade de Lisboa',
   builtWith:   'Claude Opus 5 (Anthropic)',
