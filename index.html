@@ -2437,7 +2437,6 @@ function buildSite(host) {
   const endDrag = () => { drag = null; cv.style.cursor = 'grab'; };
   cv.addEventListener('pointerup', endDrag);
   cv.addEventListener('pointercancel', endDrag);
-  cv.addEventListener('pointerleave', ev => { if (!drag) cv.style.cursor = 'grab'; });
   refreshLab();
   setDay(355);   // bounds the hour slider to the December day and starts at its noon
 }
