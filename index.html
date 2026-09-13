@@ -601,7 +601,7 @@ footer{border-top:1px solid var(--line); margin-top:26px; background:var(--wash)
 /* ------------------------------------------------------------ 0. IDENTITY -- */
 const APP = {
   name:        'Architecture Advisor',
-  version:     '1.10.5',
+  version:     '1.10.6',
   author:      'Nuno Dinis Cortiços',
   institution: 'Lisbon School of Architecture, Universidade de Lisboa',
   builtWith:   'Claude Opus 5 (Anthropic)',
@@ -2618,6 +2618,9 @@ function buildRoof(host) {
      The floor plan (length, depth, floors, height) is read-only here — it
      comes from the Site tab. Point interaction on this canvas does exactly
      one thing: re-pitch the roof. */
+  // buildRoof is its own function, not nested inside buildSite — syncCtl
+  // has to be defined again here rather than reused from there
+  const syncCtl = (c, v, f) => { c.range.value = v; c.out.textContent = f(v); };
   const rcv = roofPanel.canvas;
   rcv.style.touchAction = 'none';
   rcv.style.cursor = 'ns-resize';
