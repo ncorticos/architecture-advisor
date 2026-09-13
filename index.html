@@ -601,7 +601,7 @@ footer{border-top:1px solid var(--line); margin-top:26px; background:var(--wash)
 /* ------------------------------------------------------------ 0. IDENTITY -- */
 const APP = {
   name:        'Architecture Advisor',
-  version:     '1.10.3',
+  version:     '1.10.4',
   author:      'Nuno Dinis Cortiços',
   institution: 'Lisbon School of Architecture, Universidade de Lisboa',
   builtWith:   'Claude Opus 5 (Anthropic)',
@@ -2661,12 +2661,12 @@ function buildRoof(host) {
     if (!nearSlope(ev.clientX, ev.clientY)) return;
     ev.preventDefault();
     rdrag = true;
-    try { rcv.setPointerCapture(ev.pointerId); } catch (err) {}
+    rcv.setPointerCapture(ev.pointerId);
     rcv.style.cursor = 'grabbing';
   });
   rcv.addEventListener('pointermove', ev => {
     if (!rdrag) {
-      rcv.style.cursor = nearSlope(ev.clientX, ev.clientY) ? 'ns-resize' : 'default';
+      rcv.style.cursor = nearSlope(ev.clientX, ev.clientY) ? 'grab' : 'ns-resize';
       return;
     }
     ev.preventDefault();
@@ -2678,10 +2678,9 @@ function buildRoof(host) {
     syncCtl(cP, RF.th, v => fmt(v, 0) + '°');
     roofDraw();
   });
-  const endRDrag = () => { rdrag = false; rcv.style.cursor = RF.n === 0 ? 'default' : 'ns-resize'; };
+  const endRDrag = () => { rdrag = false; rcv.style.cursor = 'ns-resize'; };
   rcv.addEventListener('pointerup', endRDrag);
   rcv.addEventListener('pointercancel', endRDrag);
-  rcv.addEventListener('pointerleave', ev => { if (!rdrag) rcv.style.cursor = 'default'; });
 }
 
 /* --------------------------------------------------------------- 8. BOOT -- */
