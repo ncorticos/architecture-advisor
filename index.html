@@ -605,7 +605,7 @@ footer{border-top:1px solid var(--line); margin-top:26px; background:var(--wash)
 /* ------------------------------------------------------------ 0. IDENTITY -- */
 const APP = {
   name:        'Architecture Advisor',
-  version:     '1.12.1',
+  version:     '1.13.0',
   author:      'Nuno Dinis Cortiços',
   institution: 'Lisbon School of Architecture, Universidade de Lisboa',
   builtWith:   'Claude Opus 5 (Anthropic)',
@@ -2708,7 +2708,7 @@ function buildOpenings(host) {
   const lat = S.lat, lon = S.lon, tz = lon / 15;
   const G = MASS, RF = ROOF;
   pageHead(host, 'Windows & Shading',
-    'Glazing, overhangs and fins for each facade, sized against the plan fixed on Site and the roof fixed on Roof — this tab cannot change either. Drag the window on the south or west wall directly; the sliders reach every facade, since this camera only ever shows two of them.');
+    'Glazing, overhangs and fins for each facade, sized against the plan fixed on Site and the roof fixed on Roof — this tab cannot change either. Choosing a facade turns the model to face it, so you can drag its window directly; the compass shows which way is which.');
 
   const H0 = G.fl * G.fh;
   const roofTh = (RF.n === 0 ? 0 : RF.th) * RAD;
@@ -2720,7 +2720,15 @@ function buildOpenings(host) {
 
   const FACES = ['S', 'N', 'E', 'W'];
   const faceName = { S:'South', N:'North', E:'East', W:'West' };
-  const faceVisible = { S:true, N:false, E:false, W:true };
+  /** The camera always shows exactly two adjacent facades, from whichever
+      corner puts the facade under study in view — south-west for South or
+      West, north-east for North or East — so every facade's window is
+      actually visible (and draggable) while it is being edited, not just
+      the two the old fixed camera happened to show. */
+  const camSign = () => (curFace === 'S' || curFace === 'W') ? 1 : -1;
+  const faceVisible = () => camSign() === 1
+    ? { S:true, W:true, N:false, E:false }
+    : { N:true, E:true, S:false, W:false };
   const faceNormal = { S:[0,-1,0], N:[0,1,0], E:[1,0,0], W:[-1,0,0] };
   /** Facade width (the wall's own footprint edge) and wall height, read-only from Site/Roof. */
   const faceWidth = f => (f === 'S' || f === 'N') ? G.L : G.D;
@@ -2915,7 +2923,8 @@ function buildOpenings(host) {
     if (openPanel) openPanel.draw();
   }
 
-  /* --- the model: same fixed south-west isometric camera as Site and Roof -- */
+  /* --- the model: same isometric camera as Site and Roof, mirrored to a
+     north-east view when the facade under study needs it (see camSign) -- */
   const ISO_C = Math.cos(30 * RAD), ISO_S = Math.sin(30 * RAD);
   const projF = (FR, x, y, z) => [FR.cx + (x - y) * ISO_C * FR.s, FR.cy - (x + y) * ISO_S * FR.s - (z || 0) * FR.s];
   const openFrame = (W, H) => {
@@ -2934,11 +2943,12 @@ function buildOpenings(host) {
 
   openPanel = makePanel(host, {
     title: 'The facades in three dimensions',
-    note: 'Isometric view, matching Site and Roof — the plan and roof come from there. Drag the highlighted window’s top-right corner to resize it (width and height), its lower corner to open it down to the floor like a door, or the sunspace’s outer glazed corner to change its width and depth.',
+    note: 'Isometric view, matching Site and Roof for the plan and roof — the compass marks true north. The model turns to face whichever facade is selected above, so its window stays visible: drag its top-right corner to resize it (width and height), its lower corner to open it down to the floor like a door, or the sunspace’s outer glazed corner to change its width and depth.',
     aspect: 1.6,
     render(ctx, W, H) {
       const FR = openFrame(W, H);
-      const proj = (x, y, z) => projF(FR, x, y, z);
+      const camS = camSign();
+      const proj = (x, y, z) => projF(FR, camS * x, camS * y, z);
       const poly = (pts3, fill, strokeColor, width, dash) => {
         const p = pts3.map(q => proj(q[0], q[1], q[2]));
         ctx.beginPath();
@@ -2952,17 +2962,27 @@ function buildOpenings(host) {
       poly([[-G.L/2-gm,-G.D/2-gm,0],[G.L/2+gm,-G.D/2-gm,0],[G.L/2+gm,G.D/2+gm,0],[-G.L/2-gm,G.D/2+gm,0]],
            'rgba(20,23,26,.025)', CH.line, 1.2);
 
-      poly([[-G.L/2,-G.D/2,0],[G.L/2,-G.D/2,0],[G.L/2,-G.D/2,H0],[-G.L/2,-G.D/2,H0]], 'rgba(20,23,26,.14)', CH.ink, 1.4);
-      const westBreaks = RF.n === 2 ? [G.D/2, 0, -G.D/2] : [G.D/2, -G.D/2];
-      const westPts = [[-G.L/2,-G.D/2,0],[-G.L/2,G.D/2,0]].concat(westBreaks.map(y => [-G.L/2, y, topZ(y)]));
-      poly(westPts, 'rgba(20,23,26,.08)', CH.ink, 1.4);
+      // compass, as on the Site tab — always all four points, so the two
+      // facades hidden by the current view stay locatable by direction
+      const compassR = Math.max(G.L, G.D) / 2 + 1.6;
+      [['N', 0, 1], ['E', 1, 0], ['S', 0, -1], ['W', -1, 0]].forEach(([c, dx, dy]) => {
+        const p = proj(compassR * dx, compassR * dy, 0);
+        label(ctx, c, p[0], p[1], faceVisible()[c] ? CH.ink : CH.faint, F(10, '600'), 'center', 'middle');
+      });
+
+      // south/west or north/east wall, whichever pair the current camera shows
+      const frontY = camS === 1 ? -G.D / 2 : G.D / 2, sideX = camS === 1 ? -G.L / 2 : G.L / 2;
+      poly([[-G.L/2,frontY,0],[G.L/2,frontY,0],[G.L/2,frontY,topZ(frontY)],[-G.L/2,frontY,topZ(frontY)]], 'rgba(20,23,26,.14)', CH.ink, 1.4);
+      const sideBreaks = RF.n === 2 ? [G.D/2, 0, -G.D/2] : [G.D/2, -G.D/2];
+      const sidePts = [[sideX,-G.D/2,0],[sideX,G.D/2,0]].concat(sideBreaks.map(y => [sideX, y, topZ(y)]));
+      poly(sidePts, 'rgba(20,23,26,.08)', CH.ink, 1.4);
 
       if (RF.n === 0) {
         poly([[-G.L/2,-G.D/2,H0],[G.L/2,-G.D/2,H0],[G.L/2,G.D/2,H0],[-G.L/2,G.D/2,H0]], 'rgba(20,23,26,.05)', CH.ink, 2);
       } else if (RF.n === 1) {
         poly([[-G.L/2,-G.D/2,H0],[G.L/2,-G.D/2,H0],[G.L/2,G.D/2,ridge],[-G.L/2,G.D/2,ridge]], 'rgba(20,23,26,.05)', CH.ink, 2);
       } else {
-        poly([[-G.L/2,-G.D/2,H0],[G.L/2,-G.D/2,H0],[G.L/2,0,ridge],[-G.L/2,0,ridge]], 'rgba(20,23,26,.05)', CH.ink, 2);
+        poly([[-G.L/2,frontY,H0],[G.L/2,frontY,H0],[G.L/2,0,ridge],[-G.L/2,0,ridge]], 'rgba(20,23,26,.05)', CH.ink, 2);
         const r0 = proj(-G.L/2, 0, ridge), r1 = proj(G.L/2, 0, ridge);
         stroke(ctx, CH.ink, 1.6); seg(ctx, r0[0], r0[1], r1[0], r1[1]);
       }
@@ -2970,7 +2990,7 @@ function buildOpenings(host) {
       /** Draws one facade's window and shading; `active` highlights the
           facade currently selected in the controls above. */
       function drawFace(f, active) {
-        if (!faceVisible[f]) return;
+        if (!faceVisible()[f]) return;
         const o = OPEN[f];
         const n = faceNormal[f];
         if (o.wwr > 0) {
@@ -3002,7 +3022,7 @@ function buildOpenings(host) {
       }
       FACES.forEach(f => drawFace(f, f === curFace));
 
-      if (SUNSP.on && faceVisible[SUNSP.face]) {
+      if (SUNSP.on && faceVisible()[SUNSP.face]) {
         const f = SUNSP.face, n = faceNormal[f];
         const w = faceWidth(f) * SUNSP.widthFrac, hgt = Math.min(H0, 3.0);
         const inA = facePoint(f, -w/2, 0), inB = facePoint(f, w/2, 0), inC = facePoint(f, w/2, hgt), inD = facePoint(f, -w/2, hgt);
@@ -3017,7 +3037,7 @@ function buildOpenings(host) {
         ctx.fillStyle = CH.ink; ctx.beginPath(); ctx.arc(handle[0], handle[1], 4.5, 0, 6.284); ctx.fill();
       }
 
-      if (faceVisible[curFace] && OPEN[curFace].wwr > 0) {
+      if (faceVisible()[curFace] && OPEN[curFace].wwr > 0) {
         const rect = windowRect(curFace);
         const handle = proj(...facePoint(curFace, rect.u1, rect.v1));
         ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(handle[0], handle[1], 8, 0, 6.284); ctx.fill();
@@ -3050,8 +3070,10 @@ function buildOpenings(host) {
      width and depth at once, since that corner sits on the ground plane
      (z = 0) and a fixed height lets one 2-D screen point solve two unknowns
      with no ambiguity — the same trick the Site tab uses for its own L/D
-     corner drag. Both handles only exist on a visible facade (south or
-     west) — this camera can't show north or east. -------------------------- */
+     corner drag. The window/sill handles only exist on the facade under
+     study, which the camera always turns to show; the sunspace's handle
+     needs its own facade in view too, independent of which one is selected
+     above. -------------------------- */
   const ocv = openPanel.canvas;
   ocv.style.touchAction = 'none';
   ocv.draggable = false;
@@ -3066,24 +3088,40 @@ function buildOpenings(host) {
   const invAtY = (FR, px, py, y0) => { const { A, Cc } = invBase(FR, px, py); const x = A + y0; return { x, z: Cc - (A + 2 * y0) * ISO_S }; };
   const invAtX = (FR, px, py, x0) => { const { A, Cc } = invBase(FR, px, py); const y = x0 - A; return { y, z: Cc - (2 * x0 - A) * ISO_S }; };
   const invAtZ = (FR, px, py, z0) => { const { A, Cc } = invBase(FR, px, py); const B = (Cc - z0) / ISO_S; return { x: (A + B) / 2, y: (B - A) / 2 }; };
+  /** Camera-aware wrappers: the render camera mirrors x and y (camSign) to
+      swap between the south-west and north-east view, so every projection
+      and its inverse used outside render() must apply the same mirror. */
+  const projCam = (FR, x, y, z) => { const s = camSign(); return projF(FR, s * x, s * y, z); };
+  const invAtYCam = (FR, px, py, y0) => { const s = camSign(); const r = invAtY(FR, px, py, s * y0); return { x: s * r.x, z: r.z }; };
+  const invAtXCam = (FR, px, py, x0) => { const s = camSign(); const r = invAtX(FR, px, py, s * x0); return { y: s * r.y, z: r.z }; };
+  const invAtZCam = (FR, px, py, z0) => { const s = camSign(); const r = invAtZ(FR, px, py, z0); return { x: s * r.x, y: s * r.y }; };
+  /** Which vertical plane a facade's own wall sits in — south/north are
+      fixed-y planes, east/west fixed-x — used to invert a drag on that wall
+      regardless of which facade is currently under study. */
+  function wallPlane(f) {
+    if (f === 'S') return { axis:'y', value:-G.D / 2 };
+    if (f === 'N') return { axis:'y', value: G.D / 2 };
+    if (f === 'E') return { axis:'x', value: G.L / 2 };
+    return { axis:'x', value:-G.L / 2 };   // W
+  }
 
   function windowHandlePos(FR) {
-    if (!faceVisible[curFace] || OPEN[curFace].wwr <= 0) return null;
+    if (!faceVisible()[curFace] || OPEN[curFace].wwr <= 0) return null;
     const rect = windowRect(curFace);
-    return projF(FR, ...facePoint(curFace, rect.u1, rect.v1));
+    return projCam(FR, ...facePoint(curFace, rect.u1, rect.v1));
   }
   /** Directly below the window handle — drags the sill only, down to the
       floor (a door-height opening) or back up, leaving width untouched. */
   function sillHandlePos(FR) {
-    if (!faceVisible[curFace] || OPEN[curFace].wwr <= 0) return null;
+    if (!faceVisible()[curFace] || OPEN[curFace].wwr <= 0) return null;
     const rect = windowRect(curFace);
-    return projF(FR, ...facePoint(curFace, rect.u1, rect.v0));
+    return projCam(FR, ...facePoint(curFace, rect.u1, rect.v0));
   }
   function sunspaceHandlePos(FR) {
-    if (!SUNSP.on || !faceVisible[SUNSP.face]) return null;
+    if (!SUNSP.on || !faceVisible()[SUNSP.face]) return null;
     const f = SUNSP.face, n = faceNormal[f], w = faceWidth(f) * SUNSP.widthFrac;
     const p = facePoint(f, w / 2, 0);
-    return projF(FR, p[0] + n[0]*SUNSP.depth, p[1] + n[1]*SUNSP.depth, p[2]);
+    return projCam(FR, p[0] + n[0]*SUNSP.depth, p[1] + n[1]*SUNSP.depth, p[2]);
   }
   const pick = (clientX, clientY) => {
     if (!openPanel.W || !openPanel.H) return null;
@@ -3105,9 +3143,10 @@ function buildOpenings(host) {
     const px = clientX - r.left, py = clientY - r.top;
     if (kind === 'window') {
       const o = OPEN[curFace];
+      const wp = wallPlane(curFace);
       let halfW, headZ;
-      if (curFace === 'S') { const inv = invAtY(FR, px, py, -G.D / 2); halfW = Math.abs(inv.x); headZ = inv.z; }
-      else { const inv = invAtX(FR, px, py, -G.L / 2); halfW = Math.abs(inv.y); headZ = inv.z; }
+      if (wp.axis === 'y') { const inv = invAtYCam(FR, px, py, wp.value); halfW = Math.abs(inv.x); headZ = inv.z; }
+      else { const inv = invAtXCam(FR, px, py, wp.value); halfW = Math.abs(inv.y); headZ = inv.z; }
       o.headZ = clamp(headZ, o.sillZ + 0.3, H0 - 0.05);
       const w = clamp(halfW * 2, 0.6, faceWidth(curFace) * 0.92);
       const h = Math.max(0.3, o.headZ - o.sillZ);
@@ -3117,13 +3156,14 @@ function buildOpenings(host) {
     } else if (kind === 'sill') {
       const o = OPEN[curFace];
       const wOld = windowRect(curFace).w;   // hold width fixed — this handle only opens the sill down
-      const sillZ = curFace === 'S' ? invAtY(FR, px, py, -G.D / 2).z : invAtX(FR, px, py, -G.L / 2).z;
+      const wp = wallPlane(curFace);
+      const sillZ = (wp.axis === 'y' ? invAtYCam(FR, px, py, wp.value) : invAtXCam(FR, px, py, wp.value)).z;
       o.sillZ = clamp(sillZ, 0, Math.min(1.8, o.headZ - 0.3));
       o.wwr = clamp((wOld * (o.headZ - o.sillZ)) / (faceWidth(curFace) * H0), 0.05, 0.8);
       syncCtl(cSill, o.sillZ, v => fmt(v, 2) + ' m');
       syncCtl(cWWR, Math.round(o.wwr * 100), v => fmt(v, 0) + '%');
     } else if (kind === 'sunspace') {
-      const { x, y } = invAtZ(FR, px, py, 0);
+      const { x, y } = invAtZCam(FR, px, py, 0);
       const f = SUNSP.face;
       let halfW, depth;
       if (f === 'S') { halfW = Math.abs(x); depth = -G.D / 2 - y; }
@@ -3948,8 +3988,8 @@ Object.assign(PT, {
 
   /* windows & shading */
   "Windows & Shading": "Janelas e Sombreamento",
-  "Glazing, overhangs and fins for each facade, sized against the plan fixed on Site and the roof fixed on Roof — this tab cannot change either. Drag the window on the south or west wall directly; the sliders reach every facade, since this camera only ever shows two of them.":
-    "Envidraçados, palas e brises para cada fachada, dimensionados a partir da planta fixada em Local e do telhado fixado em Telhado — este separador não altera nenhum dos dois. Arraste a janela directamente na parede sul ou oeste; os cursores alcançam todas as fachadas, já que esta câmara só mostra sempre duas delas.",
+  "Glazing, overhangs and fins for each facade, sized against the plan fixed on Site and the roof fixed on Roof — this tab cannot change either. Choosing a facade turns the model to face it, so you can drag its window directly; the compass shows which way is which.":
+    "Envidraçados, palas e brises para cada fachada, dimensionados a partir da planta fixada em Local e do telhado fixado em Telhado — este separador não altera nenhum dos dois. Escolher uma fachada roda o modelo para a mostrar de frente, para poder arrastar a sua janela directamente; a bússola mostra que direcção é qual.",
   "South": "Sul", "North": "Norte", "East": "Este", "West": "Oeste",
   "Facade": "Fachada",
   "Window sizing — WWR": "Dimensionamento das janelas — WWR",
@@ -3977,8 +4017,8 @@ Object.assign(PT, {
   "Sunspace facade": "Fachada do espaço solar",
   "Sunspace width": "Largura do espaço solar",
   "The facades in three dimensions": "As fachadas em três dimensões",
-  "Isometric view, matching Site and Roof — the plan and roof come from there. Drag the highlighted window’s top-right corner to resize it (width and height), its lower corner to open it down to the floor like a door, or the sunspace’s outer glazed corner to change its width and depth.":
-    "Vista isométrica, como em Local e Telhado — a planta e o telhado vêm de lá. Arraste o canto superior direito da janela realçada para a redimensionar (largura e altura), o seu canto inferior para a abrir até ao chão como uma porta, ou o canto envidraçado exterior do espaço solar para mudar a sua largura e profundidade.",
+  "Isometric view, matching Site and Roof for the plan and roof — the compass marks true north. The model turns to face whichever facade is selected above, so its window stays visible: drag its top-right corner to resize it (width and height), its lower corner to open it down to the floor like a door, or the sunspace’s outer glazed corner to change its width and depth.":
+    "Vista isométrica, como em Local e Telhado para a planta e o telhado — a bússola marca o norte verdadeiro. O modelo roda para mostrar de frente a fachada escolhida acima, para que a sua janela fique sempre visível: arraste o canto superior direito para a redimensionar (largura e altura), o seu canto inferior para a abrir até ao chão como uma porta, ou o canto envidraçado exterior do espaço solar para mudar a sua largura e profundidade.",
   "shading": "sombreamento",
   "Overall glazing performance": "Desempenho global do envidraçado",
   "Overhang position": "Posição da pala",
