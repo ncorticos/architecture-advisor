@@ -421,8 +421,12 @@ footer{border-top:1px solid var(--line); margin-top:26px; background:var(--wash)
         </div>
         <div class="fld">
           <label for="inpAlt" data-t="fldAlt">Altitude of the site</label>
-          <input type="number" id="inpAlt" min="0" max="4000" step="5" value="100">
+          <div style="display:flex;gap:8px">
+            <input type="number" id="inpAlt" min="0" max="4000" step="5" value="100" style="flex:1">
+            <button type="button" class="btn" id="btnAltLookup" data-t="altLookup">Look up</button>
+          </div>
           <span class="sub" data-t="fldAltSub">Metres above sea level, at the building, not at the town hall.</span>
+          <span class="fieldstatus" id="altStatus"></span>
         </div>
         <div class="fld">
           <label for="selUse" data-t="fldUse">Building use</label>
@@ -521,7 +525,7 @@ footer{border-top:1px solid var(--line); margin-top:26px; background:var(--wash)
            take it there to be checked.</p>
       </div>
     </div>
-    <p class="note" data-t="privacyNote">Nothing is uploaded. The whole application runs on this computer.</p>
+    <p class="note" data-t="privacyNote">Nothing is uploaded. The whole application runs on this computer — the one exception is the optional altitude lookup, which sends only the coordinates you enter to two public elevation services.</p>
   </div>
 
   <div id="app" hidden></div>
@@ -548,7 +552,7 @@ footer{border-top:1px solid var(--line); margin-top:26px; background:var(--wash)
         <p data-t="footClassBody">Köppen–Geiger, in the formalisation of Peel, Finlayson and McMahon (2007),
            computed from the normals you enter.</p>
         <h5 style="margin-top:14px" data-t="footPriv">Privacy</h5>
-        <p style="color:var(--muted)" data-t="footPrivBody">No site data leaves the browser. Nothing is uploaded.</p>
+        <p style="color:var(--muted)" data-t="footPrivBody">No site data leaves the browser, and nothing is uploaded — except the coordinates, and only if you press Look up altitude, sent to two public elevation APIs to suggest a value.</p>
       </div>
     </div>
 
@@ -601,7 +605,7 @@ footer{border-top:1px solid var(--line); margin-top:26px; background:var(--wash)
 /* ------------------------------------------------------------ 0. IDENTITY -- */
 const APP = {
   name:        'Architecture Advisor',
-  version:     '1.10.6',
+  version:     '1.11.0',
   author:      'Nuno Dinis Cortiços',
   institution: 'Lisbon School of Architecture, Universidade de Lisboa',
   builtWith:   'Claude Opus 5 (Anthropic)',
@@ -960,7 +964,7 @@ let PANELS = [];
    the roof pitch, and the roof's south-collector area follows the plan's
    footprint — so both tabs read and write the same two objects, reset
    fresh each time a site is mounted. */
-let MASS = null, ROOF = null;
+let MASS = null, ROOF = null, OPEN = null, SUNSP = null;
 /**
  * Build a titled panel that owns one canvas. `o.render(ctx, W, H)` draws in CSS
  * pixels; the panel handles device-pixel scaling, resize and 3× PNG export, so
@@ -2699,12 +2703,391 @@ function buildRoof(host) {
   });
 }
 
+function buildOpenings(host) {
+  const S = STATE.site, C = STATE.clim;
+  const lat = S.lat, lon = S.lon, tz = lon / 15;
+  const G = MASS, RF = ROOF;
+  pageHead(host, 'Windows & Shading',
+    'Glazing, overhangs and fins for each facade, sized against the plan fixed on Site and the roof fixed on Roof — this tab cannot change either. Drag the window on the south or west wall directly; the sliders reach every facade, since this camera only ever shows two of them.');
+
+  const H0 = G.fl * G.fh;
+  const roofTh = (RF.n === 0 ? 0 : RF.th) * RAD;
+  const roofSpan = RF.n === 2 ? G.D / 2 : G.D;
+  const ridge = H0 + roofSpan * Math.tan(roofTh);
+  const topZ = y => RF.n === 0 ? H0
+    : RF.n === 1 ? H0 + (y + G.D / 2) * Math.tan(roofTh)
+    : H0 + Math.max(0, G.D / 2 - Math.abs(y)) * Math.tan(roofTh);
+
+  const FACES = ['S', 'N', 'E', 'W'];
+  const faceName = { S:'South', N:'North', E:'East', W:'West' };
+  const faceVisible = { S:true, N:false, E:false, W:true };
+  const faceNormal = { S:[0,-1,0], N:[0,1,0], E:[1,0,0], W:[-1,0,0] };
+  /** Facade width (the wall's own footprint edge) and wall height, read-only from Site/Roof. */
+  const faceWidth = f => (f === 'S' || f === 'N') ? G.L : G.D;
+  /** A point on facade f in world space: u is the world x (S/N) or world y (E/W)
+      coordinate along the facade — 0 at its centre, since the box itself is
+      centred on the origin; v is height. */
+  const facePoint = (f, u, v) => f === 'S' ? [u, -G.D / 2, v] : f === 'N' ? [u, G.D / 2, v]
+    : f === 'E' ? [G.L / 2, u, v] : [-G.L / 2, u, v];
+
+  let curFace = 'S';
+
+  /* --- recommended window-to-wall ratio (glazing area ÷ that facade's own
+     wall area), by orientation and by whether this climate leans heating- or
+     cooling-dominated — the same Hm/Cm overheated-period test the Roof tab
+     already uses. Bands follow Ching & Shapiro's WWR classification (low
+     <10%, moderate 10–20%, high 20–30%, very high >30%; p.242) combined with
+     Lechner's orientation guidance — south is the best daylighting
+     orientation and takes the most glass, east and west are "poor" and
+     should be minimised in hot climates, non-south glazing is minimised in
+     cold climates (pp.130–132, 416) — and DeKay & Brown's lower-SHGC
+     guidance for east/west glass, which is harder to shade (Strategy 106,
+     p.214). The exact cut-offs are this app's own synthesis, not one
+     source's number — treat them as a band to aim for, not a pass/fail. */
+  const Hm = C.t.filter(v => v < 18).length, Cm = C.t.filter(v => v > 22).length;
+  const heating = Hm >= Cm;
+  function wwrRange(f) {
+    if (f === 'S') return heating ? [0.25, 0.40] : [0.15, 0.25];
+    if (f === 'N') return [0.10, 0.20];
+    return heating ? [0.10, 0.20] : [0.08, 0.15];
+  }
+
+  host.appendChild(section('Window sizing — WWR', 'Glazing area as a fraction of the facade’s own wall area'));
+  { const [wwrLo0, wwrHi0] = wwrRange(curFace);
+  host.appendChild(hint('open-wwr',
+    'WWR bands follow Ching &amp; Shapiro’s classification (low &lt;10%, moderate 10–20%, high 20–30%, very high &gt;30%; p.242) read against Lechner’s orientation guidance — south takes the most glass, north the least of the sunlit faces, and east/west are minimised where the climate leans hot (pp.130–132, 416). The band shown for %1 in this climate is <b>%2–%3%</b>. It is this app’s own synthesis across sources, not a single citable number — treat it as a target to aim for, not a pass/fail test.',
+    [t(faceName[curFace]), fmt(wwrLo0 * 100, 0), fmt(wwrHi0 * 100, 0)])); }
+
+  const cFace = segCtl('Facade', FACES.map(f => ({ value:f, label:faceName[f] })), curFace,
+    v => { curFace = v; syncFaceCtls(); refreshOpenings(); });
+  const cWWR = rangeCtl('Window-to-wall ratio', 5, 80, 1, Math.round(OPEN[curFace].wwr * 100),
+    v => { OPEN[curFace].wwr = v / 100; refreshOpenings(); }, v => fmt(v, 0) + '%');
+  const cSill = rangeCtl('Sill height', 0, 1.8, 0.05, OPEN[curFace].sillZ,
+    v => { OPEN[curFace].sillZ = v; if (OPEN[curFace].headZ <= v + 0.3) { OPEN[curFace].headZ = v + 0.3; syncCtl(cHead, OPEN[curFace].headZ, w => fmt(w, 2) + ' m'); } refreshOpenings(); }, v => fmt(v, 2) + ' m');
+  const cHead = rangeCtl('Head height', 1.2, 3.0, 0.05, OPEN[curFace].headZ,
+    v => { OPEN[curFace].headZ = Math.max(v, OPEN[curFace].sillZ + 0.3); refreshOpenings(); }, v => fmt(v, 2) + ' m');
+  host.appendChild(controls([cFace, cWWR, cSill, cHead]));
+
+  const pillWWR = el('span', { class:'pill ok' });
+  host.appendChild(el('div', { class:'limitrow' }, [pillWWR]));
+
+  host.appendChild(section('Shading devices', 'Horizontal overhangs against the high equator-facing sun; vertical fins against the low east/west sun'));
+  host.appendChild(hint('open-shading',
+    'A horizontal overhang cuts the high summer sun on equator-facing glass, using the same profile-angle geometry as the roof pitch on the previous tab (Olgyay, pp.79–80; Lechner, pp.249–253). East and west glass gets low, near-level morning and evening sun that an overhang barely touches — vertical fins address it instead, though Lechner notes horizontal devices still outperform fins even there and fins mainly suit the equator-side of an oblique facade (pp.255–259). Several shallower louvres or several narrower fins cut the same angle as one deep device while blocking less of the view — an eggcrate is the two stacked together, not added twice (DeKay &amp; Brown, Strategy 91, pp.248–249).'));
+  const cOvD = rangeCtl('Overhang depth', 0, 2.5, 0.05, OPEN[curFace].ovD,
+    v => { OPEN[curFace].ovD = v; refreshOpenings(); }, v => fmt(v, 2) + ' m');
+  const cOvN = numCtl('Overhang louvres', 1, 5, 1, OPEN[curFace].ovN,
+    v => { OPEN[curFace].ovN = v; refreshOpenings(); }, null);
+  const cFinD = rangeCtl('Fin depth', 0, 2.5, 0.05, OPEN[curFace].finD,
+    v => { OPEN[curFace].finD = v; refreshOpenings(); }, v => fmt(v, 2) + ' m');
+  const cFinN = numCtl('Fins', 0, 6, 1, OPEN[curFace].finN,
+    v => { OPEN[curFace].finN = v; refreshOpenings(); }, null);
+  host.appendChild(controls([cOvD, cOvN, cFinD, cFinN]));
+
+  const pillShade = el('span', { class:'pill ok' });
+  host.appendChild(el('div', { class:'limitrow' }, [pillShade]));
+
+  host.appendChild(section('Attached sunspace', 'A glazed buffer against one wall — direct gain’s bigger, slower sibling'));
+  host.appendChild(hint('open-sunspace',
+    'An attached sunspace collects like a direct-gain window but stores and releases through the day — Galloway’s own instrumented house held an unshaded solarium between 33 and 54°C while the living room stayed near 27°C behind it (pp.24–30). It works best equator-facing but is "about half as sensitive to orientation" as other passive systems — within 30° of due south costs under 10% of the optimum (DeKay &amp; Brown, p.235). It is also the most expensive and least efficient of the passive systems, and unusable when too hot or cold unless it is fully vented — combined inlet and outlet vents should reach at least 16% of the glazing area (Lechner, pp.183–187). Drag the glazed wall to set how far it stands off the building.'));
+  const cSunOn = checkCtl('Attach a sunspace', SUNSP.on, v => { SUNSP.on = v; refreshOpenings(); });
+  const cSunFace = segCtl('Sunspace facade', FACES.map(f => ({ value:f, label:faceName[f] })), SUNSP.face,
+    v => { SUNSP.face = v; refreshOpenings(); });
+  host.appendChild(controls([cSunOn, cSunFace]));
+
+  host.appendChild(hint('open-accuracy',
+    'This tab sizes glazing and shading the way a first design pass would — geometric rules of thumb, not a simulation. It does not model diffuse or reflected light, glare, internal or solar heat gain, or a real sky, and the shading figure below is read only at solar noon on 21 June, not across the day or the year. Olgyay himself called his shading coefficients "approximate values" (p.67); Lechner recommends checking any shading design against a physical model (p.251); Ching &amp; Shapiro note that optimal glazing sizing "should be calculated by computer simulation" (p.101). A value outside the coloured range is not forbidden — some briefs need it — but treat it as a flag to justify, not a default.'));
+
+  function syncFaceCtls() {
+    const o = OPEN[curFace];
+    syncCtl(cWWR, Math.round(o.wwr * 100), v => fmt(v, 0) + '%');
+    syncCtl(cSill, o.sillZ, v => fmt(v, 2) + ' m');
+    syncCtl(cHead, o.headZ, v => fmt(v, 2) + ' m');
+    syncCtl(cOvD, o.ovD, v => fmt(v, 2) + ' m');
+    cOvN.input.value = o.ovN;
+    syncCtl(cFinD, o.finD, v => fmt(v, 2) + ' m');
+    cFinN.input.value = o.finN;
+  }
+  // buildOpenings does not share scope with buildRoof or buildSite — syncCtl
+  // has to be defined again here, the same lesson the roof-pitch bug taught
+  const syncCtl = (c, v, f) => { c.range.value = v; c.out.textContent = f(v); };
+
+  /** Window rectangle for a facade, in world (u, v) coordinates centred on
+      the facade's own middle; height comes from sill/head, width is derived
+      from wwr so that width × height = wwr × (facade width × wall height). */
+  const windowRect = f => {
+    const o = OPEN[f];
+    const area = o.wwr * faceWidth(f) * H0;
+    const h = Math.max(0.3, o.headZ - o.sillZ);
+    const w = Math.min(faceWidth(f) * 0.92, area / h);
+    return { u0:-w / 2, u1:w / 2, v0:o.sillZ, v1:o.headZ, w, h };
+  };
+
+  /** Fraction of the 21-June solar-noon sun this facade's own overhang and
+      fins keep off its own window, by the profile-angle / wall-solar-azimuth
+      method (Olgyay, pp.79–80; Lechner, pp.249–259) — geometric, not a
+      simulation, and evaluated at one moment, not across the day. */
+  function shadeEffectiveness(f) {
+    const o = OPEN[f];
+    const rect = windowRect(f);
+    const noonH = sunriseSunset(172, lat, lon, tz).noon;
+    const sun = sunPos(172, noonH, lat, lon, tz);
+    if (sun.alt <= 0) return { pct:100, unshadedFrac:0 };
+    const wallAz = { S:180, N:0, E:90, W:270 }[f];
+    const dAz = Math.abs(((sun.azi - wallAz + 540) % 360) - 180);
+    if (dAz >= 90) return { pct:100, unshadedFrac:0 };   // sun behind this wall
+    const altR = sun.alt * RAD, dAzR = dAz * RAD;
+    const profile = Math.atan2(Math.tan(altR), Math.max(0.01, Math.cos(dAzR)));
+    const dropOv = o.ovD > 0 ? Math.min(rect.h, o.ovD * Math.tan(Math.max(0, profile)) * o.ovN) : 0;
+    const wsa = Math.atan2(Math.sin(dAzR), Math.max(0.01, Math.cos(dAzR)));
+    const dropFin = (o.finN > 0 && o.finD > 0) ? Math.min(rect.w, o.finD * Math.tan(Math.abs(wsa)) * Math.min(2, o.finN)) : 0;
+    const unshadedW = Math.max(0, rect.w - dropFin), unshadedH = Math.max(0, rect.h - dropOv);
+    const unshadedFrac = (rect.w * rect.h) > 0 ? (unshadedW * unshadedH) / (rect.w * rect.h) : 0;
+    return { pct: 100 * (1 - unshadedFrac), unshadedFrac };
+  }
+
+  function refreshOpenings() {
+    const o = OPEN[curFace];
+    const [lo, hi] = wwrRange(curFace);
+    if (o.wwr < lo) { pillWWR.className = 'pill empty'; pillWWR.textContent = t('Below the recommended range'); }
+    else if (o.wwr > hi) { pillWWR.className = 'pill bad'; pillWWR.textContent = t('Above the recommended range'); }
+    else { pillWWR.className = 'pill ok'; pillWWR.textContent = t('Within the recommended range'); }
+
+    if (o.ovD === 0 && o.finD === 0) { pillShade.className = 'pill empty'; pillShade.textContent = t('No shading device on this facade'); }
+    else {
+      const sh = shadeEffectiveness(curFace);
+      if (sh.pct >= 60) { pillShade.className = 'pill ok'; pillShade.textContent = t('Cuts most of the June-noon sun on this window'); }
+      else { pillShade.className = 'pill bad'; pillShade.textContent = t('Leaves much of the June-noon sun on this window'); }
+    }
+    if (openPanel) openPanel.draw();
+  }
+
+  /* --- the model: same fixed south-west isometric camera as Site and Roof -- */
+  const ISO_C = Math.cos(30 * RAD), ISO_S = Math.sin(30 * RAD);
+  const projF = (FR, x, y, z) => [FR.cx + (x - y) * ISO_C * FR.s, FR.cy - (x + y) * ISO_S * FR.s - (z || 0) * FR.s];
+  const openFrame = (W, H) => {
+    const half = G.L / 2 + G.D / 2 + 3;
+    const maxSunDepth = SUNSP.on ? SUNSP.depth : 0;
+    const top = 14, bottom = H - 34, availV = Math.max(40, bottom - top);
+    const maxH = Math.max(H0, ridge);
+    const sByW = (W / 2 - 16) / ((half + maxSunDepth) * ISO_C);
+    const sByH = availV / (half * ISO_S * 2 + maxH);
+    const s = Math.max(3, Math.min(sByW, sByH));
+    const cx = W / 2, cy = bottom - half * ISO_S * s;
+    return { cx, cy, s };
+  };
+
+  let openPanel = null;
+
+  openPanel = makePanel(host, {
+    title: 'The facades in three dimensions',
+    note: 'Isometric view, matching Site and Roof — the plan and roof come from there. Drag the highlighted window to resize it, or the sunspace’s glazed wall to change its depth.',
+    aspect: 1.6,
+    render(ctx, W, H) {
+      const FR = openFrame(W, H);
+      const proj = (x, y, z) => projF(FR, x, y, z);
+      const poly = (pts3, fill, strokeColor, width, dash) => {
+        const p = pts3.map(q => proj(q[0], q[1], q[2]));
+        ctx.beginPath();
+        p.forEach((q, i) => i ? ctx.lineTo(q[0], q[1]) : ctx.moveTo(q[0], q[1]));
+        ctx.closePath();
+        if (fill) { ctx.fillStyle = fill; ctx.fill(); }
+        if (strokeColor) { stroke(ctx, strokeColor, width || 1.4, dash || null); ctx.stroke(); }
+      };
+
+      const gm = 1.2;
+      poly([[-G.L/2-gm,-G.D/2-gm,0],[G.L/2+gm,-G.D/2-gm,0],[G.L/2+gm,G.D/2+gm,0],[-G.L/2-gm,G.D/2+gm,0]],
+           'rgba(20,23,26,.025)', CH.line, 1.2);
+
+      poly([[-G.L/2,-G.D/2,0],[G.L/2,-G.D/2,0],[G.L/2,-G.D/2,H0],[-G.L/2,-G.D/2,H0]], 'rgba(20,23,26,.14)', CH.ink, 1.4);
+      const westBreaks = RF.n === 2 ? [G.D/2, 0, -G.D/2] : [G.D/2, -G.D/2];
+      const westPts = [[-G.L/2,-G.D/2,0],[-G.L/2,G.D/2,0]].concat(westBreaks.map(y => [-G.L/2, y, topZ(y)]));
+      poly(westPts, 'rgba(20,23,26,.08)', CH.ink, 1.4);
+
+      if (RF.n === 0) {
+        poly([[-G.L/2,-G.D/2,H0],[G.L/2,-G.D/2,H0],[G.L/2,G.D/2,H0],[-G.L/2,G.D/2,H0]], 'rgba(20,23,26,.05)', CH.ink, 2);
+      } else if (RF.n === 1) {
+        poly([[-G.L/2,-G.D/2,H0],[G.L/2,-G.D/2,H0],[G.L/2,G.D/2,ridge],[-G.L/2,G.D/2,ridge]], 'rgba(20,23,26,.05)', CH.ink, 2);
+      } else {
+        poly([[-G.L/2,-G.D/2,H0],[G.L/2,-G.D/2,H0],[G.L/2,0,ridge],[-G.L/2,0,ridge]], 'rgba(20,23,26,.05)', CH.ink, 2);
+        const r0 = proj(-G.L/2, 0, ridge), r1 = proj(G.L/2, 0, ridge);
+        stroke(ctx, CH.ink, 1.6); seg(ctx, r0[0], r0[1], r1[0], r1[1]);
+      }
+
+      /** Draws one facade's window and shading; `active` highlights the
+          facade currently selected in the controls above. */
+      function drawFace(f, active) {
+        if (!faceVisible[f]) return;
+        const o = OPEN[f];
+        const n = faceNormal[f];
+        if (o.wwr > 0) {
+          const rect = windowRect(f);
+          const win = [facePoint(f, rect.u0, rect.v0), facePoint(f, rect.u1, rect.v0),
+                       facePoint(f, rect.u1, rect.v1), facePoint(f, rect.u0, rect.v1)];
+          poly(win, active ? 'rgba(37,99,235,.16)' : 'rgba(37,99,235,.08)', active ? '#2563EB' : CH.ink2, active ? 1.8 : 1.2);
+
+          if (o.ovD > 0) {
+            for (let i = 0; i < o.ovN; i++) {
+              const vTop = rect.v1 + i * 0.4;
+              const inA = facePoint(f, rect.u0, vTop), inB = facePoint(f, rect.u1, vTop);
+              const outA = [inA[0] + n[0]*o.ovD, inA[1] + n[1]*o.ovD, inA[2]];
+              const outB = [inB[0] + n[0]*o.ovD, inB[1] + n[1]*o.ovD, inB[2]];
+              poly([inA, inB, outB, outA], active ? 'rgba(217,119,6,.20)' : 'rgba(217,119,6,.10)', '#D97706', 1.3);
+            }
+          }
+          if (o.finN > 0 && o.finD > 0) {
+            for (let i = 0; i < o.finN; i++) {
+              const uF = o.finN === 1 ? (rect.u0 + rect.u1) / 2 : rect.u0 + (rect.u1 - rect.u0) * (i / (o.finN - 1));
+              const inA = facePoint(f, uF, rect.v0), inB = facePoint(f, uF, rect.v1);
+              const outA = [inA[0] + n[0]*o.finD, inA[1] + n[1]*o.finD, inA[2]];
+              const outB = [inB[0] + n[0]*o.finD, inB[1] + n[1]*o.finD, inB[2]];
+              poly([inA, inB, outB, outA], active ? 'rgba(220,38,38,.18)' : 'rgba(220,38,38,.10)', '#DC2626', 1.3);
+            }
+          }
+        }
+      }
+      FACES.forEach(f => drawFace(f, f === curFace));
+
+      if (SUNSP.on && faceVisible[SUNSP.face]) {
+        const f = SUNSP.face, n = faceNormal[f];
+        const w = faceWidth(f) * SUNSP.widthFrac, hgt = Math.min(H0, 3.0);
+        const inA = facePoint(f, -w/2, 0), inB = facePoint(f, w/2, 0), inC = facePoint(f, w/2, hgt), inD = facePoint(f, -w/2, hgt);
+        const push = p => [p[0] + n[0]*SUNSP.depth, p[1] + n[1]*SUNSP.depth, p[2]];
+        const outA = push(inA), outB = push(inB), outC = push(inC), outD = push(inD);
+        poly([outA, outB, outC, outD], 'rgba(37,99,235,.06)', '#2563EB', 1.4, [5,4]);
+        [[inA,outA],[inB,outB],[inC,outC],[inD,outD]].forEach(([a,b]) => {
+          stroke(ctx, '#2563EB', 1.1, [5,4]); const pa = proj(...a), pb = proj(...b); seg(ctx, pa[0], pa[1], pb[0], pb[1]);
+        });
+        const handle = proj(...outB);
+        ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(handle[0], handle[1], 8, 0, 6.284); ctx.fill();
+        ctx.fillStyle = CH.ink; ctx.beginPath(); ctx.arc(handle[0], handle[1], 4.5, 0, 6.284); ctx.fill();
+      }
+
+      if (faceVisible[curFace] && OPEN[curFace].wwr > 0) {
+        const rect = windowRect(curFace);
+        const handle = proj(...facePoint(curFace, rect.u1, rect.v0));
+        ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(handle[0], handle[1], 8, 0, 6.284); ctx.fill();
+        ctx.fillStyle = CH.ink; ctx.beginPath(); ctx.arc(handle[0], handle[1], 4.5, 0, 6.284); ctx.fill();
+      }
+
+      const o = OPEN[curFace];
+      const sh = (o.ovD > 0 || o.finD > 0) ? shadeEffectiveness(curFace).pct : null;
+      label(ctx, t(faceName[curFace]) + ' · WWR ' + fmt(o.wwr * 100, 0) + '%'
+        + (sh !== null ? ' · ' + t('shading') + ' ' + fmt(sh, 0) + '%' : ''),
+        8, 12, CH.ink2, FM(11), 'left', 'middle');
+    },
+    csv: () => {
+      const rows = [['Facade', 'WWR', 'Sill (m)', 'Head (m)', 'Overhang depth (m)', 'Overhang count', 'Fin depth (m)', 'Fin count']];
+      FACES.forEach(f => { const o = OPEN[f]; rows.push([faceName[f], fmt(o.wwr, 2), fmt(o.sillZ, 2), fmt(o.headZ, 2), fmt(o.ovD, 2), o.ovN, fmt(o.finD, 2), o.finN]); });
+      rows.push(['Sunspace', SUNSP.on ? SUNSP.face : 'off', '', '', fmt(SUNSP.depth, 2), '', '', '']);
+      return csvRows(rows);
+    }
+  });
+  refreshOpenings();
+
+  /* --- direct manipulation: the window's bottom-right corner resizes it
+     (wwr only — sill/head stay slider-only, one handle one parameter, the
+     same restraint the Roof tab's pitch handle uses); the sunspace's outer
+     glazed corner sets its depth. Both handles only exist on a visible
+     facade (south or west) — this camera can't show north or east. -------- */
+  const ocv = openPanel.canvas;
+  ocv.style.touchAction = 'none';
+  ocv.draggable = false;
+  ocv.addEventListener('dragstart', ev => ev.preventDefault());
+
+  /** Inverts screen (px,py) against the vertical plane y = yVal, solving for (x, z). */
+  const invPlaneY = (FR, px, py, yVal) => {
+    const p00 = projF(FR, 0, yVal, 0), p10 = projF(FR, 1, yVal, 0), p01 = projF(FR, 0, yVal, 1);
+    let dXdx = p10[0]-p00[0], dYdx = p10[1]-p00[1], dYdz = p01[1]-p00[1];
+    if (Math.abs(dXdx) < 1e-6) dXdx = dXdx < 0 ? -1e-6 : 1e-6;
+    if (Math.abs(dYdz) < 1e-6) dYdz = dYdz < 0 ? -1e-6 : 1e-6;
+    const x = (px - p00[0]) / dXdx;
+    const z = (py - p00[1] - x * dYdx) / dYdz;
+    return { x, z };
+  };
+  /** Inverts screen (px,py) against the vertical plane x = xVal, solving for (y, z). */
+  const invPlaneX = (FR, px, py, xVal) => {
+    const p00 = projF(FR, xVal, 0, 0), p10 = projF(FR, xVal, 1, 0), p01 = projF(FR, xVal, 0, 1);
+    let dXdy = p10[0]-p00[0], dYdy = p10[1]-p00[1], dYdz = p01[1]-p00[1];
+    if (Math.abs(dXdy) < 1e-6) dXdy = dXdy < 0 ? -1e-6 : 1e-6;
+    if (Math.abs(dYdz) < 1e-6) dYdz = dYdz < 0 ? -1e-6 : 1e-6;
+    const y = (px - p00[0]) / dXdy;
+    const z = (py - p00[1] - y * dYdy) / dYdz;
+    return { y, z };
+  };
+
+  function windowHandlePos(FR) {
+    if (!faceVisible[curFace] || OPEN[curFace].wwr <= 0) return null;
+    const rect = windowRect(curFace);
+    return projF(FR, ...facePoint(curFace, rect.u1, rect.v0));
+  }
+  function sunspaceHandlePos(FR) {
+    if (!SUNSP.on || !faceVisible[SUNSP.face]) return null;
+    const f = SUNSP.face, n = faceNormal[f], w = faceWidth(f) * SUNSP.widthFrac;
+    const p = facePoint(f, w / 2, 0);
+    return projF(FR, p[0] + n[0]*SUNSP.depth, p[1] + n[1]*SUNSP.depth, p[2]);
+  }
+  const pick = (clientX, clientY) => {
+    if (!openPanel.W || !openPanel.H) return null;
+    const r = ocv.getBoundingClientRect();
+    const FR = openFrame(openPanel.W, openPanel.H);
+    const px = clientX - r.left, py = clientY - r.top;
+    const sun = sunspaceHandlePos(FR);
+    if (sun && Math.hypot(px - sun[0], py - sun[1]) <= 22) return 'sunspace';
+    const win = windowHandlePos(FR);
+    if (win && Math.hypot(px - win[0], py - win[1]) <= 22) return 'window';
+    return null;
+  };
+  let drag = null;
+  const doDrag = (kind, clientX, clientY) => {
+    const r = ocv.getBoundingClientRect();
+    const FR = openFrame(openPanel.W, openPanel.H);
+    const px = clientX - r.left, py = clientY - r.top;
+    if (kind === 'window') {
+      const o = OPEN[curFace];
+      const halfW = curFace === 'S' ? Math.abs(invPlaneY(FR, px, py, -G.D / 2).x)
+                                     : Math.abs(invPlaneX(FR, px, py, -G.L / 2).y);
+      const w = clamp(halfW * 2, 0.6, faceWidth(curFace) * 0.92);
+      const h = Math.max(0.3, o.headZ - o.sillZ);
+      o.wwr = clamp((w * h) / (faceWidth(curFace) * H0), 0.05, 0.8);
+      syncCtl(cWWR, Math.round(o.wwr * 100), v => fmt(v, 0) + '%');
+    } else if (kind === 'sunspace') {
+      const f = SUNSP.face, w = faceWidth(f) * SUNSP.widthFrac;
+      let depth;
+      if (f === 'S') depth = -G.D / 2 - invPlaneX(FR, px, py, w / 2).y;
+      else if (f === 'N') depth = invPlaneX(FR, px, py, w / 2).y - G.D / 2;
+      else if (f === 'E') depth = invPlaneY(FR, px, py, w / 2).x - G.L / 2;
+      else depth = -G.L / 2 - invPlaneY(FR, px, py, w / 2).x;
+      SUNSP.depth = clamp(depth, 0.6, 4.0);
+    }
+    refreshOpenings();
+  };
+  ocv.addEventListener('pointerdown', ev => {
+    const kind = pick(ev.clientX, ev.clientY);
+    if (!kind) return;
+    ev.preventDefault();
+    drag = kind;
+    if (kind === 'window') { syncFaceCtls(); }
+    try { ocv.setPointerCapture(ev.pointerId); } catch (err) {}
+    ocv.style.cursor = 'grabbing';
+  });
+  ocv.addEventListener('pointermove', ev => {
+    if (!drag) { ocv.style.cursor = pick(ev.clientX, ev.clientY) ? 'grab' : 'default'; return; }
+    ev.preventDefault();
+    doDrag(drag, ev.clientX, ev.clientY);
+  });
+  const endDrag = () => { drag = null; ocv.style.cursor = 'default'; };
+  ocv.addEventListener('pointerup', endDrag);
+  ocv.addEventListener('pointercancel', endDrag);
+}
+
 /* --------------------------------------------------------------- 8. BOOT -- */
 const TABS = [
   { key:'climate', label:'Climate', build:buildClimate },
   { key:'orientation', label:'Solar Geometry', build:buildOrientation },
   { key:'site', label:'Site', build:buildSite },
-  { key:'roof', label:'Roof', build:buildRoof }
+  { key:'roof', label:'Roof', build:buildRoof },
+  { key:'openings', label:'Windows & Shading', build:buildOpenings }
 ];
 
 /* --- the references, built from one list so the footer and the pages agree - */
@@ -2959,6 +3342,41 @@ function initSetup() {
   lat.addEventListener('input', refresh);
   srcInp.addEventListener('input', refresh);
 
+  /* --- altitude lookup: the one network call this application ever makes,
+     and only when the student presses the button. Two independent public
+     elevation services (different DEM sources) are queried and both shown,
+     so a first-hand look at how much they disagree is itself the lesson —
+     a single source is never presented as ground truth. ------------------ */
+  const btnAltLookup = $('#btnAltLookup'), altStatus = $('#altStatus');
+  async function lookupAltitude() {
+    const la = +lat.value, lo = +lon.value;
+    if (!isFinite(la) || !isFinite(lo)) { toast('Enter latitude and longitude first'); return; }
+    btnAltLookup.disabled = true;
+    altStatus.textContent = t('Looking up elevation…');
+    const meteo = fetch('https://api.open-meteo.com/v1/elevation?latitude=' + la + '&longitude=' + lo)
+      .then(r => r.json()).then(d => d.elevation[0]);
+    const elev = fetch('https://api.open-elevation.com/api/v1/lookup?locations=' + la + ',' + lo)
+      .then(r => r.json()).then(d => d.results[0].elevation);
+    const [a, b] = await Promise.allSettled([meteo, elev]);
+    btnAltLookup.disabled = false;
+    const va = a.status === 'fulfilled' && isFinite(a.value) ? a.value : null;
+    const vb = b.status === 'fulfilled' && isFinite(b.value) ? b.value : null;
+    if (va === null && vb === null) {
+      altStatus.textContent = t('Both elevation services failed — enter the altitude by hand');
+      return;
+    }
+    const vals = [va, vb].filter(v => v !== null);
+    alt.value = Math.round(vals.reduce((s, v) => s + v, 0) / vals.length);
+    if (va !== null && vb !== null) {
+      altStatus.textContent = 'Open-Meteo ' + fmt(va, 0) + ' m · Open-Elevation ' + fmt(vb, 0) + ' m · '
+        + t('difference') + ' ' + fmt(Math.abs(va - vb), 0) + ' m — ' + t('entered the mean; a DEM is not the building');
+    } else {
+      altStatus.textContent = (va !== null ? 'Open-Meteo' : 'Open-Elevation') + ' ' + fmt(vals[0], 0) + ' m · '
+        + t('the other service did not respond');
+    }
+  }
+  if (btnAltLookup) btnAltLookup.addEventListener('click', () => { lookupAltitude(); });
+
   /* --- IPMA station autofill: a chosen source fills the boxes ------------- */
   const srcStatus = $('#srcStatus');
   function fillFromSource(showMsg) {
@@ -3018,6 +3436,14 @@ function mountApp(site, clim, keepTab) {
   PANELS = [];
   MASS = { L:12, D:8, rot:180, fl:1, fh:3.0 };
   ROOF = { n:2, th:Math.round(Math.abs(site.lat)) };
+  /* One entry per local facade (S/N/E/W, matching the Roof tab's convention
+     of true-south regardless of the plan's chosen rotation), each holding
+     the window and its shading devices. wwr is a fraction of that facade's
+     own wall area (L or D × the eave height). */
+  const faceDefault = () => ({ wwr:0.20, sillZ:0.9, headZ:2.1, ovD:0, ovN:1, finD:0, finN:0 });
+  OPEN = { S: faceDefault(), N: faceDefault(), E: faceDefault(), W: faceDefault() };
+  OPEN.S.wwr = 0.35;   // a defensible start, not a recommendation — the badge judges it live
+  SUNSP = { on:false, face:'S', depth:2.2, widthFrac:0.6 };
   const app = $('#app');
   app.innerHTML = '';
   app.hidden = false;
@@ -3139,6 +3565,7 @@ Object.assign(STATIC_PT, {
   fldLon: 'Longitude',
   fldLonSub: 'Graus, este positivo. Leia-a num mapa, sobre o próprio local.',
   fldAlt: 'Altitude do local',
+  altLookup: 'Consultar',
   fldAltSub: 'Metros acima do nível do mar, no edifício, não na câmara municipal.',
   fldUse: 'Utilização do edifício',
   useHab: 'Habitação',
@@ -3160,7 +3587,7 @@ Object.assign(STATIC_PT, {
   ex2p: 'Para onde o edifício se volta, quão compacto é, o que faz a sua cobertura, quanto vidro leva cada fachada, onde ficam os compartimentos em relação ao sol, e como o ar atravessa a planta. Nenhuma destas se resolve com um coeficiente de transmissão térmica máximo.',
   ex3h: 'Um companheiro, não um substituto',
   ex3p: 'O Construction Advisor responde ao SCE e diz o que uma envolvente não pode exceder. Este não traz nada desse regulamento. Use-os por essa ordem: dê forma ao edifício aqui, e leve-o depois ali para ser verificado.',
-  privacyNote: 'Nada é carregado para lado nenhum. A aplicação corre inteiramente neste computador.',
+  privacyNote: 'Nada é carregado para lado nenhum. A aplicação corre inteiramente neste computador — a única excepção é a consulta de altitude, opcional, que envia apenas as coordenadas que introduziu a dois serviços públicos de elevação.',
   footTag: 'Um conselheiro de desenho bioclimático para estudantes de arquitectura, escrito para as decisões que se tomam antes de um regulamento ter algo a dizer sobre elas.',
   footAuthor: 'Autor',
   footInst: 'Instituição',
@@ -3168,7 +3595,7 @@ Object.assign(STATIC_PT, {
   footClass: 'Classificação',
   footClassBody: 'Köppen–Geiger, na formalização de Peel, Finlayson e McMahon (2007), calculada a partir das normais que introduzir.',
   footPriv: 'Privacidade',
-  footPrivBody: 'Nenhum dado do local sai do navegador. Nada é carregado.',
+  footPrivBody: 'Nenhum dado do local sai do navegador, e nada é carregado — excepto as coordenadas, e só se carregar em Consultar altitude, enviadas a duas APIs públicas de elevação para sugerir um valor.',
   footMethods: 'Métodos e fontes',
   footLegal: '© 2026 Nuno Dinis Cortiços. Este é um instrumento pedagógico. Reporta o que a literatura de projecto recomenda e nomeia a fonte de cada recomendação, mas uma orientação não é um cálculo e esta aplicação não é um modelo energético. Nada do que reporta constitui declaração de conformidade, e nada disto substitui as verificações exigidas no âmbito do SCE.'
 });
@@ -3180,6 +3607,12 @@ Object.assign(PT, {
   "of 24 still to fill": "de 24 por preencher",
   "The twelve pairs of normals are not complete": "Os doze pares de normais não estão completos",
   "No climate has been entered": "Não foi introduzido nenhum clima",
+  "Enter latitude and longitude first": "Introduza primeiro a latitude e a longitude",
+  "Looking up elevation…": "A consultar a altitude…",
+  "Both elevation services failed — enter the altitude by hand": "Ambos os serviços de elevação falharam — introduza a altitude à mão",
+  "difference": "diferença",
+  "entered the mean; a DEM is not the building": "introduzida a média; um MDT não é o edifício",
+  "the other service did not respond": "o outro serviço não respondeu",
   "Fill boxes": "Preencher caixas",
   "Station normals filled in — check the boxes": "Normais da estação preenchidas — verifique as caixas",
   "station values filled — correct the altitude to the building":
@@ -3437,7 +3870,41 @@ Object.assign(PT, {
   "year": "ano",
   "Dec {}°": "Dez {}°",
   "Jun {}°": "Jun {}°",
-  "ridge": "cumeeira"
+  "ridge": "cumeeira",
+
+  /* windows & shading */
+  "Windows & Shading": "Janelas e Sombreamento",
+  "Glazing, overhangs and fins for each facade, sized against the plan fixed on Site and the roof fixed on Roof — this tab cannot change either. Drag the window on the south or west wall directly; the sliders reach every facade, since this camera only ever shows two of them.":
+    "Envidraçados, palas e brises para cada fachada, dimensionados a partir da planta fixada em Local e do telhado fixado em Telhado — este separador não altera nenhum dos dois. Arraste a janela directamente na parede sul ou oeste; os cursores alcançam todas as fachadas, já que esta câmara só mostra sempre duas delas.",
+  "South": "Sul", "North": "Norte", "East": "Este", "West": "Oeste",
+  "Facade": "Fachada",
+  "Window sizing — WWR": "Dimensionamento das janelas — WWR",
+  "Glazing area as a fraction of the facade’s own wall area": "Área envidraçada como fracção da área de parede dessa fachada",
+  "Window-to-wall ratio": "Relação janela-parede",
+  "Sill height": "Altura do peitoril",
+  "Head height": "Altura da verga",
+  "Below the recommended range": "Abaixo do intervalo recomendado",
+  "Within the recommended range": "Dentro do intervalo recomendado",
+  "Above the recommended range": "Acima do intervalo recomendado",
+  "Shading devices": "Dispositivos de sombreamento",
+  "Horizontal overhangs against the high equator-facing sun; vertical fins against the low east/west sun":
+    "Palas horizontais contra o sol alto virado ao equador; brises verticais contra o sol baixo a este/oeste",
+  "Overhang depth": "Profundidade da pala",
+  "Overhang louvres": "Lâminas da pala",
+  "Fin depth": "Profundidade do brise",
+  "Fins": "Brises",
+  "No shading device on this facade": "Sem dispositivo de sombreamento nesta fachada",
+  "Cuts most of the June-noon sun on this window": "Corta a maior parte do sol do meio-dia de Junho nesta janela",
+  "Leaves much of the June-noon sun on this window": "Deixa passar grande parte do sol do meio-dia de Junho nesta janela",
+  "Attached sunspace": "Espaço solar anexo",
+  "A glazed buffer against one wall — direct gain’s bigger, slower sibling":
+    "Um espaço-tampão envidraçado encostado a uma parede — o irmão maior e mais lento do ganho directo",
+  "Attach a sunspace": "Anexar um espaço solar",
+  "Sunspace facade": "Fachada do espaço solar",
+  "The facades in three dimensions": "As fachadas em três dimensões",
+  "Isometric view, matching Site and Roof — the plan and roof come from there. Drag the highlighted window to resize it, or the sunspace’s glazed wall to change its depth.":
+    "Vista isométrica, como em Local e Telhado — a planta e o telhado vêm de lá. Arraste a janela realçada para a redimensionar, ou a parede envidraçada do espaço solar para mudar a sua profundidade.",
+  "shading": "sombreamento"
 });
 
 /* --- the long captions, keyed by identifier ----------------------------- */
@@ -3488,7 +3955,15 @@ Object.assign(PT_HINT, {
   'ori-roof':
     'Uma superfície a sul recolhe o máximo quando o raio do meio-dia lhe chega quase perpendicular: <b>Inverno = latitude + 15°, Verão = latitude − 15°, anual = latitude</b> (Galloway; Lechner) — aqui <b>%1° / %2° / %3°</b>. %4. Os telhados tradicionais portugueses de telha ficam muito mais baixos, pelo que os colectores pedem em geral a sua própria estrutura — a tensão é a lição.',
   'ori-ff':
-    'Fator de forma FF = envolvente exterior ÷ volume aquecido, em m⁻¹ — paredes até ao beirado, triângulos de empena, vertentes e piso térreo sobre o volume que encerram, uma única zona, tudo exterior. Mais baixo é mais compacto: os abrigos redondos de pastores da Monchique são o extremo vernacular (Gonçalves & Graça). É o mesmo rácio a que o REH chama <i>factor de forma</i>, aqui enunciado como pura geometria sem limites — o Construction Advisor continua daí. A pastilha pinta-o de verde até 0,7 (compacto), âmbar até 1,1 (moderado) e vermelho acima (disperso): faixas didácticas, não limites. Não move a nota de ajuste.'
+    'Fator de forma FF = envolvente exterior ÷ volume aquecido, em m⁻¹ — paredes até ao beirado, triângulos de empena, vertentes e piso térreo sobre o volume que encerram, uma única zona, tudo exterior. Mais baixo é mais compacto: os abrigos redondos de pastores da Monchique são o extremo vernacular (Gonçalves & Graça). É o mesmo rácio a que o REH chama <i>factor de forma</i>, aqui enunciado como pura geometria sem limites — o Construction Advisor continua daí. A pastilha pinta-o de verde até 0,7 (compacto), âmbar até 1,1 (moderado) e vermelho acima (disperso): faixas didácticas, não limites. Não move a nota de ajuste.',
+  'open-wwr':
+    'As faixas de WWR seguem a classificação de Ching &amp; Shapiro (baixa &lt;10%, moderada 10–20%, alta 20–30%, muito alta &gt;30%; p.242), lida à luz da orientação de Lechner — o sul recebe mais vidro, o norte o menos das fachadas com sol, e este/oeste são minimizados onde o clima pende para quente (pp.130–132, 416). A faixa mostrada para %1 neste clima é <b>%2–%3%</b>. É uma síntese própria desta aplicação entre fontes, não um número único citável — trate-a como uma meta a atingir, não um teste de aprovação.',
+  'open-shading':
+    'Uma pala horizontal corta o sol alto de Verão no vidro virado ao equador, usando a mesma geometria do ângulo de perfil da inclinação do telhado no separador anterior (Olgyay, pp.79–80; Lechner, pp.249–253). O vidro a este e a oeste recebe sol baixo, quase rasante, de manhã e ao fim da tarde, que uma pala mal toca — os brises verticais respondem a isso, embora Lechner note que os dispositivos horizontais continuam a superar os brises mesmo aí, e que os brises servem sobretudo o lado do equador de uma fachada oblíqua (pp.255–259). Várias lâminas mais rasas ou vários brises mais estreitos cortam o mesmo ângulo que um dispositivo único mais profundo, bloqueando menos a vista — um caixote de ovos é os dois empilhados, não somados (DeKay &amp; Brown, Estratégia 91, pp.248–249).',
+  'open-sunspace':
+    'Um espaço solar anexo recolhe como uma janela de ganho directo, mas acumula e liberta ao longo do dia — a própria casa instrumentada de Galloway manteve um solário sem sombreamento entre 33 e 54°C enquanto a sala ficava perto de 27°C atrás dele (pp.24–30). Funciona melhor virado ao equador, mas é "cerca de metade tão sensível à orientação" como outros sistemas passivos — dentro de 30° do sul verdadeiro custa menos de 10% do óptimo (DeKay &amp; Brown, p.235). É também o mais caro e menos eficiente dos sistemas passivos, e inutilizável quando demasiado quente ou frio a menos que esteja bem ventilado — as aberturas de entrada e saída combinadas devem atingir pelo menos 16% da área envidraçada (Lechner, pp.183–187). Arraste a parede envidraçada para definir a distância a que fica do edifício.',
+  'open-accuracy':
+    'Este separador dimensiona vidro e sombreamento como um primeiro esboço de projecto — regras geométricas de bolso, não uma simulação. Não modela luz difusa ou reflectida, encandeamento, ganhos internos ou solares, nem um céu real, e o valor de sombreamento abaixo é lido apenas ao meio-dia solar de 21 de Junho, não ao longo do dia ou do ano. O próprio Olgyay chamou aos seus coeficientes de sombreamento "valores aproximados" (p.67); Lechner recomenda verificar qualquer desenho de sombreamento com um modelo físico (p.251); Ching &amp; Shapiro notam que o dimensionamento óptimo do vidro "deveria ser calculado por simulação computacional" (p.101). Um valor fora do intervalo colorido não está proibido — alguns programas precisam disso — mas trate-o como um sinal a justificar, não uma opção por defeito.'
 });
 </script>
 </body>
