@@ -605,7 +605,7 @@ footer{border-top:1px solid var(--line); margin-top:26px; background:var(--wash)
 /* ------------------------------------------------------------ 0. IDENTITY -- */
 const APP = {
   name:        'Architecture Advisor',
-  version:     '1.13.1',
+  version:     '1.14.0',
   author:      'Nuno Dinis Cortiços',
   institution: 'Lisbon School of Architecture, Universidade de Lisboa',
   builtWith:   'Claude Opus 5 (Anthropic)',
@@ -2794,7 +2794,7 @@ function buildOpenings(host) {
 
   host.appendChild(section('Shading devices', 'Horizontal overhangs against the high equator-facing sun; vertical fins against the low east/west sun'));
   host.appendChild(hint('open-shading',
-    'A horizontal overhang cuts the high summer sun on equator-facing glass, using the same profile-angle geometry as the roof pitch on the previous tab (Olgyay, pp.79–80; Lechner, pp.249–253). East and west glass gets low, near-level morning and evening sun that an overhang barely touches — vertical fins address it instead, though Lechner notes horizontal devices still outperform fins even there and fins mainly suit the equator-side of an oblique facade (pp.255–259). Several shallower louvres or several narrower fins cut the same angle as one deep device while blocking less of the view — an eggcrate is the two stacked together, not added twice (DeKay &amp; Brown, Strategy 91, pp.248–249). Both sit directly on the opening: a single overhang rides the head, several louvres spread down across the full glazing top to bottom, and fins run left to right across whichever width is chosen — never floating clear of the window itself.'));
+    'A horizontal overhang cuts the high summer sun on equator-facing glass, using the same profile-angle geometry as the roof pitch on the previous tab (Olgyay, pp.79–80; Lechner, pp.249–253). East and west glass gets low, near-level morning and evening sun that an overhang barely touches — vertical fins address it instead, though Lechner notes horizontal devices still outperform fins even there and fins mainly suit the equator-side of an oblique facade (pp.255–259). Several shallower louvres or several narrower fins cut the same angle as one deep device while blocking less of the view — an eggcrate is the two stacked together, not added twice (DeKay &amp; Brown, Strategy 91, pp.248–249). Both sit directly on the opening: a single overhang rides the head, several louvres spread down across the full glazing top to bottom, and fins run left to right across whichever width is chosen — never floating clear of the window itself. In a heating-led climate a good overhang discriminates by season — cutting the high June sun while still admitting the low December sun that offsets the heating bill — so the shading score below rewards that gap rather than sheer depth: a device deep enough to block summer and winter equally scores no better than none at all.'));
   const cOvD = rangeCtl('Overhang depth', 0, 2.5, 0.05, OPEN[curFace].ovD,
     v => { OPEN[curFace].ovD = v; refreshOpenings(); }, v => fmt(v, 2) + ' m');
   const cOvN = numCtl('Overhang louvres', 1, 5, 1, OPEN[curFace].ovN,
@@ -2884,16 +2884,18 @@ function buildOpenings(host) {
     return Array.from({ length:n }, (_, i) => rect.v0 + (rect.v1 - rect.v0) * (i / (n - 1)));
   }
 
-  /** Fraction of the 21-June solar-noon sun this facade's own overhang and
-      fins keep off its own window, by the profile-angle / wall-solar-azimuth
-      method (Olgyay, pp.79–80; Lechner, pp.249–259) — geometric, not a
-      simulation, and evaluated at one moment, not across the day. */
-  function shadeEffectiveness(f) {
+  /** Fraction of the solar-noon sun this facade's own overhang and fins keep
+      off its own window on a given day, by the profile-angle /
+      wall-solar-azimuth method (Olgyay, pp.79–80; Lechner, pp.249–259) —
+      geometric, not a simulation, and evaluated at one moment, not across
+      the day. Called at 21 June (172) for the summer test and 21 December
+      (355) for the winter one. */
+  function shadeEffectiveness(f, doy) {
     const o = OPEN[f];
     const rect = windowRect(f);
-    const noonH = sunriseSunset(172, lat, lon, tz).noon;
-    const sun = sunPos(172, noonH, lat, lon, tz);
-    if (sun.alt <= 0) return { pct:100, unshadedFrac:0 };
+    const noonH = sunriseSunset(doy, lat, lon, tz).noon;
+    const sun = sunPos(doy, noonH, lat, lon, tz);
+    if (sun.alt <= 0) return { pct:0, unshadedFrac:1 };
     const wallAz = { S:180, N:0, E:90, W:270 }[f];
     const dAz = Math.abs(((sun.azi - wallAz + 540) % 360) - 180);
     if (dAz >= 90) return { pct:100, unshadedFrac:0 };   // sun behind this wall
@@ -2905,6 +2907,23 @@ function buildOpenings(host) {
     const unshadedW = Math.max(0, rect.w - dropFin), unshadedH = Math.max(0, rect.h - dropOv);
     const unshadedFrac = (rect.w * rect.h) > 0 ? (unshadedW * unshadedH) / (rect.w * rect.h) : 0;
     return { pct: 100 * (1 - unshadedFrac), unshadedFrac };
+  }
+  /** 0–100 shading-design score for one facade, or null with no device. A
+      heating-led climate wants a device that discriminates by season — cuts
+      the high June sun but lets the low December sun in for free warmth —
+      so the score there is summer cut minus winter cut: a device that
+      blocks both equally (like a deep overhang stacked with several
+      louvres) scores near zero despite blocking plenty of summer sun,
+      because it costs just as much wanted winter gain. A cooling-led
+      climate has no such trade-off — winter sun is not wanted either — so
+      the score there is simply how much of the summer sun is cut. */
+  function shadingScore(f) {
+    const o = OPEN[f];
+    if (o.ovD === 0 && o.finD === 0) return null;
+    const summer = shadeEffectiveness(f, 172).pct;
+    if (!heating) return summer;
+    const winter = shadeEffectiveness(f, 355).pct;
+    return clamp(summer - winter, 0, 100);
   }
 
   function refreshOpenings() {
@@ -2918,12 +2937,11 @@ function buildOpenings(host) {
     pillScore.className = 'pill ' + (score >= 80 ? 'ok' : score >= 50 ? 'empty' : 'bad');
     pillScore.textContent = t('Overall glazing performance') + ': ' + fmt(score, 0) + '%';
 
-    if (o.ovD === 0 && o.finD === 0) { pillShade.className = 'pill empty'; pillShade.textContent = t('No shading device on this facade'); }
-    else {
-      const sh = shadeEffectiveness(curFace);
-      if (sh.pct >= 60) { pillShade.className = 'pill ok'; pillShade.textContent = t('Cuts most of the June-noon sun on this window'); }
-      else { pillShade.className = 'pill bad'; pillShade.textContent = t('Leaves much of the June-noon sun on this window'); }
-    }
+    const sc = shadingScore(curFace);
+    if (sc === null) { pillShade.className = 'pill empty'; pillShade.textContent = t('No shading device on this facade'); }
+    else if (sc >= 80) { pillShade.className = 'pill ok'; pillShade.textContent = t(heating ? 'Cuts summer sun while keeping winter gains' : 'Cuts most of the June-noon sun on this window'); }
+    else if (sc >= 50) { pillShade.className = 'pill empty'; pillShade.textContent = t(heating ? 'Some seasonal discrimination, but still costs real winter sun' : 'Leaves some of the June-noon sun on this window'); }
+    else { pillShade.className = 'pill bad'; pillShade.textContent = t(heating ? 'Blocks winter sun almost as much as summer — too deep for this climate' : 'Leaves much of the June-noon sun on this window'); }
     if (openPanel) openPanel.draw();
   }
 
@@ -2947,7 +2965,7 @@ function buildOpenings(host) {
 
   openPanel = makePanel(host, {
     title: 'The facades in three dimensions',
-    note: 'Isometric view, matching Site and Roof for the plan and roof — the compass marks true north. The model turns to face whichever facade is selected above, so its window stays visible: drag its top-right corner to resize it (width and height), its lower corner to open it down to the floor like a door, or the sunspace’s outer glazed corner to change its width and depth.',
+    note: 'Isometric view, matching Site and Roof for the plan and roof — the compass marks true north, and the two scores in the corner (as on the Site tab) read the current WWR and shading fit. The model turns to face whichever facade is selected above, so its window stays visible: drag its top-right corner to resize it (width and height), its lower corner to open it down to the floor like a door, or the sunspace’s outer glazed corner to change its width and depth.',
     aspect: 1.6,
     render(ctx, W, H) {
       const FR = openFrame(W, H);
@@ -3051,10 +3069,25 @@ function buildOpenings(host) {
       }
 
       const o = OPEN[curFace];
-      const sh = (o.ovD > 0 || o.finD > 0) ? shadeEffectiveness(curFace).pct : null;
+      const sh = (o.ovD > 0 || o.finD > 0) ? shadeEffectiveness(curFace, 172).pct : null;
       label(ctx, t(faceName[curFace]) + ' · WWR ' + fmt(o.wwr * 100, 0) + '%'
         + (sh !== null ? ' · ' + t('shading') + ' ' + fmt(sh, 0) + '%' : ''),
         8, 12, CH.ink2, FM(11), 'left', 'middle');
+
+      // overall assessment, top-right — the same score-badge convention the
+      // Site tab uses for its own Olgyay-fit and form-factor readouts
+      const GREEN = '#16A34A';
+      const fitColor = v => v === null ? CH.faint : v >= 80 ? GREEN : v >= 50 ? '#D97706' : '#DC2626';
+      const fitBadge = (x, y, value, caption) => {
+        const col = fitColor(value);
+        ctx.fillStyle = '#fff';
+        ctx.fillRect(x, y, 84, 52);
+        stroke(ctx, col, 1.5); ctx.strokeRect(x, y, 84, 52);
+        label(ctx, value === null ? '–' : String(Math.round(value)), x + 42, y + 25, col, FM(24), 'center', 'middle');
+        label(ctx, t(caption), x + 42, y + 44, CH.muted, F(9), 'center', 'middle');
+      };
+      fitBadge(W - 92, 6, overallScore(), 'WWR fit /100');
+      fitBadge(W - 92, 64, shadingScore(curFace), 'Shading fit /100');
     },
     csv: () => {
       const rows = [['Facade', 'WWR', 'Sill (m)', 'Head (m)', 'Overhang depth (m)', 'Overhang count', 'Fin depth (m)', 'Fin count', 'Fin side']];
@@ -4010,7 +4043,13 @@ Object.assign(PT, {
   "Fins": "Brises",
   "No shading device on this facade": "Sem dispositivo de sombreamento nesta fachada",
   "Cuts most of the June-noon sun on this window": "Corta a maior parte do sol do meio-dia de Junho nesta janela",
+  "Leaves some of the June-noon sun on this window": "Deixa passar alguma parte do sol do meio-dia de Junho nesta janela",
   "Leaves much of the June-noon sun on this window": "Deixa passar grande parte do sol do meio-dia de Junho nesta janela",
+  "Cuts summer sun while keeping winter gains": "Corta o sol de Verão mantendo os ganhos de Inverno",
+  "Some seasonal discrimination, but still costs real winter sun": "Alguma discriminação sazonal, mas ainda custa sol de Inverno real",
+  "Blocks winter sun almost as much as summer — too deep for this climate": "Bloqueia o sol de Inverno quase tanto como o de Verão — demasiado profundo para este clima",
+  "WWR fit /100": "Ajuste WWR /100",
+  "Shading fit /100": "Ajuste do sombreamento /100",
   "Attached sunspace": "Espaço solar anexo",
   "A glazed buffer against one wall — direct gain’s bigger, slower sibling":
     "Um espaço-tampão envidraçado encostado a uma parede — o irmão maior e mais lento do ganho directo",
@@ -4018,8 +4057,8 @@ Object.assign(PT, {
   "Sunspace facade": "Fachada do espaço solar",
   "Sunspace width": "Largura do espaço solar",
   "The facades in three dimensions": "As fachadas em três dimensões",
-  "Isometric view, matching Site and Roof for the plan and roof — the compass marks true north. The model turns to face whichever facade is selected above, so its window stays visible: drag its top-right corner to resize it (width and height), its lower corner to open it down to the floor like a door, or the sunspace’s outer glazed corner to change its width and depth.":
-    "Vista isométrica, como em Local e Telhado para a planta e o telhado — a bússola marca o norte verdadeiro. O modelo roda para mostrar de frente a fachada escolhida acima, para que a sua janela fique sempre visível: arraste o canto superior direito para a redimensionar (largura e altura), o seu canto inferior para a abrir até ao chão como uma porta, ou o canto envidraçado exterior do espaço solar para mudar a sua largura e profundidade.",
+  "Isometric view, matching Site and Roof for the plan and roof — the compass marks true north, and the two scores in the corner (as on the Site tab) read the current WWR and shading fit. The model turns to face whichever facade is selected above, so its window stays visible: drag its top-right corner to resize it (width and height), its lower corner to open it down to the floor like a door, or the sunspace’s outer glazed corner to change its width and depth.":
+    "Vista isométrica, como em Local e Telhado para a planta e o telhado — a bússola marca o norte verdadeiro, e as duas notas no canto (como em Local) leem o ajuste actual de WWR e de sombreamento. O modelo roda para mostrar de frente a fachada escolhida acima, para que a sua janela fique sempre visível: arraste o canto superior direito para a redimensionar (largura e altura), o seu canto inferior para a abrir até ao chão como uma porta, ou o canto envidraçado exterior do espaço solar para mudar a sua largura e profundidade.",
   "shading": "sombreamento",
   "Overall glazing performance": "Desempenho global do envidraçado",
   "Fin side": "Lado dos brises",
@@ -4080,7 +4119,7 @@ Object.assign(PT_HINT, {
   'open-wwr':
     'As faixas de WWR seguem a classificação de Ching &amp; Shapiro (baixa &lt;10%, moderada 10–20%, alta 20–30%, muito alta &gt;30%; p.242), lida à luz da orientação de Lechner — o sul recebe mais vidro, o norte o menos das fachadas com sol, e este/oeste são minimizados onde o clima pende para quente (pp.130–132, 416). A faixa mostrada para %1 neste clima é <b>%2–%3%</b>. É uma síntese própria desta aplicação entre fontes, não um número único citável — trate-a como uma meta a atingir, não um teste de aprovação. A nota de desempenho global abaixo faz a média deste teste nas quatro fachadas.',
   'open-shading':
-    'Uma pala horizontal corta o sol alto de Verão no vidro virado ao equador, usando a mesma geometria do ângulo de perfil da inclinação do telhado no separador anterior (Olgyay, pp.79–80; Lechner, pp.249–253). O vidro a este e a oeste recebe sol baixo, quase rasante, de manhã e ao fim da tarde, que uma pala mal toca — os brises verticais respondem a isso, embora Lechner note que os dispositivos horizontais continuam a superar os brises mesmo aí, e que os brises servem sobretudo o lado do equador de uma fachada oblíqua (pp.255–259). Várias lâminas mais rasas ou vários brises mais estreitos cortam o mesmo ângulo que um dispositivo único mais profundo, bloqueando menos a vista — um caixote de ovos é os dois empilhados, não somados (DeKay &amp; Brown, Estratégia 91, pp.248–249). Ambos ficam directamente sobre o vão: uma única pala acompanha a verga, várias lâminas distribuem-se de cima a baixo por todo o envidraçado, e os brises correm da esquerda para a direita ao longo da largura escolhida — nunca flutuando afastados da própria janela.',
+    'Uma pala horizontal corta o sol alto de Verão no vidro virado ao equador, usando a mesma geometria do ângulo de perfil da inclinação do telhado no separador anterior (Olgyay, pp.79–80; Lechner, pp.249–253). O vidro a este e a oeste recebe sol baixo, quase rasante, de manhã e ao fim da tarde, que uma pala mal toca — os brises verticais respondem a isso, embora Lechner note que os dispositivos horizontais continuam a superar os brises mesmo aí, e que os brises servem sobretudo o lado do equador de uma fachada oblíqua (pp.255–259). Várias lâminas mais rasas ou vários brises mais estreitos cortam o mesmo ângulo que um dispositivo único mais profundo, bloqueando menos a vista — um caixote de ovos é os dois empilhados, não somados (DeKay &amp; Brown, Estratégia 91, pp.248–249). Ambos ficam directamente sobre o vão: uma única pala acompanha a verga, várias lâminas distribuem-se de cima a baixo por todo o envidraçado, e os brises correm da esquerda para a direita ao longo da largura escolhida — nunca flutuando afastados da própria janela. Num clima de aquecimento, uma boa pala discrimina por estação — corta o sol alto de Junho mas ainda deixa entrar o sol baixo de Dezembro que alivia a factura do aquecimento — pelo que a nota de sombreamento abaixo premeia essa diferença e não a profundidade em si: um dispositivo suficientemente profundo para bloquear Verão e Inverno por igual não vale mais do que nenhum.',
   'open-sunspace':
     'Um espaço solar anexo recolhe como uma janela de ganho directo, mas acumula e liberta ao longo do dia — a própria casa instrumentada de Galloway manteve um solário sem sombreamento entre 33 e 54°C enquanto a sala ficava perto de 27°C atrás dele (pp.24–30). Funciona melhor virado ao equador, mas é "cerca de metade tão sensível à orientação" como outros sistemas passivos — dentro de 30° do sul verdadeiro custa menos de 10% do óptimo (DeKay &amp; Brown, p.235). É também o mais caro e menos eficiente dos sistemas passivos, e inutilizável quando demasiado quente ou frio a menos que esteja bem ventilado — as aberturas de entrada e saída combinadas devem atingir pelo menos 16% da área envidraçada (Lechner, pp.183–187). Arraste o canto envidraçado exterior para definir tanto a distância a que fica do edifício como a largura que ocupa na parede.',
   'open-accuracy':
