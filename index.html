@@ -605,7 +605,7 @@ footer{border-top:1px solid var(--line); margin-top:26px; background:var(--wash)
 /* ------------------------------------------------------------ 0. IDENTITY -- */
 const APP = {
   name:        'Architecture Advisor',
-  version:     '1.14.0',
+  version:     '1.15.0',
   author:      'Nuno Dinis Cortiços',
   institution: 'Lisbon School of Architecture, Universidade de Lisboa',
   builtWith:   'Claude Opus 5 (Anthropic)',
@@ -2794,7 +2794,7 @@ function buildOpenings(host) {
 
   host.appendChild(section('Shading devices', 'Horizontal overhangs against the high equator-facing sun; vertical fins against the low east/west sun'));
   host.appendChild(hint('open-shading',
-    'A horizontal overhang cuts the high summer sun on equator-facing glass, using the same profile-angle geometry as the roof pitch on the previous tab (Olgyay, pp.79–80; Lechner, pp.249–253). East and west glass gets low, near-level morning and evening sun that an overhang barely touches — vertical fins address it instead, though Lechner notes horizontal devices still outperform fins even there and fins mainly suit the equator-side of an oblique facade (pp.255–259). Several shallower louvres or several narrower fins cut the same angle as one deep device while blocking less of the view — an eggcrate is the two stacked together, not added twice (DeKay &amp; Brown, Strategy 91, pp.248–249). Both sit directly on the opening: a single overhang rides the head, several louvres spread down across the full glazing top to bottom, and fins run left to right across whichever width is chosen — never floating clear of the window itself. In a heating-led climate a good overhang discriminates by season — cutting the high June sun while still admitting the low December sun that offsets the heating bill — so the shading score below rewards that gap rather than sheer depth: a device deep enough to block summer and winter equally scores no better than none at all.'));
+    'A horizontal overhang cuts the high summer sun on equator-facing glass, using the same profile-angle geometry as the roof pitch on the previous tab (Olgyay, pp.79–80; Lechner, pp.249–253). East and west glass gets low, near-level morning and evening sun that an overhang barely touches — vertical fins address it instead: Olgyay’s own shading-coefficient table gives fixed vertical fins on east/west walls about 0.31 (i.e. cutting roughly two-thirds of the unshaded gain), against about 0.20–0.25 for a continuous south overhang and 0.10–0.15 for movable horizontal louvres (pp.70–71) — fins genuinely earn their keep on the low, oblique east and west sun, west more than east once afternoon heat is added on top. Lechner still notes horizontal devices outperform fins even there, and that fins mainly suit the equator-side of an oblique facade (pp.255–259); on a due-south wall a fin fails only at the single moment the sun sits exactly perpendicular to the glass — solar noon — and keeps cutting the oblique morning and afternoon sun the rest of the day, so its contribution there can be substantial too, just covering different hours than an overhang does. Several shallower louvres or several narrower fins cut the same angle as one deep device while blocking less of the view — an eggcrate is the two stacked together, not added twice (DeKay &amp; Brown, Strategy 91, pp.248–249). Both sit directly on the opening: a single overhang rides the head, several louvres spread down across the full glazing top to bottom, and fins run left to right across whichever width is chosen — never floating clear of the window itself. In a heating-led climate a good overhang discriminates by season — cutting the high June sun while still admitting the low December sun that offsets the heating bill — so the shading score below rewards that gap rather than sheer depth: a device deep enough to block summer and winter equally scores no better than none at all.'));
   const cOvD = rangeCtl('Overhang depth', 0, 2.5, 0.05, OPEN[curFace].ovD,
     v => { OPEN[curFace].ovD = v; refreshOpenings(); }, v => fmt(v, 2) + ' m');
   const cOvN = numCtl('Overhang louvres', 1, 5, 1, OPEN[curFace].ovN,
@@ -2822,7 +2822,7 @@ function buildOpenings(host) {
   host.appendChild(controls([cSunOn, cSunFace, cSunWidth]));
 
   host.appendChild(hint('open-accuracy',
-    'This tab sizes glazing and shading the way a first design pass would — geometric rules of thumb, not a simulation. It does not model diffuse or reflected light, glare, internal or solar heat gain, or a real sky, and the shading figure below is read only at solar noon on 21 June, not across the day or the year. Olgyay himself called his shading coefficients "approximate values" (p.67); Lechner recommends checking any shading design against a physical model (p.251); Ching &amp; Shapiro note that optimal glazing sizing "should be calculated by computer simulation" (p.101). A value outside the coloured range is not forbidden — some briefs need it — but treat it as a flag to justify, not a default.'));
+    'This tab sizes glazing and shading the way a first design pass would — geometric rules of thumb, not a simulation. It does not model diffuse or reflected light, glare, internal or solar heat gain, or a real sky, and the shading figure below is averaged over a fixed set of daytime hours on 21 June and 21 December only, not the whole year or an actual weather file. Olgyay himself called his shading coefficients "approximate values" (p.67); Lechner recommends checking any shading design against a physical model (p.251); Ching &amp; Shapiro note that optimal glazing sizing "should be calculated by computer simulation" (p.101). A value outside the coloured range is not forbidden — some briefs need it — but treat it as a flag to justify, not a default.'));
 
   function syncFaceCtls() {
     const o = OPEN[curFace];
@@ -2884,28 +2884,54 @@ function buildOpenings(host) {
     return Array.from({ length:n }, (_, i) => rect.v0 + (rect.v1 - rect.v0) * (i / (n - 1)));
   }
 
-  /** Fraction of the solar-noon sun this facade's own overhang and fins keep
-      off its own window on a given day, by the profile-angle /
+  /** Average fraction of the sun this facade's own overhang and fins keep
+      off its own window across a day, by the profile-angle /
       wall-solar-azimuth method (Olgyay, pp.79–80; Lechner, pp.249–259) —
-      geometric, not a simulation, and evaluated at one moment, not across
-      the day. Called at 21 June (172) for the summer test and 21 December
-      (355) for the winter one. */
+      geometric, not a simulation. Averaged across hours spaced symmetrically
+      either side of solar noon, rather than read at solar noon alone: at
+      solar noon the sun sits exactly due south, which is perpendicular to
+      an east or west wall (wall-solar-azimuth 90°) and therefore already
+      "behind" it in this model — evaluating only that instant would credit
+      an east/west fin with blocking sun that was never reaching the glass
+      to begin with, and give a south fin no credit either, since fins only
+      earn their keep once the sun is oblique to the wall. Sampling by
+      offset from solar noon (rather than by clock hour) keeps the morning
+      and afternoon halves genuinely mirror images of each other — an east
+      and a west wall with the same fin get the same score here, since nothing
+      in pure solar geometry favours one over the other; only the real
+      afternoon heat build-up a full simulation would capture (not this
+      geometric model) makes west the harder orientation in practice. Olgyay's
+      own shading-coefficient table gives vertical fixed fins on east/west
+      walls about 0.31, against about 0.20–0.25 for a continuous south
+      overhang and 0.10–0.15 for movable horizontal louvres (pp.70–71).
+      Called at 21 June (172) for the summer test and 21 December (355) for
+      the winter one. */
+  const SHADE_SAMPLE_OFFSETS = [-5,-4,-3,-2,-1,0,1,2,3,4,5];   // hours either side of solar noon
   function shadeEffectiveness(f, doy) {
     const o = OPEN[f];
     const rect = windowRect(f);
-    const noonH = sunriseSunset(doy, lat, lon, tz).noon;
-    const sun = sunPos(doy, noonH, lat, lon, tz);
-    if (sun.alt <= 0) return { pct:0, unshadedFrac:1 };
     const wallAz = { S:180, N:0, E:90, W:270 }[f];
-    const dAz = Math.abs(((sun.azi - wallAz + 540) % 360) - 180);
-    if (dAz >= 90) return { pct:100, unshadedFrac:0 };   // sun behind this wall
-    const altR = sun.alt * RAD, dAzR = dAz * RAD;
-    const profile = Math.atan2(Math.tan(altR), Math.max(0.01, Math.cos(dAzR)));
-    const dropOv = o.ovD > 0 ? Math.min(rect.h, o.ovD * Math.tan(Math.max(0, profile)) * o.ovN) : 0;
-    const wsa = Math.atan2(Math.sin(dAzR), Math.max(0.01, Math.cos(dAzR)));
-    const dropFin = (o.finN > 0 && o.finD > 0) ? Math.min(rect.w, o.finD * Math.tan(Math.abs(wsa)) * Math.min(2, o.finN)) : 0;
-    const unshadedW = Math.max(0, rect.w - dropFin), unshadedH = Math.max(0, rect.h - dropOv);
-    const unshadedFrac = (rect.w * rect.h) > 0 ? (unshadedW * unshadedH) / (rect.w * rect.h) : 0;
+    const noon = sunriseSunset(doy, lat, lon, tz).noon;
+    let sumUnshaded = 0, hits = 0;
+    SHADE_SAMPLE_OFFSETS.forEach(dh => {
+      const sun = sunPos(doy, noon + dh, lat, lon, tz);
+      if (sun.alt <= 0) return;
+      const dAz = Math.abs(((sun.azi - wallAz + 540) % 360) - 180);
+      // >= 89.5 rather than 90 so a sun exactly parallel to the wall (a tie,
+      // at solar noon, for an east or west wall) excludes symmetrically on
+      // both sides rather than tipping east or west on floating-point noise
+      if (dAz >= 89.5) return;   // sun behind this wall at this hour
+      const altR = sun.alt * RAD, dAzR = dAz * RAD;
+      const profile = Math.atan2(Math.tan(altR), Math.max(0.01, Math.cos(dAzR)));
+      const dropOv = o.ovD > 0 ? Math.min(rect.h, o.ovD * Math.tan(Math.max(0, profile)) * o.ovN) : 0;
+      const wsa = Math.atan2(Math.sin(dAzR), Math.max(0.01, Math.cos(dAzR)));
+      const dropFin = (o.finN > 0 && o.finD > 0) ? Math.min(rect.w, o.finD * Math.tan(Math.abs(wsa)) * Math.min(2, o.finN)) : 0;
+      const unshadedW = Math.max(0, rect.w - dropFin), unshadedH = Math.max(0, rect.h - dropOv);
+      sumUnshaded += (rect.w * rect.h) > 0 ? (unshadedW * unshadedH) / (rect.w * rect.h) : 0;
+      hits++;
+    });
+    if (hits === 0) return { pct:100, unshadedFrac:0 };   // this wall gets no direct sun that day
+    const unshadedFrac = sumUnshaded / hits;
     return { pct: 100 * (1 - unshadedFrac), unshadedFrac };
   }
   /** 0–100 shading-design score for one facade, or null with no device. A
@@ -4119,11 +4145,11 @@ Object.assign(PT_HINT, {
   'open-wwr':
     'As faixas de WWR seguem a classificação de Ching &amp; Shapiro (baixa &lt;10%, moderada 10–20%, alta 20–30%, muito alta &gt;30%; p.242), lida à luz da orientação de Lechner — o sul recebe mais vidro, o norte o menos das fachadas com sol, e este/oeste são minimizados onde o clima pende para quente (pp.130–132, 416). A faixa mostrada para %1 neste clima é <b>%2–%3%</b>. É uma síntese própria desta aplicação entre fontes, não um número único citável — trate-a como uma meta a atingir, não um teste de aprovação. A nota de desempenho global abaixo faz a média deste teste nas quatro fachadas.',
   'open-shading':
-    'Uma pala horizontal corta o sol alto de Verão no vidro virado ao equador, usando a mesma geometria do ângulo de perfil da inclinação do telhado no separador anterior (Olgyay, pp.79–80; Lechner, pp.249–253). O vidro a este e a oeste recebe sol baixo, quase rasante, de manhã e ao fim da tarde, que uma pala mal toca — os brises verticais respondem a isso, embora Lechner note que os dispositivos horizontais continuam a superar os brises mesmo aí, e que os brises servem sobretudo o lado do equador de uma fachada oblíqua (pp.255–259). Várias lâminas mais rasas ou vários brises mais estreitos cortam o mesmo ângulo que um dispositivo único mais profundo, bloqueando menos a vista — um caixote de ovos é os dois empilhados, não somados (DeKay &amp; Brown, Estratégia 91, pp.248–249). Ambos ficam directamente sobre o vão: uma única pala acompanha a verga, várias lâminas distribuem-se de cima a baixo por todo o envidraçado, e os brises correm da esquerda para a direita ao longo da largura escolhida — nunca flutuando afastados da própria janela. Num clima de aquecimento, uma boa pala discrimina por estação — corta o sol alto de Junho mas ainda deixa entrar o sol baixo de Dezembro que alivia a factura do aquecimento — pelo que a nota de sombreamento abaixo premeia essa diferença e não a profundidade em si: um dispositivo suficientemente profundo para bloquear Verão e Inverno por igual não vale mais do que nenhum.',
+    'Uma pala horizontal corta o sol alto de Verão no vidro virado ao equador, usando a mesma geometria do ângulo de perfil da inclinação do telhado no separador anterior (Olgyay, pp.79–80; Lechner, pp.249–253). O vidro a este e a oeste recebe sol baixo, quase rasante, de manhã e ao fim da tarde, que uma pala mal toca — os brises verticais respondem a isso: a própria tabela de coeficientes de sombreamento de Olgyay dá aos brises verticais fixos nas paredes este/oeste cerca de 0,31 (ou seja, cortando cerca de dois terços do ganho não sombreado), contra cerca de 0,20–0,25 para uma pala contínua a sul e 0,10–0,15 para lâminas horizontais móveis (pp.70–71) — os brises ganham mesmo o seu lugar no sol baixo e oblíquo a este e a oeste, mais a oeste do que a este uma vez somado o calor da tarde. Lechner nota ainda que os dispositivos horizontais continuam a superar os brises mesmo aí, e que os brises servem sobretudo o lado do equador de uma fachada oblíqua (pp.255–259); numa parede virada a sul, um brise só falha no único momento em que o sol fica exactamente perpendicular ao vidro — o meio-dia solar — continuando a cortar o sol oblíquo da manhã e da tarde no resto do dia, pelo que o seu contributo aí também pode ser substancial, cobrindo apenas horas diferentes das de uma pala. Várias lâminas mais rasas ou vários brises mais estreitos cortam o mesmo ângulo que um dispositivo único mais profundo, bloqueando menos a vista — um caixote de ovos é os dois empilhados, não somados (DeKay &amp; Brown, Estratégia 91, pp.248–249). Ambos ficam directamente sobre o vão: uma única pala acompanha a verga, várias lâminas distribuem-se de cima a baixo por todo o envidraçado, e os brises correm da esquerda para a direita ao longo da largura escolhida — nunca flutuando afastados da própria janela. Num clima de aquecimento, uma boa pala discrimina por estação — corta o sol alto de Junho mas ainda deixa entrar o sol baixo de Dezembro que alivia a factura do aquecimento — pelo que a nota de sombreamento abaixo premeia essa diferença e não a profundidade em si: um dispositivo suficientemente profundo para bloquear Verão e Inverno por igual não vale mais do que nenhum.',
   'open-sunspace':
     'Um espaço solar anexo recolhe como uma janela de ganho directo, mas acumula e liberta ao longo do dia — a própria casa instrumentada de Galloway manteve um solário sem sombreamento entre 33 e 54°C enquanto a sala ficava perto de 27°C atrás dele (pp.24–30). Funciona melhor virado ao equador, mas é "cerca de metade tão sensível à orientação" como outros sistemas passivos — dentro de 30° do sul verdadeiro custa menos de 10% do óptimo (DeKay &amp; Brown, p.235). É também o mais caro e menos eficiente dos sistemas passivos, e inutilizável quando demasiado quente ou frio a menos que esteja bem ventilado — as aberturas de entrada e saída combinadas devem atingir pelo menos 16% da área envidraçada (Lechner, pp.183–187). Arraste o canto envidraçado exterior para definir tanto a distância a que fica do edifício como a largura que ocupa na parede.',
   'open-accuracy':
-    'Este separador dimensiona vidro e sombreamento como um primeiro esboço de projecto — regras geométricas de bolso, não uma simulação. Não modela luz difusa ou reflectida, encandeamento, ganhos internos ou solares, nem um céu real, e o valor de sombreamento abaixo é lido apenas ao meio-dia solar de 21 de Junho, não ao longo do dia ou do ano. O próprio Olgyay chamou aos seus coeficientes de sombreamento "valores aproximados" (p.67); Lechner recomenda verificar qualquer desenho de sombreamento com um modelo físico (p.251); Ching &amp; Shapiro notam que o dimensionamento óptimo do vidro "deveria ser calculado por simulação computacional" (p.101). Um valor fora do intervalo colorido não está proibido — alguns programas precisam disso — mas trate-o como um sinal a justificar, não uma opção por defeito.'
+    'Este separador dimensiona vidro e sombreamento como um primeiro esboço de projecto — regras geométricas de bolso, não uma simulação. Não modela luz difusa ou reflectida, encandeamento, ganhos internos ou solares, nem um céu real, e o valor de sombreamento abaixo é a média de um conjunto fixo de horas do dia em 21 de Junho e 21 de Dezembro apenas, não do ano inteiro nem de um ficheiro climático real. O próprio Olgyay chamou aos seus coeficientes de sombreamento "valores aproximados" (p.67); Lechner recomenda verificar qualquer desenho de sombreamento com um modelo físico (p.251); Ching &amp; Shapiro notam que o dimensionamento óptimo do vidro "deveria ser calculado por simulação computacional" (p.101). Um valor fora do intervalo colorido não está proibido — alguns programas precisam disso — mas trate-o como um sinal a justificar, não uma opção por defeito.'
 });
 </script>
 </body>
