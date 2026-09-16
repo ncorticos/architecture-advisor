@@ -3258,23 +3258,29 @@ ocv.addEventListener('pointerup', endDrag);
  /* --------------------------------------------------------------- 9. VENTILATION -- */
 function buildVentilation(host) {
   const S = STATE.site, C = STATE.clim;
+  const lat = S.lat, lon = S.lon;
   pageHead(host, 'Ventilation',
-    'Winter protection and summer cross ventilation performance, rated against the bioclimatic literature — terrain, wind, vegetation and detached walls.');
+    '3D site model — place trees, bushes and detached walls against the building defined on Site, Roof and Windows & Shading. Scores update live.');
+
+  const G = MASS, RF = ROOF;
+  if (!G) { host.appendChild(el('p', { text:t('Define the site first — go to the Site tab.') })); return; }
+  /* OPEN is global, set by the Openings tab; initialise if null */
+  if (!OPEN) OPEN = { S:{wwr:0.25, openH:0, openV:0}, N:{wwr:0.15, openH:0, openV:0}, E:{wwr:0.10, openH:0, openV:0}, W:{wwr:0.10, openH:0, openV:0} };
 
   const FACE_NAME = { S:'South', N:'North', E:'East', W:'West' };
   const FACES = ['S', 'N', 'E', 'W'];
+  const H0 = G.fl * G.fh;
+  const latN = Math.abs(lat);
 
-  /* ---- shared state (persists across tab switches via global) ---- */
-  let OPEN = { S:{wwr:0.25, openH:0, openV:0}, N:{wwr:0.15, openH:0, openV:0},
-    E:{wwr:0.10, openH:0, openV:0}, W:{wwr:0.10, openH:0, openV:0} };
-  let VEGETATION = [];        // up to 10 species {type, height, density, side}
-  let DETACHED_WALLS = { S:[], N:[], E:[], W:[] };  // each: {height, length}
-  let terrainKey = 'flat';
-  let windKey = 'moderate';
+  /* ---- terrain & wind ---- */
+  const TERRAIN_KEY = { 'flat':'flat', 'rolling':'rolling', 'hilly':'hilly', 'mountainous':'mountainous' };
+  let terrainKey = 'flat', windKey = 'moderate';
   const TERRAIN = { 'flat':1.0, 'rolling':1.2, 'hilly':1.5, 'mountainous':2.0 };
   const WIND = { 'sheltered':1.0, 'moderate':1.2, 'exposed':1.5 };
+  const VEGETATION = [];          // {type, height, density, side, x, y}  — canvas-local coords for drag
+  const WALLS = [];               // {side, dx, dz, height, length} placed by click on canvas
 
-  /* ---- scores ---- */
+  /* ---- scoring ---- */
   const winterScore = f => {
     const o = OPEN[f];
     let base = f === 'S' ? 0.6 : 0.1;
@@ -3290,163 +3296,290 @@ function buildVentilation(host) {
       const align = (o1.openH + o1.openV > 0 && o2.openH + o2.openV > 0) ? 0.8 : 0.2;
       const v1 = VEGETATION.filter(v => v.side === f1).length / 10;
       const v2 = VEGETATION.filter(v => v.side === f2).length / 10;
-      const w1 = DETACHED_WALLS[f1].length / 4;
-      const w2 = DETACHED_WALLS[f2].length / 4;
+      const w1 = WALLS.filter(w => w.side === f1).length / 4;
+      const w2 = WALLS.filter(w => w.side === f2).length / 4;
       total += clamp(align * (1 - v1 - v2 - w1 - w2) * 100, 0, 100);
     });
     return Math.round(total / 2);
   };
 
+  /* ---- isometric projection (same as Site tab) ---- */
+  const ISO_C = Math.cos(30 * RAD), ISO_S = Math.sin(30 * RAD);
+  const projF = (FR, x, y, z) => [FR.cx + (x - y) * ISO_C * FR.s, FR.cy - (x + y) * ISO_S * FR.s - (z || 0) * FR.s];
+
+  /* ---- compute the isometric frame that fits the whole scene ---- */
+  const frame = (W, H) => {
+    const cx = W / 2;
+    const footprint = Math.max(G.L, G.D);
+    const H0 = G.fl * G.fh;
+    const roofTh = (RF.n === 0 ? 0 : RF.th) * RAD;
+    const roofSpan = RF.n === 2 ? G.D / 2 : G.D;
+    const ridge = H0 + roofSpan * Math.tan(roofTh);
+    const vegH = VEGETATION.length ? Math.max(...VEGETATION.map(v => v.height)) : 0;
+    const wallH = WALLS.length ? Math.max(...WALLS.map(w => w.height)) : 0;
+    const maxH = Math.max(ridge, H0, vegH, wallH) + 2;
+    const margin = 3;
+    const half = footprint + margin;
+    const top = 14, bottom = H - 34;
+    const availV = Math.max(40, bottom - top);
+    const sByW = (W / 2 - 16) / (half * ISO_C * Math.SQRT2);
+    const sByH = availV / (half * ISO_S * Math.SQRT2 * 2 + maxH);
+    const s = Math.max(3, Math.min(sByW, sByH));
+    const cy = bottom - half * ISO_S * Math.SQRT2 * s;
+    return { cx, cy, s, H0, ridge, roofSpan, roofTh };
+  };
+
   /* ---- terrain & wind controls ---- */
   host.appendChild(section('Site exposure',
-    'Terrain and wind modify both winter protection and summer ventilation effectiveness.'));
+    'Terrain and wind modify both winter protection and summer ventilation.'));
   const cTerrain = segCtl('Terrain', [{ value:'flat', label:'Flat' }, { value:'rolling', label:'Rolling' }, { value:'hilly', label:'Hilly' }, { value:'mountainous', label:'Mountainous' }], 'flat',
-    v => { terrainKey = v; refreshVentilation(); });
+    v => { terrainKey = v; refresh(); });
   const cWind = segCtl('Wind exposure', [{ value:'sheltered', label:'Sheltered' }, { value:'moderate', label:'Moderate' }, { value:'exposed', label:'Exposed' }], 'moderate',
-    v => { windKey = v; refreshVentilation(); });
+    v => { windKey = v; refresh(); });
   host.appendChild(hint('vent-terrain',
     'Terrain multiplies the sky factor: flat=1.0, rolling=1.2, hilly=1.5, mountainous=2.0 (Olgyay, pp.37–40).'));
   host.appendChild(hint('vent-wind',
     'Wind exposure multiplies ventilation effectiveness: sheltered=1.0, moderate=1.2, exposed=1.5 (DeKay & Brown, Strategy 85, p.210).'));
 
-  /* ---- vegetation manager ---- */
-  host.appendChild(section('Vegetation (up to 10 species)',
-    'Trees and bushes on each facade modulate winter wind and summer solar gain. Drag to reorder, ✕ to remove.'));
-  const vegCtrl = host.appendChild(el('div', { class:'controls' }));
-  const vegAddBtn = el('button', { class:'btn', text:'Add species', title:'Add a vegetation species' });
-  vegCtrl.appendChild(vegAddBtn);
-  vegAddBtn.onclick = () => {
-    const type = prompt('Species type (e.g. pine, oak, olive, cypress):');
-    if (!type) return;
-    const height = parseFloat(prompt('Height in metres (e.g. 8):'));
-    if (isNaN(height) || height <= 0) return;
-    const density = parseFloat(prompt('Density 0–1 (e.g. 0.6):'));
-    if (isNaN(density) || density < 0 || density > 1) return;
-    const side = prompt('Facade side (S/N/E/W):');
-    if (!/^[SNEW]$/.test(side)) return;
-    if (VEGETATION.length >= 10) { toast('Maximum 10 species reached'); return; }
-    VEGETATION.push({ type, height, density, side });
-    refreshVentilation();
-  };
-  const vegList = host.appendChild(el('ul', { class:'tbl-scroll' }));
-
-  /* ---- detached walls ---- */
-  host.appendChild(section('Detached walls',
-    'Solid barriers between the house and the outside, placed per facade. Each adds a column to the list — distance and height matter.'));
-  const wallCtrl = host.appendChild(el('div', { class:'controls' }));
-  const wallAddBtn = el('button', { class:'btn', text:'Add wall', title:'Add a detached wall' });
-  wallCtrl.appendChild(wallAddBtn);
-  wallAddBtn.onclick = () => {
-    const side = prompt('Facade side (S/N/E/W):');
-    if (!/^[SNEW]$/.test(side)) return;
-    const height = parseFloat(prompt('Wall height in metres:'));
-    if (isNaN(height) || height <= 0) return;
-    const length = parseFloat(prompt('Wall length in metres:'));
-    if (isNaN(length) || length <= 0) return;
-    DETACHED_WALLS[side].push({ height, length });
-    refreshVentilation();
-  };
-  const wallList = host.appendChild(el('ul', { class:'tbl-scroll' }));
-
-  /* ---- facade opening sliders ---- */
-  host.appendChild(section('Facade openings',
-    'Openable area per facade (as % of wall height). Opposite facades with openings enable cross-ventilation.'));
-  const openingCtrls = host.appendChild(el('div', { class:'controls' }));
-  const sliders = {};
-  FACES.forEach(f => {
-    const c = el('div', { class:'ctl' }, [
-      el('label', { text:FACE_NAME[f] }),
-      el('input', { type:'range', min:0, max:50, step:1, value:OPEN[f].openH, 'aria-label':t('Openable height % on facade %1'.replace('%1', FACE_NAME[f])) }),
-      el('span', { text:t('%% open height') })
-    ]);
-    openingCtrls.appendChild(c);
-    sliders[f] = c.querySelector('input');
-    c.querySelector('input').addEventListener('input', () => {
-      OPEN[f].openH = +c.querySelector('input').value;
-      refreshVentilation();
-    });
+  /* ---- vegetation palette ---- */
+  host.appendChild(section('Plant palette (up to 10 species)',
+    'Click a species below, then click the 3D model to place it. Drag placed items to reposition.'));
+  const speciesTypes = ['pine','oak','eucalyptus','cypress','poplar','olive','cork','carob','mastic','kermes'];
+  const vegPalette = host.appendChild(el('div', { class:'controls', style:'flex-wrap:wrap;gap:4px' }));
+  const vegBtns = [];
+  speciesTypes.forEach(sp => {
+    const b = el('button', { class:'btn small', text:sp, title:sp, 'data-species':sp });
+    b.onclick = () => {
+      if (VEGETATION.length >= 10) { toast('Maximum 10 species reached'); return; }
+      const h = sp === 'pine' || sp === 'cypress' ? 12 : sp === 'oak' || sp === 'eucalyptus' ? 18 : sp === 'olive' || sp === 'cork' ? 8 : 6;
+      const d = sp === 'pine' || sp === 'cypress' ? 0.7 : sp === 'oak' ? 0.5 : 0.6;
+      VEGETATION.push({ type:sp, height:h, density:d, side:'S', x:0, y:0 });
+      refresh();
+    };
+    vegPalette.appendChild(b);
+    vegBtns.push(b);
   });
+  const vegCount = el('span', { text:'0/10' });
+  vegPalette.appendChild(vegCount);
 
-  /* ---- score readout ---- */
-  const scoreBlock = host.appendChild(el('div', { class:'limitrow' }));
+  /* ---- wall palette ---- */
+  host.appendChild(section('Detached walls',
+    'Click a facade button, then click the model ground to place a wall. Each wall acts as a wind/thermal barrier.'));
+  const wallPalette = host.appendChild(el('div', { class:'controls' }));
+  FACES.forEach(f => {
+    const b = el('button', { class:'btn small', text:FACE_NAME[f], 'data-side':f });
+    b.onclick = () => { activeWallSide = f; toast('Click on the model to place a ' + FACE_NAME[f] + ' wall'); };
+    wallPalette.appendChild(b);
+  });
+  let activeWallSide = 'S';
 
-  /* ---- canvas diagram ---- */
-  const canvasWidth = 700, canvasHeight = 260;
-  const cv = el('canvas', { width:canvasWidth, height:canvasHeight, class:'chart' });
+  /* ---- 3D canvas ---- */
+  const CVW = 700, CVH = 340;
+  const cv = el('canvas', { width:CVW, height:CVH, class:'chart' });
+  cv.style.cursor = 'crosshair';
   const ctx = cv.getContext('2d');
-  const drawDiagram = () => {
-    ctx.clearRect(0, 0, canvasWidth, canvasHeight);
+  let FR = null, plantMode = null, plantSpecies = null;
+
+  const draw = () => {
+    FR = frame(CVW, CVH);
+    const { cx, cy, s, H0, ridge, roofSpan, roofTh } = FR;
+    ctx.clearRect(0, 0, CVW, CVH);
     ctx.fillStyle = '#fafbf9';
-    ctx.fillRect(0, 0, canvasWidth, canvasHeight);
-    const fw = canvasWidth / 4, pad = 30;
-    const labelY = 22;
-    ctx.font = '11px ui-sans-serif';
-    ctx.textAlign = 'center';
-    ctx.fillStyle = '#14171a';
-    ctx.font = 'bold 11px ui-sans-serif';
-    FACES.forEach((f, i) => {
-      const cx = fw * i + fw / 2;
-      ctx.fillText(FACE_NAME[f], cx, labelY);
-      ctx.strokeStyle = '#e3e6e2';
-      ctx.lineWidth = 1;
-      ctx.beginPath(); ctx.moveTo(fw * i + pad, labelY + 5); ctx.lineTo(fw * i + pad, canvasHeight - 10); ctx.stroke();
-      /* Opening bar */
-      const oh = (OPEN[f].openH / 50) * (canvasHeight - 40);
-      ctx.fillStyle = OPEN[f].openH > 0 ? '#2563EB' : '#cbd5e1';
-      ctx.fillRect(fw * i + pad + 10, canvasHeight - 10 - oh, fw - pad - 20, oh);
-      /* Vegetation dots */
-      VEGETATION.filter(v => v.side === f).forEach((v, vi) => {
-        const vy = canvasHeight - 15 - vi * 18;
-        const col = v.type.includes('pine') || v.type.includes('cypress') ? '#22c55e'
-          : v.type.includes('oak') || v.type.includes('olive') ? '#eab308' : '#a855f6';
-        ctx.fillStyle = col;
-        ctx.beginPath(); ctx.arc(fw * i + pad + 15 + vi * 14, vy, 4, 0, 6.28); ctx.fill();
-        ctx.font = '8px ui-sans-serif'; ctx.fillText(v.type.slice(0,4), fw * i + pad + 30, vy + 3);
-      });
-      /* Detached walls */
-      DETACHED_WALLS[f].forEach((w, wi) => {
-        const wy = canvasHeight - 10 - (w.height / 10) * (canvasHeight - 30);
-        ctx.fillStyle = '#f87171';
-        ctx.fillRect(fw * i + pad + 40 + wi * 22, wy, 18, (canvasHeight - 10) - wy);
+    ctx.fillRect(0, 0, CVW, CVH);
+
+    const proj = (x, y, z) => projF(FR, x, y, z);
+    const poly = (pts3, fill, stroke, width, dash) => {
+      const p = pts3.map(q => proj(q[0], q[1], q[2]));
+      ctx.beginPath();
+      p.forEach((q, i) => i ? ctx.lineTo(q[0], q[1]) : ctx.moveTo(q[0], q[1]));
+      ctx.closePath();
+      if (fill) { ctx.fillStyle = fill; ctx.fill(); }
+      if (stroke) { stroke(ctx, stroke, width || 1.4, dash); ctx.stroke(); }
+    };
+
+    /* ---- ground plane ---- */
+    const gm = 1.5;
+    poly([[-G.L/2-gm, -G.D/2-gm, 0], [G.L/2+gm, -G.D/2-gm, 0],
+          [G.L/2+gm, G.D/2+gm, 0], [-G.L/2-gm, G.D/2+gm, 0]],
+         'rgba(20,23,26,.03)', CH.line, 1.2);
+
+    /* ---- building walls ---- */
+    const topZ = y => RF.n === 0 ? H0 : RF.n === 1 ? H0 + (y + G.D/2) * Math.tan(roofTh) : H0 + Math.max(0, G.D/2 - Math.abs(y)) * Math.tan(roofTh);
+    // south wall
+    poly([[-G.L/2, -G.D/2, 0], [G.L/2, -G.D/2, 0], [G.L/2, -G.D/2, H0], [-G.L/2, -G.D/2, H0]],
+         'rgba(20,23,26,.14)', CH.ink, 1.4);
+    // west wall
+    const westBreaks = RF.n === 2 ? [G.D/2, 0, -G.D/2] : [G.D/2, -G.D/2];
+    const westPts = [[-G.L/2, -G.D/2, 0], [-G.L/2, G.D/2, 0]].concat(westBreaks.map(y => [-G.L/2, y, topZ(y)]));
+    poly(westPts, 'rgba(20,23,26,.08)', CH.ink, 1.4);
+
+    /* ---- roof ---- */
+    if (RF.n === 0) {
+      poly([[-G.L/2,-G.D/2,H0], [G.L/2,-G.D/2,H0], [G.L/2,G.D/2,H0], [-G.L/2,G.D/2,H0]], 'rgba(20,23,26,.05)', CH.ink, 2);
+    } else if (RF.n === 1) {
+      poly([[-G.L/2,-G.D/2,H0], [G.L/2,-G.D/2,H0], [G.L/2,G.D/2,ridge], [-G.L/2,G.D/2,ridge]], 'rgba(20,23,26,.05)', CH.ink, 2);
+    } else {
+      poly([[-G.L/2,-G.D/2,H0], [G.L/2,-G.D/2,H0], [G.L/2,0,ridge], [-G.L/2,0,ridge]], 'rgba(20,23,26,.05)', CH.ink, 2);
+      const r0 = proj(-G.L/2, 0, ridge), r1 = proj(G.L/2, 0, ridge);
+      stroke(ctx, CH.ink, 1.6); seg(ctx, r0[0], r0[1], r1[0], r1[1]);
+    }
+
+    /* ---- openings on facades ---- */
+    Object.keys(OPEN).forEach(f => {
+      const o = OPEN[f];
+      if (!o || o.openH <= 0) return;
+      const w = f === 'S' || f === 'N' ? G.L : G.D;
+      const faceOffset = f === 'S' ? -G.D/2 : f === 'N' ? G.D/2 : f === 'E' ? G.L/2 : -G.L/2;
+      const faceNormal = f === 'S' ? -1 : f === 'N' ? 1 : f === 'E' ? 1 : -1;
+      // Draw opening as a dark rectangle on the appropriate facade face
+      const openings = [];
+      const numOpenings = Math.ceil(o.openH / 10);
+      for (let i = 0; i < numOpenings; i++) {
+        const u = -w/2 + w * (i+0.5) / numOpenings;
+        const v = H0 * 0.3;
+        if (f === 'S') openings.push([u, faceOffset, v]);
+        else if (f === 'N') openings.push([u, faceOffset, v]);
+        else if (f === 'E') openings.push([faceOffset, u, v]);
+        else openings.push([faceOffset, u, v]);
+      }
+      openings.forEach(p => {
+        const sp = proj(p[0], p[1], p[2]);
+        ctx.fillStyle = '#2563EB';
+        ctx.fillRect(sp[0]-4, sp[1]-4, 8, 8);
       });
     });
-    /* Scores */
-    ctx.textAlign = 'left';
-    ctx.font = '10px ui-monospace';
-    ctx.fillText('Winter protection — S:' + winterScore('S') + '/100 N:' + winterScore('N') + '/100', 10, canvasHeight - 5);
-    ctx.fillText('Summer cross-ventilation: ' + summerScore() + '/100', 10, canvasHeight + 10);
+
+    /* ---- vegetation (draggable) ---- */
+    VEGETATION.forEach((v, vi) => {
+      const vx = (v.x || 0) - G.L/2;
+      const vz = (v.y || 0) - G.D/2;
+      const vzWorld = v.z !== undefined ? v.z : vz;
+      const vH = v.height;
+      const col = v.type.includes('pine') || v.type.includes('cypress') ? '#22c55e'
+        : v.type.includes('oak') || v.type.includes('olive') ? '#eab308' : '#a855f6';
+      // Draw trunk/canopy as a cylinder in isometric
+      const base = proj(vx, vzWorld, 0);
+      const top = proj(vx, vzWorld, vH);
+      const r = Math.max(1, v.density * 3 * s);
+      // trunk
+      ctx.strokeStyle = '#8B4513'; ctx.lineWidth = 2;
+      seg(ctx, base[0], base[1], top[0], top[1]);
+      // canopy (circle at top)
+      ctx.fillStyle = col;
+      ctx.beginPath(); ctx.arc(top[0], top[1], r, 0, 6.28); ctx.fill();
+      // label
+      ctx.font = '8px ui-sans-serif'; ctx.fillStyle = '#14171a';
+      ctx.fillText(v.type.slice(0,4), top[0]+6, top[1]-3);
+    });
+
+    /* ---- detached walls ---- */
+    WALLS.forEach(w => {
+      const xOff = w.side === 'S' ? -G.L/2 : w.side === 'N' ? G.L/2 : w.side === 'E' ? -G.D/2 : G.D/2;
+      const zOff = w.side === 'S' ? -G.D/2 : w.side === 'N' ? G.D/2 : w.side === 'E' ? -G.L/2 : G.L/2;
+      const wx = xOff + w.dx;
+      const wz = zOff + w.dz;
+      const wH = w.height;
+      const wL = w.length;
+      const p0 = proj(wx, wz, 0);
+      const p1 = proj(wx + (w.side === 'E' || w.side === 'W' ? wL : 0), wz + (w.side === 'S' || w.side === 'N' ? wL : 0), wH);
+      ctx.fillStyle = '#f87171';
+      ctx.fillRect(p0[0], p0[1], p1[0]-p0[0], p1[1]-p0[1]);
+      ctx.strokeStyle = '#dc2626'; ctx.lineWidth = 1; ctx.strokeRect(p0[0], p0[1], p1[0]-p0[0], p1[1]-p0[1]);
+    });
+
+    /* ---- ideal-pitch fan markers (from Roof tab) ---- */
+    if (RF.n > 0) {
+      const span = RF.n === 2 ? G.D/2 : G.D;
+      const eave = proj(-G.L/2, -G.D/2, H0);
+      [{ a:latN+15, tag:'winter' }, { a:Math.max(10,latN-15), tag:'summer' }, { a:latN, tag:'year' }].forEach(gd => {
+        const idealZ = H0 + span * Math.tan(gd.a * RAD);
+        const p1 = proj(-G.L/2, -G.D/2 + span, idealZ);
+        stroke(ctx, '#16A34A', 1.4, [5, 4]); seg(ctx, eave[0], eave[1], p1[0], p1[1]);
+      });
+    }
+
+    /* ---- score readout ---- */
+    const ws = { S:winterScore('S'), N:winterScore('N'), E:winterScore('E'), W:winterScore('W') };
+    const ss = summerScore();
+    ctx.fillStyle = '#14171a'; ctx.font = 'bold 10px ui-monospace'; ctx.textAlign = 'left';
+    ctx.fillText('Winter: S-'+ws.S+' N-'+ws.N+' E-'+ws.E+' W-'+ws.W, 8, 14);
+    ctx.fillStyle = '#16A34A'; ctx.fillText('Summer cross-ventilation: '+ss+'/100', 8, 26);
+    ctx.fillStyle = '#7b838b'; ctx.font = '9px ui-sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('T:'+terrainKey+' W:'+windKey+' | '+VEGETATION.length+'/10 plants | '+WALLS.length+' walls', CVW/2, CVH-6);
   };
-  host.appendChild(cv);
-  drawDiagram();
+
+  /* ---- click-to-place: vegetation or wall ---- */
+  const getWorldPos = (clientX, clientY) => {
+    const r = cv.getBoundingClientRect();
+    const px = clientX - r.left, py = clientY - r.top;
+    // Invert isometric projection: x = ((px-cx)/s + (py-cy)/s) / (2*ISO_C), y = ((cy-py)/s - (px-cx)/s) / (2*ISO_S)
+    const x = ((px - FR.cx) / FR.s + (py - FR.cy) / FR.s) / (2 * ISO_C);
+    const y = ((FR.cy - py) / FR.s - (px - FR.cx) / FR.s) / (2 * ISO_S);
+    return { x, y };
+  };
+  const clickHandler = ev => {
+    const pos = getWorldPos(ev.clientX, ev.clientY);
+    // Clamp to building footprint
+    pos.x = clamp(pos.x, -G.L/2, G.L/2);
+    pos.y = clamp(pos.y, -G.D/2, G.D/2);
+    if (plantMode) {
+      if (VEGETATION.length >= 10) { toast('Maximum 10 species reached'); return; }
+      const sp = plantSpecies;
+      const h = sp === 'pine' || sp === 'cypress' ? 12 : sp === 'oak' || sp === 'eucalyptus' ? 18 : sp === 'olive' || sp === 'cork' ? 8 : 6;
+      const d = sp === 'pine' || sp === 'cypress' ? 0.7 : sp === 'oak' ? 0.5 : 0.6;
+      VEGETATION.push({ type:sp, height:h, density:d, side:'S', x:pos.x, y:pos.y, z:0 });
+      plantMode = null; plantSpecies = null;
+      refresh();
+    } else {
+      WALLS.push({ side:activeWallSide, dx:pos.x, dz:pos.y, height:2.0, length:2.0 });
+      refresh();
+    }
+  };
+
+  /* ---- hover tooltip ---- */
+  const hoverHandler = ev => {
+    const r = cv.getBoundingClientRect();
+    const px = ev.clientX - r.left, py = ev.clientY - r.top;
+    const pos = getWorldPos(ev.clientX, ev.clientY);
+    cv.style.cursor = plantMode ? 'cell' : 'crosshair';
+  };
+
+  /* ---- right panel: controls ---- */
+  const panel = host.appendChild(el('div', { class:'panel' }));
+  const pHead = panel.appendChild(el('div', { class:'panel-head' }, [
+    el('div', { class:'panel-title', html:'<h3>Plant &amp; wall placement</h3><p>Click palette items, then click the model</p>') }),
+    el('div', { class:'panel-tools' })
+  ]));
+  const pBody = panel.appendChild(el('div', { class:'panel-body' }));
 
   /* ---- refresh everything ---- */
-  const refreshVentilation = () => {
-    scoreBlock.innerHTML = '';
-    const ws = { S:winterScore('S'), N:winterScore('N'), E:winterScore('E'), W:winterScore('W') };
-    scoreBlock.appendChild(el('span', { text:'Winter: S-'+ws.S+' N-'+ws.N+' E-'+ws.E+' W-'+ws.W+' ' }));
-    scoreBlock.appendChild(el('span', { class:'pill ok', text:'Summer: '+summerScore()+'/100' }));
-    /* Vegetation list */
-    vegList.innerHTML = '';
-    VEGETATION.forEach((v, i) => {
-      const li = host.appendChild(el('li', { style:'display:flex;align-items:center;gap:6px;font-size:12px;padding:2px 0' }, [
-        el('span', { text:v.type + ' ' + v.height + 'm d=' + v.density + ' ' + FACE_NAME[v.side] }),
-        el('button', { class:'icobtn', style:'padding:1px 5px;font-size:10px', title:t('Remove'), text:'✕', onclick:() => { VEGETATION.splice(i, 1); refreshVentilation(); } })
-      ]));
-    });
-    /* Wall list */
-    wallList.innerHTML = '';
-    FACES.forEach(f => {
-      DETACHED_WALLS[f].forEach((w, i) => {
-        const li = host.appendChild(el('li', { style:'display:flex;align-items:center;gap:6px;font-size:12px;padding:2px 0' }, [
-          el('span', { text:FACE_NAME[f]+': h='+w.height+'m l='+w.length+'m' }),
-          el('button', { class:'icobtn', style:'padding:1px 5px;font-size:10px', title:t('Remove'), text:'✕', onclick:() => { DETACHED_WALLS[f].splice(i, 1); refreshVentilation(); } })
-        ]));
-      });
-    });
-    drawDiagram();
+  const refresh = () => {
+    vegCount.textContent = VEGETATION.length + '/10';
+    draw();
   };
-  refreshVentilation();
-  window.addEventListener('resize', drawDiagram);
+  cv.addEventListener('click', clickHandler);
+  cv.addEventListener('mousemove', hoverHandler);
+  refresh();
+
+  /* ---- CSV export ---- */
+  const slug = s => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 60);
+  const sitePrefix = () => {
+    const p = STATE.site.place || STATE.site.nuts;
+    return p ? p.toLowerCase().replace(/\s+/g, '-') : 'site';
+  };
+  pBody.appendChild(el('button', { class:'btn', onclick:() => {
+    const rows = [['Parameter','Value']];
+    rows.push(['Terrain', terrainKey], ['Wind exposure', windKey]);
+    rows.push(['Winter protection S', winterScore('S')+'/100']);
+    rows.push(['Summer cross-ventilation', summerScore()+'/100']);
+    rows.push(['Vegetation species', VEGETATION.length]);
+    rows.push(['Detached walls', WALLS.length]);
+    VEGETATION.forEach(v => rows.push(['Plant', v.type+' h='+v.height+'m d='+v.density+' '+FACE_NAME[v.side]]));
+    WALLS.forEach(w => rows.push(['Wall', FACE_NAME[w.side]+' h='+w.height+'m l='+w.length]));
+    download(new Blob([csvRows(rows)], { type:'text/csv;charset=utf-8' }), slug(sitePrefix()+'-ventilation')+'.csv');
+    toast('CSV exported');
+  }, text:'Export CSV' }));
 }
 /* --------------------------------------------------------------- 8. BOOT -- */
 const TABS = [
