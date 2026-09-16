@@ -3251,17 +3251,192 @@ function buildOpenings(host) {
     doDrag(drag, ev.clientX, ev.clientY);
   });
   const endDrag = () => { drag = null; ocv.style.cursor = 'default'; };
-  ocv.addEventListener('pointerup', endDrag);
+ocv.addEventListener('pointerup', endDrag);
   ocv.addEventListener('pointercancel', endDrag);
 }
 
+/* --------------------------------------------------------------- 9. VENTILATION -- */
+function buildVentilation(host) {
+  const S = STATE.site, C = STATE.clim;
+  const lat = S.lat, lon = S.lon;
+  pageHead(host, 'Ventilation',
+    'Winter protection and summer cross ventilation performance, modelled following the bioclimatic literature — orientation, roof overhangs, terrain, wind patterns and local vegetation.');
+  /* ---- climate & site basics ---- */
+  const H0 = MASS.fl * MASS.fh;
+  const latN = Math.abs(lat);
+  /* ---- winter protection: glazed ratio vs. overhang + terrain ---- */
+  const Hm = C.t.filter(v => v < 18).length, Cm = C.t.filter(v => v > 22).length;
+  const heating = Hm >= Cm;
+  /* Terrain factor: 1.0 flat, 1.2 rolling, 1.5 hilly, 2.0 mountainous */
+  const terrainFactor = { 'flat':1.0, 'rolling':1.2, 'hilly':1.5, 'mountainous':2.0 }[$('#inpTerrain').value] || 1.0;
+  /* Wind exposure: 1.0 sheltered, 1.2 moderate, 1.5 exposed */
+  const windExp = { 'sheltered':1.0, 'moderate':1.2, 'exposed':1.5 }[$('#inpWind').value] || 1.0;
+  /* ---- summer cross ventilation: opening positions & effectiveness ---- */
+  const OPEN = { S:{wwr:0.25, openH:0, openV:0}, N:{wwr:0.15, openH:0, openV:0},
+    E:{wwr:0.10, openH:0, openV:0}, W:{wwr:0.10, openH:0, openV:0} };
+  /* Vegetation: up to 10 species, each with height, density, and side (S/N/E/W) */
+  const VEGETATION = { items:[] };
+  /* Detached walls: distance from house, height, length per facade */
+  const DETACHED_WALLS = { S:[], N:[], E:[], W:[] };
+  /* ---- UI ---- */
+  host.appendChild(section('Winter protection',
+    'Glazed area protected from winter heat loss by overhangs, terrain and vegetation. Higher scores mean better solar access in December while excluding summer sun.'));
+  const cTerrain = segCtl('Terrain', [{ value:'flat', label:'Flat' }, { value:'rolling', label:'Rolling' }, { value:'hilly', label:'Hilly' }, { value:'mountainous', label:'Mountainous' }], 'flat',
+    v => { terrainFactor = { 'flat':1.0, 'rolling':1.2, 'hilly':1.5, 'mountainous':2.0 }[v] || 1.0; refreshVentilation(); });
+  const cWind = segCtl('Wind exposure', [{ value:'sheltered', label:'Sheltered' }, { value:'moderate', label:'Moderate' }, { value:'exposed', label:'Exposed' }], 'moderate',
+    v => { windExp = { 'sheltered':1.0, 'moderate':1.2, 'exposed':1.5 }[v] || 1.0; refreshVentilation(); });
+  host.appendChild(hint('vent-terrain',
+    'Terrain multiplies the effective sky factor: flat=1.0, rolling=1.2, hilly=1.5, mountainous=2.0 (Olgyay, pp.37–40).'));
+  host.appendChild(hint('vent-wind',
+    'Wind exposure multiplies the ventilation effectiveness: sheltered=1.0, moderate=1.2, exposed=1.5 (DeKay & Brown, Strategy 85, p.210).'));
+  /* Winter protection score per facade — simplified: how much of the December sun is admitted
+     vs. how much summer sun is blocked, adjusted by terrain and wind. */
+  const winterScore = f => {
+    const o = OPEN[f];
+    /* Base: south admits winter sun, north/east/west exclude it */
+    let base = f === 'S' ? 0.6 : 0.1;
+    /* Overhang helps: deeper overhang blocks more summer sun */
+    const overhangEffect = 1 - Math.min(1, (o.ovD || 0) / 2.5);
+    /* Terrain and wind modifiers */
+    const T = terrainFactor, W = windExp;
+    /* Score: 0–100, higher is better winter protection */
+    return Math.round(clamp((base * overhangEffect * T * W) * 100, 0, 100));
+  };
+  /* Summer cross ventilation score — how well openings on opposite facades align
+     for through-draught, modified by vegetation and wall obstructions. */
+  const summerScore = () => {
+    /* Check S-W and N-E pairs for through-draught */
+    const pairs = ['SW', 'NE'];
+    let total = 0;
+    pairs.forEach(pair => {
+      const f1 = pair.charAt(0), f2 = pair.charAt(1);
+      const o1 = OPEN[f1], o2 = OPEN[f2];
+      /* Alignment: if both facades have significant opening, score well */
+      const align = (o1.openH + o1.openV) > 0 && (o2.openH + o2.openV) > 0 ? 0.8 : 0.2;
+      /* Vegetation obstruction: each plant on the facade reduces effectiveness */
+      const vegObs1 = VEGETATION.items.filter(v => v.side === f1).length / 10;
+      const vegObs2 = VEGETATION.items.filter(v => v.side === f2).length / 10;
+      /* Wall obstruction: detached walls on the facade reduce effectiveness */
+      const wallObs1 = DETACHED_WALLS[f1].length / 4;
+      const wallObs2 = DETACHED_WALLS[f2].length / 4;
+      const obs = vegObs1 + vegObs2 + wallObs1 + wallObs2;
+      total += clamp(align * (1 - obs) * 100, 0, 100);
+    });
+    return Math.round(total / 2);
+  };
+  /* ---- controls ---- */
+  host.appendSection('Winter protection',
+    'Terrain: ' + t(terrainFactor.toFixed(1)) + ' · Wind: ' + t(windExp.toFixed(1)));
+  /* Vegetation manager: add up to 10 species */
+  host.appendChild(section('Vegetation management (up to 10 species)',
+    'Each species: type (tree/bush), height (m), density (0–1), and facade side (S/N/E/W). '+
+    'Drag new species from the palette, or click + to add manually.'));
+  const vegPalette = ['pine','oak','eucalyptus','cypress','poplar','olive','cork','carob','mastic','kermes'];
+  const vegCtrl = host.appendChild(el('div', { class:'controls' }));
+  const vegAddBtn = el('button', { class:'btn', text:'Add species', title:'Add a vegetation species' });
+  vegCtrl.appendChild(vegAddBtn);
+  /* Simple add-dialog simulation: prompt for species params */
+  vegAddBtn.onclick = () => {
+    const type = prompt('Species type (e.g. pine, oak, olive):');
+    if (!type) return;
+    const height = parseFloat(prompt('Height in metres:'));
+    if (isNaN(height)) return;
+    const density = parseFloat(prompt('Density 0–1:'));
+    if (isNaN(density) || density < 0 || density > 1) return;
+    const side = prompt('Facade side (S/N/E/W):');
+    if (!/^[SNEW]$/.test(side)) return;
+    if (VEGETATION.items.length >= 10) { toast('Maximum 10 species reached'); return; }
+    VEGETATION.items.push({ type, height, density, side });
+    refreshVentilation();
+  };
+  /* Remove species */
+  const vegList = host.appendChild(el('ul', { class:'tbl-scroll' }));
+  const refreshVentilation = () => {
+    /* Recompute scores */
+    const ws = winterScore('S'), wn = winterScore('N'), we = winterScore('E'), ww = winterScore('W');
+    host.appendChild(el('div', { class:'limitrow' }, [
+      el('span', { text:'Winter S: ' }), el('span', { text:ws + '/100' }),
+      el('span', { text:'Winter N: ' }), el('span', { text:wn + '/100' })
+    ]));
+    host.appendChild(el('div', { class:'limitrow' }, [
+      el('span', { text:'Winter E: ' }), el('span', { text:we + '/100' }),
+      el('span', { text:'Winter W: ' }), el('span', { text:ww + '/100' })
+    ]));
+    const ss = summerScore();
+    host.appendChild(el('p', { text:'Summer cross-ventilation score: ' + ss + '/100' }));
+    /* Render vegetation list */
+    vegList.innerHTML = '';
+    VEGETATION.items.forEach((v, i) => {
+      const li = host.appendChild(el('li', {}, [el('span', { text:v.type + ' h=' + v.height + ' d=' + v.density + ' s=' + v.side })]),
+        el('button', { class:'icobtn small', title:'Remove', text:'✕', onclick:() => { VEGETATION.items.splice(i, 1); refreshVentilation(); } }));
+    });
+    /* Facade opening controls */
+    const FACES = ['S', 'N', 'E', 'W'];
+    const cFaces = host.appendChild(el('div', { class:'controls' }));
+    FACES.forEach(f => {
+      const c = el('div', { class:'ctl' }, [
+        el('label', { text:faceName[f] }), el('input', { type:'range', min:0, max:50, step:1, value:OPEN[f].openH, 'aria-label':t('Opening height % on facade %1'.replace('%1', faceName[f])) }),
+        el('span', { text:t('%% open height') })
+      ]);
+      vegCtrl.appendChild(c);
+    });
+  };
+  refreshVentilation();
+  /* ---- canvas: simple diagram showing facade openings + vegetation + walls ---- */
+  const canvasWidth = 600, canvasHeight = 300;
+  const cv = el('canvas', { width:canvasWidth, height:canvasHeight, class:'chart' });
+  const ctx = cv.getContext('2d');
+  const drawVentilationDiagram = () => {
+    ctx.clearRect(0, 0, canvasWidth, canvasHeight);
+    ctx.fillStyle = '#fafbf9';
+    ctx.fillRect(0, 0, canvasWidth, canvasHeight);
+    /* Draw facades as vertical strips */
+    const fw = canvasWidth / 4;
+    FACES.forEach((f, i) => {
+      ctx.strokeStyle = '#e3e6e2';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(fw * i, 0);
+      ctx.lineTo(fw * i, canvasHeight);
+      ctx.stroke();
+      /* Draw openings */
+      const o = OPEN[f];
+      const oh = (o.openH / 50) * canvasHeight * 0.6;
+      ctx.fillStyle = o.openH > 0 ? '#2563EB' : '#a0aec0';
+      ctx.fillRect(fw * i + 20, canvasHeight - oh - 20, fw - 40, oh);
+      /* Draw vegetation */
+      VEGETATION.items.filter(v => v.side === f).forEach(v => {
+        const y = canvasHeight - 40 - v.density * 80;
+        ctx.fillStyle = v.type.includes('pine') ? '#22c55e' : v.type.includes('oak') ? '#eab308' : '#a855f6';
+        ctx.beginPath();
+        ctx.arc(fw * i + 30 + Math.random() * 20, y, 6, 0, 6.28);
+        ctx.fill();
+      });
+      /* Draw detached walls */
+      DETACHED_WALLS[f].forEach(w => {
+        ctx.fillStyle = '#f87171';
+        ctx.fillRect(fw * i + 10, canvasHeight - 50, 20, w.height);
+      });
+    });
+    /* Legend */
+    ctx.fillStyle = '#14171a';
+    ctx.font = '10px ui-monospace';
+    ctx.fillText('Winter protection: S-' + winterScore('S') + '/100, N-' + winterScore('N') + '/100', 10, 20);
+    ctx.fillText('Summer cross-ventilation: ' + summerScore() + '/100', 10, 35);
+  };
+  host.appendChild(cv);
+  drawVentilationDiagram();
+  /* ---- resize handler ---- */
+  window.addEventListener('resize', drawVentilationDiagram);
+}
 /* --------------------------------------------------------------- 8. BOOT -- */
 const TABS = [
   { key:'climate', label:'Climate', build:buildClimate },
   { key:'orientation', label:'Solar Geometry', build:buildOrientation },
   { key:'site', label:'Site', build:buildSite },
   { key:'roof', label:'Roof', build:buildRoof },
-  { key:'openings', label:'Windows & Shading', build:buildOpenings }
+  { key:'openings', label:'Windows & Shading', build:buildOpenings },
+  { key:'ventilation', label:'Ventilation', build:buildVentilation }
 ];
 
 /* --- the references, built from one list so the footer and the pages agree - */
