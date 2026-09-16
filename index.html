@@ -605,7 +605,7 @@ footer{border-top:1px solid var(--line); margin-top:26px; background:var(--wash)
 /* ------------------------------------------------------------ 0. IDENTITY -- */
 const APP = {
   name:        'Architecture Advisor',
-  version:     '1.15.1',
+  version:     '1.15.2',
   author:      'Nuno Dinis Cortiços',
   institution: 'Lisbon School of Architecture, Universidade de Lisboa',
   builtWith:   'Claude Opus 5 (Anthropic)',
@@ -3265,12 +3265,31 @@ function buildVentilation(host) {
   const G = MASS, RF = ROOF;
   if (!G) { host.appendChild(el('p', { text:t('Define the site first — go to the Site tab.') })); return; }
   /* OPEN is global, set by the Openings tab; initialise if null */
-  if (!OPEN) OPEN = { S:{wwr:0.25, openH:0, openV:0}, N:{wwr:0.15, openH:0, openV:0}, E:{wwr:0.10, openH:0, openV:0}, W:{wwr:0.10, openH:0, openV:0} };
+  if (!OPEN) OPEN = {
+    S:{wwr:0.25, sillZ:0.9, headZ:2.1, ovD:0, ovN:1, finD:0, finN:0, finSide:'both'},
+    N:{wwr:0.15, sillZ:0.9, headZ:2.1, ovD:0, ovN:1, finD:0, finN:0, finSide:'both'},
+    E:{wwr:0.10, sillZ:0.9, headZ:2.1, ovD:0, ovN:1, finD:0, finN:0, finSide:'both'},
+    W:{wwr:0.10, sillZ:0.9, headZ:2.1, ovD:0, ovN:1, finD:0, finN:0, finSide:'both'}
+  };
 
   const FACE_NAME = { S:'South', N:'North', E:'East', W:'West' };
   const FACES = ['S', 'N', 'E', 'W'];
   const H0 = G.fl * G.fh;
   const latN = Math.abs(lat);
+
+  /** Window size for a facade, mirroring windowRect() in buildOpenings —
+      Ventilation doesn't share that closure, so it recomputes the same
+      geometry from OPEN[f].wwr/sillZ/headZ rather than the openH/openV
+      fields that were never actually set anywhere in this app. */
+  const faceWidthV = f => (f === 'S' || f === 'N') ? G.L : G.D;
+  const winSize = f => {
+    const o = OPEN[f];
+    const width = faceWidthV(f);
+    const h = Math.max(0.3, (o.headZ != null ? o.headZ : 2.1) - (o.sillZ != null ? o.sillZ : 0.9));
+    const area = (o.wwr || 0) * width * H0;
+    const w = Math.min(width * 0.92, area / h);
+    return { w, h, sillZ: o.sillZ != null ? o.sillZ : 0.9 };
+  };
 
   /* ---- terrain & wind ---- */
   const TERRAIN_KEY = { 'flat':'flat', 'rolling':'rolling', 'hilly':'hilly', 'mountainous':'mountainous' };
@@ -3292,8 +3311,13 @@ function buildVentilation(host) {
     const pairs = [['S','W'], ['N','E']];
     let total = 0;
     pairs.forEach(([f1, f2]) => {
-      const o1 = OPEN[f1], o2 = OPEN[f2];
-      const align = (o1.openH + o1.openV > 0 && o2.openH + o2.openV > 0) ? 0.8 : 0.2;
+      const s1 = winSize(f1), s2 = winSize(f2);
+      /* Cross-ventilation needs openings on both facing walls; align scales
+         with the smaller of the two window areas, capped once either window
+         reaches a modest 2.5 m² — a small opening on one side stalls the
+         through-draught no matter how large the other one is. */
+      const size1 = clamp((s1.w * s1.h) / 2.5, 0, 1), size2 = clamp((s2.w * s2.h) / 2.5, 0, 1);
+      const align = 0.2 + 0.6 * Math.min(size1, size2);
       const v1 = VEGETATION.filter(v => v.side === f1).length / 10;
       const v2 = VEGETATION.filter(v => v.side === f2).length / 10;
       const w1 = WALLS.filter(w => w.side === f1).length / 4;
@@ -3388,13 +3412,13 @@ function buildVentilation(host) {
     ctx.fillRect(0, 0, CVW, CVH);
 
     const proj = (x, y, z) => projF(FR, x, y, z);
-    const poly = (pts3, fill, stroke, width, dash) => {
+    const poly = (pts3, fill, strokeColor, width, dash) => {
       const p = pts3.map(q => proj(q[0], q[1], q[2]));
       ctx.beginPath();
       p.forEach((q, i) => i ? ctx.lineTo(q[0], q[1]) : ctx.moveTo(q[0], q[1]));
       ctx.closePath();
       if (fill) { ctx.fillStyle = fill; ctx.fill(); }
-      if (stroke) { stroke(ctx, stroke, width || 1.4, dash); ctx.stroke(); }
+      if (strokeColor) { stroke(ctx, strokeColor, width || 1.4, dash); ctx.stroke(); }
     };
 
     /* ---- ground plane ---- */
@@ -3427,26 +3451,23 @@ function buildVentilation(host) {
     /* ---- openings on facades ---- */
     Object.keys(OPEN).forEach(f => {
       const o = OPEN[f];
-      if (!o || o.openH <= 0) return;
-      const w = f === 'S' || f === 'N' ? G.L : G.D;
+      if (!o || !(o.wwr > 0)) return;
+      const win = winSize(f);
+      if (win.w <= 0 || win.h <= 0) return;
+      const span = f === 'S' || f === 'N' ? G.L : G.D;
       const faceOffset = f === 'S' ? -G.D/2 : f === 'N' ? G.D/2 : f === 'E' ? G.L/2 : -G.L/2;
-      const faceNormal = f === 'S' ? -1 : f === 'N' ? 1 : f === 'E' ? 1 : -1;
-      // Draw opening as a dark rectangle on the appropriate facade face
-      const openings = [];
-      const numOpenings = Math.ceil(o.openH / 10);
+      // Draw the window as a row of markers on the appropriate facade face,
+      // spaced roughly one per metre of its own width, at the real sill/head
+      // mid-height — so a wide or tall window reads as more than a single dot
+      const numOpenings = Math.max(1, Math.round(win.w));
+      const v = win.sillZ + win.h / 2;
       for (let i = 0; i < numOpenings; i++) {
-        const u = -w/2 + w * (i+0.5) / numOpenings;
-        const v = H0 * 0.3;
-        if (f === 'S') openings.push([u, faceOffset, v]);
-        else if (f === 'N') openings.push([u, faceOffset, v]);
-        else if (f === 'E') openings.push([faceOffset, u, v]);
-        else openings.push([faceOffset, u, v]);
-      }
-      openings.forEach(p => {
+        const u = -span/2 + span * (i+0.5) / numOpenings;
+        const p = (f === 'S' || f === 'N') ? [u, faceOffset, v] : [faceOffset, u, v];
         const sp = proj(p[0], p[1], p[2]);
         ctx.fillStyle = '#2563EB';
         ctx.fillRect(sp[0]-4, sp[1]-4, 8, 8);
-      });
+      }
     });
 
     /* ---- vegetation (draggable) ---- */
