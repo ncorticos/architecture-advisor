@@ -605,7 +605,7 @@ footer{border-top:1px solid var(--line); margin-top:26px; background:var(--wash)
 /* ------------------------------------------------------------ 0. IDENTITY -- */
 const APP = {
   name:        'Architecture Advisor',
-  version:     '1.16.0',
+  version:     '1.16.2',
   author:      'Nuno Dinis Cortiços',
   institution: 'Lisbon School of Architecture, Universidade de Lisboa',
   builtWith:   'Claude Opus 5 (Anthropic)',
@@ -3444,8 +3444,72 @@ function buildVentilation(host) {
     v => { windKey = v; refresh(); });
   const cRef = rangeCtl('Reference wind at 10 m', 1, 8, 0.5, refWind, v => { refWind = v; refresh(); }, v => fmt(v, 1) + ' m/s');
   host.appendChild(controls([cTerrain, cWind, cRef]));
+  const TERRAIN_NAME = { flat:'Flat', rolling:'Rolling', hilly:'Hilly', mountainous:'Mountainous' };
+  const deriveBtn = el('button', { class:'btn', text:'Derive terrain + wind from coordinates' });
+  const deriveStatus = el('span', { class:'fieldstatus', text:'' });
+  host.appendChild(controls([deriveBtn, deriveStatus]));
+  let derivedRelief = null, derivedWindSrc = '';
+  /** Terrain class from the relief around the site (same two public elevation
+      services as the altitude lookup, one batched request each over a ~2 km
+      window), reference wind from the ERA5 annual mean at 10 m above the
+      site (Open-Meteo archive). Exposure stays manual: it reads the
+      immediate surroundings — street, courtyard, open field — which no
+      gridded product sees. Relief bands are this app's own teaching
+      heuristic, not a geomorphological standard. */
+  async function deriveFromSite() {
+    deriveBtn.disabled = true;
+    deriveStatus.textContent = t('Sampling relief and wind…');
+    try {
+      const dLat = 0.009, dLon = 0.009 / Math.max(0.2, Math.cos(lat * RAD));
+      const pts = [[0, 0]];
+      for (let i = 0; i < 8; i++) pts.push([Math.sin(i * Math.PI / 4) * dLat, Math.cos(i * Math.PI / 4) * dLon]);
+      const lats = pts.map(p => (lat + p[0]).toFixed(4)).join(',');
+      const lons = pts.map(p => (lon + p[1]).toFixed(4)).join(',');
+      const meteo = fetch('https://api.open-meteo.com/v1/elevation?latitude=' + lats + '&longitude=' + lons)
+        .then(r => r.json()).then(d => d.elevation);
+      const locs = encodeURIComponent(pts.map(p => (lat + p[0]).toFixed(4) + ',' + (lon + p[1]).toFixed(4)).join('|'));
+      const elev = fetch('https://api.open-elevation.com/api/v1/lookup?locations=' + locs)
+        .then(r => r.json()).then(d => d.results.map(o => o.elevation));
+      const [a, b] = await Promise.allSettled([meteo, elev]);
+      const grids = [];
+      [a, b].forEach(r => {
+        if (r.status === 'fulfilled' && Array.isArray(r.value)) {
+          const v = r.value.filter(v => typeof v === 'number' && isFinite(v));
+          if (v.length >= 5) grids.push(v);
+        }
+      });
+      if (!grids.length) throw new Error('elevation');
+      const relief = Math.max(...grids.map(g => Math.max(...g) - Math.min(...g)));
+      derivedRelief = relief;
+      terrainKey = relief < 25 ? 'flat' : relief < 100 ? 'rolling' : relief < 300 ? 'hilly' : 'mountainous';
+      const tBtns = cTerrain.querySelectorAll('button');
+      ['flat', 'rolling', 'hilly', 'mountainous'].forEach((k, i) => {
+        if (tBtns[i]) tBtns[i].setAttribute('aria-pressed', String(k === terrainKey));
+      });
+      const yr = new Date().getFullYear() - 1;
+      const wj = await (await fetch('https://archive-api.open-meteo.com/v1/archive?latitude=' + lat.toFixed(3) +
+        '&longitude=' + lon.toFixed(3) + '&start_date=' + yr + '-01-01&end_date=' + yr + '-12-31' +
+        '&hourly=wind_speed_10m&wind_speed_unit=ms')).json();
+      const wh = (wj.hourly && Array.isArray(wj.hourly.wind_speed_10m) ? wj.hourly.wind_speed_10m : [])
+        .filter(v => typeof v === 'number' && isFinite(v));
+      if (!wh.length) throw new Error('wind');
+      const mean = wh.reduce((s, v) => s + v, 0) / wh.length;
+      refWind = clamp(Math.round(mean * 2) / 2, 1, 8);
+      cRef.range.value = refWind;
+      cRef.out.textContent = fmt(refWind, 1) + ' m/s';
+      derivedWindSrc = 'ERA5 ' + yr;
+      deriveStatus.textContent = t('Relief') + ' ' + fmt(relief, 0) + ' m/2 km → ' + t(TERRAIN_NAME[terrainKey]) +
+        ' · ' + t('mean wind') + ' ' + fmt(mean, 1) + ' m/s (' + derivedWindSrc + ') → ' + fmt(refWind, 1) +
+        ' m/s · ' + t('exposure stays yours to judge');
+      refresh();
+    } catch (err) {
+      deriveStatus.textContent = t('Derivation failed — keep the manual values');
+    }
+    deriveBtn.disabled = false;
+  }
+  deriveBtn.addEventListener('click', deriveFromSite);
   host.appendChild(hint('vent-terrain',
-    'Open (flat) ground slows the wind least; broken and mountainous ground shelters more (power-law exponent 0.14–0.28). Exposure multiplies it again: sheltered 0.6, moderate 1.0, exposed 1.4 (Olgyay, pp.37–40; DeKay & Brown, Strategy 85).'));
+    'Open (flat) ground slows the wind least; broken and mountainous ground shelters more (power-law exponent 0.14–0.28). Exposure multiplies it again: sheltered 0.6, moderate 1.0, exposed 1.4 (Olgyay, pp.37–40; DeKay & Brown, Strategy 85). Derive terrain + wind from coordinates samples the relief around the site and the ERA5 annual mean wind for these coordinates — like the altitude lookup, it sends only the coordinates to Open-Meteo, nothing else. Exposure stays manual: it reads the immediate surroundings, which no gridded product sees.'));
   const cShadow = checkCtl('Show sun shadows', true, v => { showShadow = v; refresh(); });
   const cAir = checkCtl('Show cross-ventilation paths', true, v => { showAir = v; refresh(); });
   host.appendChild(controls([cShadow, cAir]));
@@ -3476,7 +3540,7 @@ function buildVentilation(host) {
 
   /* ---- vegetation palette: click to arm, then click the ground ---- */
   host.appendChild(section('Trees against the wind and sun',
-    'Arm a species, then click open ground around the building — not on it. Trees on the windward side throttle that facade; on the sunward side they shade summer glass.'));
+    'Arm a species, then click open ground around the building — not on it. Drag a placed tree to move it, double-click to remove it. Trees on the windward side throttle that facade; on the sunward side they shade summer glass.'));
   let plantArmed = null;
   const vegPalette = host.appendChild(el('div', { class:'controls', style:'flex-wrap:wrap;gap:4px' }));
   const vegBtns = [];
@@ -3500,7 +3564,7 @@ function buildVentilation(host) {
 
   /* ---- detached walls: arm, then click the ground; orientation follows the nearest facade ---- */
   host.appendChild(section('Detached walls',
-    'Arm the wall tool, then click open ground. A wall near a south or north facade runs east–west; near east or west it runs north–south. Each wall shelters its nearest facade.'));
+    'Arm the wall tool, then click open ground. Drag a placed wall to move it, double-click to remove it. A wall near a south or north facade runs east–west; near east or west it runs north–south. Each wall shelters its nearest facade.'));
   const wallPalette = host.appendChild(el('div', { class:'controls' }));
   let wallArmed = false;
   const wallBtn = el('button', { class:'btn small', text:'Place wall', onclick: () => {
@@ -3703,18 +3767,65 @@ function buildVentilation(host) {
     ctx.fillText(SH.key+' '+fmt(SH.h,2)+' h · sun '+fmt(sun.alt,0)+'°/'+fmt(sun.azi,0)+'° · '+VEGETATION.length+'/10 trees · '+WALLS.length+' walls', CVW/2, CVH-6);
   };
 
-  /* ---- click-to-place on open garden ground (correct ground inversion) ---- */
-  const getWorldPos = (clientX, clientY) => {
+  /* ---- pointer model, as on Site/Roof/Windows: click to place, drag to
+     move, double-click to remove. Placement needs an armed tool; dragging
+     and deleting work with nothing armed. ---- */
+  cv.style.touchAction = 'none';
+  cv.draggable = false;
+  cv.addEventListener('dragstart', ev => ev.preventDefault());
+  const toBacking = (clientX, clientY) => {
     const r = cv.getBoundingClientRect();
-    const sx = (clientX - r.left) * (CVW / Math.max(1, r.width));
-    const sy = (clientY - r.top) * (CVH / Math.max(1, r.height));
+    return [(clientX - r.left) * (CVW / Math.max(1, r.width)),
+            (clientY - r.top) * (CVH / Math.max(1, r.height))];
+  };
+  const getWorldPos = (clientX, clientY) => {
+    const [sx, sy] = toBacking(clientX, clientY);
     // ground plane z=0: X=(sx-cx)/(C·s)=x−y, Y=(cy−sy)/(S·s)=x+y
     const X = (sx - FR.cx) / (ISO_C * FR.s), Y = (FR.cy - sy) / (ISO_S * FR.s);
     return { x:(X + Y) / 2, y:(Y - X) / 2 };
   };
   const onBuilding = (x, y) => Math.abs(x) <= G.L/2 + 0.3 && Math.abs(y) <= G.D/2 + 0.3;
+  const distSeg = (px, py, ax, ay, bx, by) => {
+    const dx = bx - ax, dy = by - ay, L2 = dx * dx + dy * dy;
+    let u = L2 ? ((px - ax) * dx + (py - ay) * dy) / L2 : 0;
+    u = clamp(u, 0, 1);
+    return Math.hypot(px - (ax + u * dx), py - (ay + u * dy));
+  };
+  /** Nearest placed item to a pointer position (backing-store pixels). */
+  const pickItem = (clientX, clientY) => {
+    if (!FR) return null;
+    const [sx, sy] = toBacking(clientX, clientY);
+    const proj = (x, y, z) => projF(FR, x, y, z);
+    let best = null;
+    VEGETATION.forEach((v, i) => {
+      const p = proj(v.x, v.y, v.height);
+      const d = Math.hypot(sx - p[0], sy - p[1]);
+      const hit = Math.max(16, (v.density || 0.6) * 2.2 * FR.s + 8);
+      if (d <= hit && (!best || d < best.d)) best = { kind:'tree', index:i, d };
+    });
+    WALLS.forEach((w, i) => {
+      const hw = w.length / 2, z = w.height / 2;
+      const a = w.along === 'y' ? proj(w.x, w.y - hw, z) : proj(w.x - hw, w.y, z);
+      const b = w.along === 'y' ? proj(w.x, w.y + hw, z) : proj(w.x + hw, w.y, z);
+      const d = distSeg(sx, sy, a[0], a[1], b[0], b[1]);
+      if (d <= 14 && (!best || d < best.d)) best = { kind:'wall', index:i, d };
+    });
+    return best;
+  };
+  const itemTip = hit => {
+    if (hit.kind === 'tree') {
+      const v = VEGETATION[hit.index], f = sideOf(v.x, v.y);
+      return '<b>' + t('Tree') + ' ' + (hit.index + 1) + '</b> ' + v.type + '<br><span class="tv">' +
+        fmt(v.height, 0) + ' m · ' + t('shelters') + ' ' + t(FACE_NAME[f]) + '</span><br><span class="tm">' +
+        t('Drag to move · double-click to remove') + '</span>';
+    }
+    const w = WALLS[hit.index], f = sideOf(w.x, w.y);
+    return '<b>' + t('Wall') + ' ' + (hit.index + 1) + '</b><br><span class="tv">' +
+      fmt(w.length, 1) + ' × ' + fmt(w.height, 1) + ' m · ' + t('shelters') + ' ' + t(FACE_NAME[f]) +
+      '</span><br><span class="tm">' + t('Drag to move · double-click to remove') + '</span>';
+  };
   const clickHandler = ev => {
-    if (!plantArmed && !wallArmed) { toast('Arm a species or the wall tool first'); return; }
+    if (!plantArmed && !wallArmed) return;
     const pos = getWorldPos(ev.clientX, ev.clientY);
     const lim = { x:G.L/2 + FR.garden, y:G.D/2 + FR.garden };
     pos.x = clamp(pos.x, -lim.x, lim.x);
@@ -3738,13 +3849,65 @@ function buildVentilation(host) {
     }
   };
 
-  /* ---- hover cursor ---- */
-  const hoverHandler = () => { cv.style.cursor = (plantArmed || wallArmed) ? 'cell' : 'crosshair'; };
+  /* ---- drag placed items across the garden ---- */
+  let dragV = null;
+  cv.addEventListener('pointerdown', ev => {
+    if (plantArmed || wallArmed || !FR) return;
+    const hit = pickItem(ev.clientX, ev.clientY);
+    if (!hit) return;
+    ev.preventDefault();
+    const pos = getWorldPos(ev.clientX, ev.clientY);
+    const it = hit.kind === 'tree' ? VEGETATION[hit.index] : WALLS[hit.index];
+    dragV = { kind:hit.kind, index:hit.index, ox:it.x - pos.x, oy:it.y - pos.y };
+    try { cv.setPointerCapture(ev.pointerId); } catch (err) {}
+    cv.style.cursor = 'grabbing';
+    hideTip();
+  });
+  cv.addEventListener('pointermove', ev => {
+    if (dragV) {
+      ev.preventDefault();
+      const pos = getWorldPos(ev.clientX, ev.clientY);
+      const lim = { x:G.L/2 + FR.garden, y:G.D/2 + FR.garden };
+      const nx = clamp(pos.x + dragV.ox, -lim.x, lim.x);
+      const ny = clamp(pos.y + dragV.oy, -lim.y, lim.y);
+      if (onBuilding(nx, ny)) return;   // keep the last open-ground spot
+      const it = dragV.kind === 'tree' ? VEGETATION[dragV.index] : WALLS[dragV.index];
+      if (!it) { dragV = null; return; }
+      it.x = +nx.toFixed(1); it.y = +ny.toFixed(1);
+      if (dragV.kind === 'wall') {
+        const f = sideOf(it.x, it.y);
+        it.along = (f === 'S' || f === 'N') ? 'x' : 'y';
+      }
+      draw();
+      return;
+    }
+    if (plantArmed || wallArmed) { cv.style.cursor = 'cell'; hideTip(); return; }
+    const hit = pickItem(ev.clientX, ev.clientY);
+    if (hit) { cv.style.cursor = 'grab'; showTip(itemTip(hit), ev); }
+    else { cv.style.cursor = 'crosshair'; hideTip(); }
+  });
+  const endDragV = () => {
+    if (dragV) { dragV = null; cv.style.cursor = 'default'; refresh(); }
+  };
+  cv.addEventListener('pointerup', endDragV);
+  cv.addEventListener('pointercancel', endDragV);
+  cv.addEventListener('mouseleave', hideTip);
+  cv.addEventListener('dblclick', ev => {
+    if (plantArmed || wallArmed) return;
+    const hit = pickItem(ev.clientX, ev.clientY);
+    if (!hit) return;
+    ev.preventDefault();
+    if (hit.kind === 'tree') VEGETATION.splice(hit.index, 1);
+    else WALLS.splice(hit.index, 1);
+    hideTip();
+    refresh();
+    toast(hit.kind === 'tree' ? 'Tree removed' : 'Wall removed');
+  });
 
   /* ---- model panel ---- */
   const panel = host.appendChild(el('div', { class:'panel' }));
   const pHead = panel.appendChild(el('div', { class:'panel-head' }, [
-    el('div', { class:'panel-title', html:'<h3>One model — site, roof, windows, sun and air</h3><p>Volume and eave height from Site, slopes from Roof, openings and sunspace from Windows &amp; Shading, shadows from the same sun, airflow from the opposite pairs</p>' }),
+    el('div', { class:'panel-title', html:'<h3>One model — site, roof, windows, sun and air</h3><p>Volume and eave height from Site, slopes from Roof, openings and sunspace from Windows &amp; Shading, shadows from the same sun, airflow from the opposite pairs — arm a tool to place, drag items to move them, double-click to remove</p>' }),
     el('div', { class:'panel-tools' })
   ]));
   const pBody = panel.appendChild(el('div', { class:'panel-body' }));
@@ -3767,7 +3930,6 @@ function buildVentilation(host) {
     draw();
   };
   cv.addEventListener('click', clickHandler);
-  cv.addEventListener('mousemove', hoverHandler);
   setDayV(SH.doy);
   refresh();
 
@@ -3778,6 +3940,8 @@ function buildVentilation(host) {
     rows.push(['Latitude (°)', +lat.toFixed(3)], ['Longitude (°)', +lon.toFixed(3)], ['Altitude (m)', +(S.alt || 0)]);
     rows.push(['Air density (kg/m³)', +airDensity().toFixed(3)]);
     rows.push(['Reference wind 10 m (m/s)', +refWind.toFixed(1)], ['Terrain', terrainKey], ['Wind exposure', windKey]);
+    if (derivedRelief !== null) rows.push(['Relief 2 km window (m)', +derivedRelief.toFixed(0)]);
+    rows.push(['Reference wind source', derivedWindSrc ? derivedWindSrc + ' annual mean at 10 m' : 'entered by hand']);
     rows.push(['Eave wind (m/s)', +eaveWind().toFixed(2)]);
     rows.push(['Eave height H0 (m)', +h0live().toFixed(2)], ['Stack Δp ΔT=5K (Pa)', +stackPa(5).toFixed(2)]);
     rows.push(['Plan L×D (m)', G.L.toFixed(1) + '×' + G.D.toFixed(1)], ['Roof slopes', RF.n], ['Roof pitch (°)', +RF.th.toFixed(0)]);
@@ -4572,6 +4736,25 @@ Object.assign(PT, {
   "Flat": "Plana",
   "Shed": "Uma água",
   "Gable": "Duas águas",
+  "Rolling": "Ondulado",
+  "Hilly": "Colinoso",
+  "Mountainous": "Montanhoso",
+  "Sheltered": "Abrigado",
+  "Moderate": "Moderado",
+  "Exposed": "Exposto",
+  "Terrain": "Terreno",
+  "Wind exposure": "Exposição ao vento",
+  "Reference wind at 10 m": "Vento de referência a 10 m",
+  "Show sun shadows": "Mostrar sombras do sol",
+  "Show cross-ventilation paths": "Mostrar percursos de ventilação transversal",
+  "Site exposure — coordinates and altitude": "Exposição do local — coordenadas e altitude",
+  "Sun for shadows": "Sol para as sombras",
+  "Derive terrain + wind from coordinates": "Derivar terreno + vento das coordenadas",
+  "Sampling relief and wind…": "A amostrar relevo e vento…",
+  "Relief": "Relevo",
+  "mean wind": "vento médio",
+  "exposure stays yours to judge": "a exposição continua a seu juízo",
+  "Derivation failed — keep the manual values": "Derivação falhou — manter os valores manuais",
   "Pitch": "Inclinação",
   "Flat — frame the collectors, insulate for summer": "Plana — colectores em estrutura, isolar para o Verão",
   "Winter ideal": "Ideal de Inverno",
