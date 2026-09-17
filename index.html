@@ -605,7 +605,7 @@ footer{border-top:1px solid var(--line); margin-top:26px; background:var(--wash)
 /* ------------------------------------------------------------ 0. IDENTITY -- */
 const APP = {
   name:        'Architecture Advisor',
-  version:     '1.15.2',
+  version:     '1.16.0',
   author:      'Nuno Dinis Cortiços',
   institution: 'Lisbon School of Architecture, Universidade de Lisboa',
   builtWith:   'Claude Opus 5 (Anthropic)',
@@ -3260,7 +3260,7 @@ function buildVentilation(host) {
   const S = STATE.site, C = STATE.clim;
   const lat = S.lat, lon = S.lon;
   pageHead(host, 'Ventilation',
-    '3D site model — place trees, bushes and detached walls against the building defined on Site, Roof and Windows & Shading. Scores update live.');
+    'One model from Site, Roof and Windows & Shading — volume, slopes, true openings and sunspace — with sun shadows and opposite-pair airflow. Altitude thins the air, the eave height drives the stack, terrain and exposure shape the wind.');
 
   const G = MASS, RF = ROOF;
   if (!G) { host.appendChild(el('p', { text:t('Define the site first — go to the Site tab.') })); return; }
@@ -3285,56 +3285,111 @@ function buildVentilation(host) {
   const winSize = f => {
     const o = OPEN[f];
     const width = faceWidthV(f);
+    const H = G.fl * G.fh;
     const h = Math.max(0.3, (o.headZ != null ? o.headZ : 2.1) - (o.sillZ != null ? o.sillZ : 0.9));
-    const area = (o.wwr || 0) * width * H0;
+    const area = (o.wwr || 0) * width * H;
     const w = Math.min(width * 0.92, area / h);
     return { w, h, sillZ: o.sillZ != null ? o.sillZ : 0.9 };
   };
+  const windowRectV = f => {
+    const s = winSize(f);
+    return { u0:-s.w / 2, u1:s.w / 2, v0:s.sillZ, v1:s.sillZ + s.h, w:s.w, h:s.h };
+  };
 
-  /* ---- terrain & wind ---- */
-  const TERRAIN_KEY = { 'flat':'flat', 'rolling':'rolling', 'hilly':'hilly', 'mountainous':'mountainous' };
-  let terrainKey = 'flat', windKey = 'moderate';
-  const TERRAIN = { 'flat':1.0, 'rolling':1.2, 'hilly':1.5, 'mountainous':2.0 };
-  const WIND = { 'sheltered':1.0, 'moderate':1.2, 'exposed':1.5 };
-  const VEGETATION = [];          // {type, height, density, side, x, y}  — canvas-local coords for drag
-  const WALLS = [];               // {side, dx, dz, height, length} placed by click on canvas
+  /* ---- terrain, wind + planting state (world x east / y north, metres) ---- */
+  let terrainKey = 'flat', windKey = 'moderate', refWind = 3.0;
+  let showShadow = true, showAir = true;
+  const VEGETATION = [];          // {type, height, density, x, y}
+  const WALLS = [];               // {x, y, along:'x'|'y', height, length}
 
-  /* ---- scoring ---- */
+  /* ---- site climate + altitude physics (live, read at draw time) ----
+     Air density falls with altitude (barometric formula), so the same wind
+     drives less pressure up high; the stack effect grows with the eave
+     height H0 fixed on Site (floors × floor height) and shrinks slightly
+     with density. Wind at the eaves is the reference 10 m wind, modified by
+     terrain roughness and exposure and sped up with height by a power law —
+     Olgyay on shelter and exposure (pp.37–40), DeKay & Brown on cross
+     ventilation and stack (Strategies 84–85). */
+  const h0live = () => G.fl * G.fh;
+  const meanTemp = () => {
+    const tt = (C && C.t) ? C.t.filter(v => isFinite(v)) : [];
+    return tt.length ? tt.reduce((a, b) => a + b, 0) / tt.length : 18;
+  };
+  const airDensity = () => {
+    const alt = Math.max(0, S.alt || 0);
+    const p = 101325 * Math.pow(1 - 2.25577e-5 * alt, 5.25588);
+    const T = 273.15 + meanTemp();
+    return p / (287.05 * T);
+  };
+  const ALPHA = { flat:0.14, rolling:0.18, hilly:0.22, mountainous:0.28 };
+  const TERRAIN_WIND = { flat:1.0, rolling:0.9, hilly:0.8, mountainous:0.7 };
+  const EXPOSURE_WIND = { sheltered:0.6, moderate:1.0, exposed:1.4 };
+  const eaveWind = () => {
+    const H = Math.max(1, h0live());
+    const a = ALPHA[terrainKey] != null ? ALPHA[terrainKey] : 0.18;
+    return refWind * (TERRAIN_WIND[terrainKey] || 1) * (EXPOSURE_WIND[windKey] || 1) * Math.pow(H / 10, a);
+  };
+  /** Stack-effect pressure for a ΔT across the full eave height (Pa). */
+  const stackPa = dT => {
+    const rho = airDensity(), H = h0live(), T = 273.15 + meanTemp();
+    return rho * 9.81 * H * (dT / T);
+  };
+  /** True openable window area (m²). Only a fraction of the geometric
+      window opens — 0.5 is a teaching assumption, stated wherever it is
+      used, not a product value. */
+  const openArea = f => {
+    const w = winSize(f);
+    return Math.max(0, w.w * w.h) * 0.5;
+  };
+  /** Nearest facade for a world point (used to score planting and walls by
+      where they stand, not by a sticky button). */
+  const sideOf = (x, y) => {
+    const nx = Math.abs(x) / Math.max(0.5, G.L / 2), ny = Math.abs(y) / Math.max(0.5, G.D / 2);
+    if (nx >= ny) return x >= 0 ? 'E' : 'W';
+    return y >= 0 ? 'N' : 'S';
+  };
+  /** Wind blockage on one facade, 0 (open) to 0.7 (fully sheltered): each
+      detached wall counts ~0.30, each tree density × 0.25, nearest facade
+      only. */
+  const blockage = f => {
+    let b = 0;
+    VEGETATION.forEach(v => { if (sideOf(v.x, v.y) === f) b += 0.25 * (v.density != null ? v.density : 0.6); });
+    WALLS.forEach(w => { if (sideOf(w.x, w.y) === f) b += 0.30; });
+    return clamp(b, 0, 0.7);
+  };
+  const effectiveArea = (f1, f2) => {
+    const a1 = openArea(f1) * (1 - blockage(f1)), a2 = openArea(f2) * (1 - blockage(f2));
+    if (a1 <= 0 || a2 <= 0) return 0;
+    return 1 / Math.sqrt(1 / (a1 * a1) + 1 / (a2 * a2));
+  };
+  /* Winter shelter 0–100 per facade (higher = better protected): small
+     openings and upwind shelter help; exposure hurts. A teaching index. */
   const winterScore = f => {
     const o = OPEN[f];
-    let base = f === 'S' ? 0.6 : 0.1;
-    const overhangEffect = 1 - Math.min(1, (o.ovD || 0) / 2.5);
-    const T = TERRAIN[terrainKey], W = WIND[windKey];
-    return Math.round(clamp((base * overhangEffect * T * W) * 100, 0, 100));
+    const wwrPen = clamp(1 - (o.wwr || 0) / 0.5, 0, 1);
+    const shelter = blockage(f);
+    const expo = windKey === 'exposed' ? 0.55 : windKey === 'sheltered' ? 1.0 : 0.8;
+    const base = f === 'N' || f === 'E' ? 0.75 : 0.6;
+    return Math.round(clamp((0.35 + 0.35 * wwrPen + 0.3 * shelter / 0.7) * expo / 0.8 * base / 0.6 * 100, 0, 100));
   };
-  const summerScore = () => {
-    const pairs = [['S','W'], ['N','E']];
-    let total = 0;
-    pairs.forEach(([f1, f2]) => {
-      const s1 = winSize(f1), s2 = winSize(f2);
-      /* Cross-ventilation needs openings on both facing walls; align scales
-         with the smaller of the two window areas, capped once either window
-         reaches a modest 2.5 m² — a small opening on one side stalls the
-         through-draught no matter how large the other one is. */
-      const size1 = clamp((s1.w * s1.h) / 2.5, 0, 1), size2 = clamp((s2.w * s2.h) / 2.5, 0, 1);
-      const align = 0.2 + 0.6 * Math.min(size1, size2);
-      const v1 = VEGETATION.filter(v => v.side === f1).length / 10;
-      const v2 = VEGETATION.filter(v => v.side === f2).length / 10;
-      const w1 = WALLS.filter(w => w.side === f1).length / 4;
-      const w2 = WALLS.filter(w => w.side === f2).length / 4;
-      total += clamp(align * (1 - v1 - v2 - w1 - w2) * 100, 0, 100);
-    });
-    return Math.round(total / 2);
+  /* Summer cross-ventilation 0–100 per opposite pair: the series effective
+     area against a 4 m² generous reference, times eave wind against a
+     3 m/s reference. Vegetation and walls on either facade throttle it. */
+  const pairScore = (f1, f2) => {
+    const ae = effectiveArea(f1, f2);
+    const areaTerm = clamp(ae / 4, 0, 1);
+    const windTerm = clamp(eaveWind() / 3, 0.15, 1.3) / 1.3;
+    return Math.round(clamp(100 * (0.15 + 0.85 * areaTerm) * (0.45 + 0.55 * windTerm), 0, 100));
   };
+  const summerScore = () => Math.round((pairScore('S', 'N') + pairScore('E', 'W')) / 2);
 
   /* ---- isometric projection (same as Site tab) ---- */
   const ISO_C = Math.cos(30 * RAD), ISO_S = Math.sin(30 * RAD);
   const projF = (FR, x, y, z) => [FR.cx + (x - y) * ISO_C * FR.s, FR.cy - (x + y) * ISO_S * FR.s - (z || 0) * FR.s];
 
-  /* ---- compute the isometric frame that fits the whole scene ---- */
+  /* ---- frame fits building + garden + shadow + sunspace ---- */
   const frame = (W, H) => {
     const cx = W / 2;
-    const footprint = Math.max(G.L, G.D);
     const H0 = G.fl * G.fh;
     const roofTh = (RF.n === 0 ? 0 : RF.th) * RAD;
     const roofSpan = RF.n === 2 ? G.D / 2 : G.D;
@@ -3342,67 +3397,131 @@ function buildVentilation(host) {
     const vegH = VEGETATION.length ? Math.max(...VEGETATION.map(v => v.height)) : 0;
     const wallH = WALLS.length ? Math.max(...WALLS.map(w => w.height)) : 0;
     const maxH = Math.max(ridge, H0, vegH, wallH) + 2;
-    const margin = 3;
-    const half = footprint + margin;
+    const garden = 8;
+    const sunDepth = (typeof SUNSP !== 'undefined' && SUNSP && SUNSP.on) ? SUNSP.depth : 0;
+    const half = G.L / 2 + G.D / 2 + garden + sunDepth;
     const top = 14, bottom = H - 34;
     const availV = Math.max(40, bottom - top);
-    const sByW = (W / 2 - 16) / (half * ISO_C * Math.SQRT2);
-    const sByH = availV / (half * ISO_S * Math.SQRT2 * 2 + maxH);
+    const sByW = (W / 2 - 16) / ((half + sunDepth) * ISO_C);
+    const sByH = availV / (half * ISO_S * 2 + maxH);
     const s = Math.max(3, Math.min(sByW, sByH));
-    const cy = bottom - half * ISO_S * Math.SQRT2 * s;
-    return { cx, cy, s, H0, ridge, roofSpan, roofTh };
+    const cy = bottom - half * ISO_S * s;
+    return { cx, cy, s, H0, ridge, roofSpan, roofTh, garden };
+  };
+  const facePointV = (f, u, v) => f === 'S' ? [u, -G.D / 2, v] : f === 'N' ? [u, G.D / 2, v]
+    : f === 'E' ? [G.L / 2, u, v] : [-G.L / 2, u, v];
+  const faceNormalV = { S:[0,-1,0], N:[0,1,0], E:[1,0,0], W:[-1,0,0] };
+  const hullV = pts => {
+    const p = pts.slice().sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+    const cross = (o, a, b) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
+    const lo = [], hi = [];
+    p.forEach(pt => { while (lo.length >= 2 && cross(lo[lo.length - 2], lo[lo.length - 1], pt) <= 0) lo.pop(); lo.push(pt); });
+    p.slice().reverse().forEach(pt => { while (hi.length >= 2 && cross(hi[hi.length - 2], hi[hi.length - 1], pt) <= 0) hi.pop(); hi.push(pt); });
+    lo.pop(); hi.pop();
+    return lo.concat(hi);
   };
 
+  /* ---- driven sun (same engine as Site): shadows explain summer buoyancy ---- */
+  const tz = lon / 15;
+  const SH = { doy:172, key:'21 Jun', h:12, rise:6, set:18 };
+  const noonSunV = doy => {
+    let best = null;
+    for (let h = 0; h < 24; h += 0.1) {
+      const sp = sunPos(doy, h, lat, lon, tz);
+      if (!best || sp.alt > best.alt) best = sp;
+    }
+    return best;
+  };
+  const shadowLenV = (hgt, alt) => hgt / Math.max(0.08, Math.tan(Math.max(0.5, alt) * RAD));
+  const SUN_DEC_V = noonSunV(355), SUN_JUN_V = noonSunV(172);
+
   /* ---- terrain & wind controls ---- */
-  host.appendChild(section('Site exposure',
-    'Terrain and wind modify both winter protection and summer ventilation.'));
+  host.appendChild(section('Site exposure — coordinates and altitude',
+    'Air thins with altitude, so the same wind pushes less; the eave height from Site drives the stack effect. Terrain and exposure modify the 10 m reference wind.'));
   const cTerrain = segCtl('Terrain', [{ value:'flat', label:'Flat' }, { value:'rolling', label:'Rolling' }, { value:'hilly', label:'Hilly' }, { value:'mountainous', label:'Mountainous' }], 'flat',
     v => { terrainKey = v; refresh(); });
   const cWind = segCtl('Wind exposure', [{ value:'sheltered', label:'Sheltered' }, { value:'moderate', label:'Moderate' }, { value:'exposed', label:'Exposed' }], 'moderate',
     v => { windKey = v; refresh(); });
+  const cRef = rangeCtl('Reference wind at 10 m', 1, 8, 0.5, refWind, v => { refWind = v; refresh(); }, v => fmt(v, 1) + ' m/s');
+  host.appendChild(controls([cTerrain, cWind, cRef]));
   host.appendChild(hint('vent-terrain',
-    'Terrain multiplies the sky factor: flat=1.0, rolling=1.2, hilly=1.5, mountainous=2.0 (Olgyay, pp.37–40).'));
-  host.appendChild(hint('vent-wind',
-    'Wind exposure multiplies ventilation effectiveness: sheltered=1.0, moderate=1.2, exposed=1.5 (DeKay & Brown, Strategy 85, p.210).'));
+    'Open (flat) ground slows the wind least; broken and mountainous ground shelters more (power-law exponent 0.14–0.28). Exposure multiplies it again: sheltered 0.6, moderate 1.0, exposed 1.4 (Olgyay, pp.37–40; DeKay & Brown, Strategy 85).'));
+  const cShadow = checkCtl('Show sun shadows', true, v => { showShadow = v; refresh(); });
+  const cAir = checkCtl('Show cross-ventilation paths', true, v => { showAir = v; refresh(); });
+  host.appendChild(controls([cShadow, cAir]));
 
-  /* ---- vegetation palette ---- */
-  host.appendChild(section('Plant palette (up to 10 species)',
-    'Click a species below, then click the 3D model to place it. Drag placed items to reposition.'));
-  const speciesTypes = ['pine','oak','eucalyptus','cypress','poplar','olive','cork','carob','mastic','kermes'];
+  /* ---- sun controls: day + solar hour drive shadows and sunlit facades ---- */
+  host.appendChild(section('Sun for shadows',
+    'The same sun as Site and Windows & Shading. Summer noon shows what the shading must cut and what buoyancy can exhaust; winter shows what the sun still reaches.'));
+  const SUN_DAYS = [{ doy:172, key:'21 Jun' }, { doy:79, key:'20 Mar' }, { doy:355, key:'21 Dec' }];
+  const hFmtV = v => fmt(v, 2) + ' h';
+  const cH = rangeCtl('Solar time', 0, 24, 0.25, 12, v => { SH.h = v; refresh(); }, hFmtV);
+  const segDay = segCtl('Sun day', SUN_DAYS.map(d => ({ value:d.doy, label:d.key })), SH.doy, v => setDayV(v));
+  function setDayV(doy) {
+    SH.doy = doy;
+    const hit = SUN_DAYS.filter(d => d.doy === doy)[0];
+    SH.key = hit ? hit.key : ('day ' + doy);
+    const ss = sunriseSunset(doy, lat, lon, tz);
+    if (ss) {
+      SH.rise = Math.ceil(ss.rise * 4) / 4; SH.set = Math.floor(ss.set * 4) / 4;
+      SH.h = Math.round(ss.noon * 4) / 4;
+      cH.range.min = SH.rise; cH.range.max = SH.set;
+      cH.range.value = SH.h; cH.out.textContent = hFmtV(SH.h);
+    }
+    refresh();
+  }
+  host.appendChild(controls([segDay, cH]));
+  const liveLine = el('div', { class:'hint' });
+  host.appendChild(liveLine);
+
+  /* ---- vegetation palette: click to arm, then click the ground ---- */
+  host.appendChild(section('Trees against the wind and sun',
+    'Arm a species, then click open ground around the building — not on it. Trees on the windward side throttle that facade; on the sunward side they shade summer glass.'));
+  let plantArmed = null;
   const vegPalette = host.appendChild(el('div', { class:'controls', style:'flex-wrap:wrap;gap:4px' }));
   const vegBtns = [];
+  const speciesTypes = ['pine','oak','eucalyptus','cypress','poplar','olive','cork','carob','mastic','kermes'];
   speciesTypes.forEach(sp => {
     const b = el('button', { class:'btn small', text:sp, title:sp, 'data-species':sp });
     b.onclick = () => {
-      if (VEGETATION.length >= 10) { toast('Maximum 10 species reached'); return; }
-      const h = sp === 'pine' || sp === 'cypress' ? 12 : sp === 'oak' || sp === 'eucalyptus' ? 18 : sp === 'olive' || sp === 'cork' ? 8 : 6;
-      const d = sp === 'pine' || sp === 'cypress' ? 0.7 : sp === 'oak' ? 0.5 : 0.6;
-      VEGETATION.push({ type:sp, height:h, density:d, side:'S', x:0, y:0 });
-      refresh();
+      plantArmed = (plantArmed === sp) ? null : sp;
+      wallArmed = false;
+      vegBtns.forEach(x => x.classList.toggle('solid', x.dataset.species === plantArmed));
+      wallBtn.classList.toggle('solid', false);
+      toast(plantArmed ? 'Click open ground to plant ' + sp : 'Placement cancelled');
     };
     vegPalette.appendChild(b);
     vegBtns.push(b);
   });
   const vegCount = el('span', { text:'0/10' });
   vegPalette.appendChild(vegCount);
+  const vegClear = el('button', { class:'btn small', text:'Clear trees', onclick: () => { VEGETATION.length = 0; refresh(); } });
+  vegPalette.appendChild(vegClear);
 
-  /* ---- wall palette ---- */
+  /* ---- detached walls: arm, then click the ground; orientation follows the nearest facade ---- */
   host.appendChild(section('Detached walls',
-    'Click a facade button, then click the model ground to place a wall. Each wall acts as a wind/thermal barrier.'));
+    'Arm the wall tool, then click open ground. A wall near a south or north facade runs east–west; near east or west it runs north–south. Each wall shelters its nearest facade.'));
   const wallPalette = host.appendChild(el('div', { class:'controls' }));
-  FACES.forEach(f => {
-    const b = el('button', { class:'btn small', text:FACE_NAME[f], 'data-side':f });
-    b.onclick = () => { activeWallSide = f; toast('Click on the model to place a ' + FACE_NAME[f] + ' wall'); };
-    wallPalette.appendChild(b);
-  });
-  let activeWallSide = 'S';
+  let wallArmed = false;
+  const wallBtn = el('button', { class:'btn small', text:'Place wall', onclick: () => {
+    wallArmed = !wallArmed; plantArmed = null;
+    vegBtns.forEach(x => x.classList.toggle('solid', false));
+    wallBtn.classList.toggle('solid', wallArmed);
+    toast(wallArmed ? 'Click open ground to place a wall' : 'Placement cancelled');
+  } });
+  wallPalette.appendChild(wallBtn);
+  const wallClear = el('button', { class:'btn small', text:'Clear walls', onclick: () => { WALLS.length = 0; refresh(); } });
+  wallPalette.appendChild(wallClear);
+  const placeHint = el('span', { class:'hint', text:'' });
+  wallPalette.appendChild(placeHint);
 
-  /* ---- 3D canvas ---- */
-  const CVW = 700, CVH = 340;
+  /* ---- 3D canvas (wider: garden + shadows need room) ---- */
+  const CVW = 900, CVH = 420;
   const cv = el('canvas', { width:CVW, height:CVH, class:'chart' });
   cv.style.cursor = 'crosshair';
+  cv.style.width = '100%';
   const ctx = cv.getContext('2d');
-  let FR = null, plantMode = null, plantSpecies = null;
+  let FR = null;
 
   const draw = () => {
     FR = frame(CVW, CVH);
@@ -3421,184 +3540,266 @@ function buildVentilation(host) {
       if (strokeColor) { stroke(ctx, strokeColor, width || 1.4, dash); ctx.stroke(); }
     };
 
-    /* ---- ground plane ---- */
-    const gm = 1.5;
+    /* ---- garden ground (big enough for shadows, trees and walls) ---- */
+    const gm = FR.garden;
     poly([[-G.L/2-gm, -G.D/2-gm, 0], [G.L/2+gm, -G.D/2-gm, 0],
           [G.L/2+gm, G.D/2+gm, 0], [-G.L/2-gm, G.D/2+gm, 0]],
          'rgba(20,23,26,.03)', CH.line, 1.2);
 
-    /* ---- building walls ---- */
+    /* ---- sun shadow of the whole volume on the garden ---- */
+    const sun = sunPos(SH.doy, SH.h, lat, lon, tz);
     const topZ = y => RF.n === 0 ? H0 : RF.n === 1 ? H0 + (y + G.D/2) * Math.tan(roofTh) : H0 + Math.max(0, G.D/2 - Math.abs(y)) * Math.tan(roofTh);
-    // south wall
-    poly([[-G.L/2, -G.D/2, 0], [G.L/2, -G.D/2, 0], [G.L/2, -G.D/2, H0], [-G.L/2, -G.D/2, H0]],
-         'rgba(20,23,26,.14)', CH.ink, 1.4);
-    // west wall
-    const westBreaks = RF.n === 2 ? [G.D/2, 0, -G.D/2] : [G.D/2, -G.D/2];
-    const westPts = [[-G.L/2, -G.D/2, 0], [-G.L/2, G.D/2, 0]].concat(westBreaks.map(y => [-G.L/2, y, topZ(y)]));
-    poly(westPts, 'rgba(20,23,26,.08)', CH.ink, 1.4);
+    if (showShadow && sun.alt > 0.5) {
+      const Lsh = shadowLenV(ridge, sun.alt);
+      const saz = (sun.azi + 180) * RAD;
+      const ox = Lsh * Math.sin(saz), oy = Lsh * Math.cos(saz);
+      const scs = [[G.L/2, G.D/2], [-G.L/2, G.D/2], [-G.L/2, -G.D/2], [G.L/2, -G.D/2]];
+      const hp = hullV(scs.concat(scs.map(p => [p[0] + ox, p[1] + oy])));
+      ctx.beginPath();
+      hp.forEach((p, i) => { const q = proj(p[0], p[1], 0); i ? ctx.lineTo(q[0], q[1]) : ctx.moveTo(q[0], q[1]); });
+      ctx.closePath();
+      ctx.fillStyle = 'rgba(20,23,26,.13)'; ctx.fill();
+      stroke(ctx, 'rgba(20,23,26,.35)', 1); ctx.stroke();
+      const tq = proj(scs[0][0] + ox, scs[0][1] + oy, 0);
+      label(ctx, fmt(Lsh, 1) + ' m', tq[0] + 5, tq[1] - 5, CH.ink2, FM(9.5), 'left', 'middle');
+    }
 
-    /* ---- roof ---- */
+    /* ---- compass: true north, so rotation from Site stays legible ---- */
+    const compassR = Math.max(G.L, G.D) / 2 + 2.2;
+    [['N', 0, 1], ['E', 1, 0], ['S', 0, -1], ['W', -1, 0]].forEach(([c, dx, dy]) => {
+      const p = proj(compassR * dx, compassR * dy, 0);
+      label(ctx, c, p[0], p[1], c === 'N' ? CH.ink : CH.muted, F(10, '600'), 'center', 'middle');
+    });
+
+    /* ---- full volume: back pair first, front pair over it ---- */
+    const southTop = RF.n === 1 ? H0 : H0, northTop = RF.n === 1 ? ridge : H0;
+    poly([[-G.L/2, G.D/2, 0], [G.L/2, G.D/2, 0], [G.L/2, G.D/2, northTop], [-G.L/2, G.D/2, northTop]],
+         'rgba(20,23,26,.05)', CH.ink, 1.2);
+    const eastBreaks = RF.n === 2 ? [G.D/2, 0, -G.D/2] : [G.D/2, -G.D/2];
+    poly([[G.L/2, -G.D/2, 0], [G.L/2, G.D/2, 0]].concat(eastBreaks.map(y => [G.L/2, y, topZ(y)])),
+         'rgba(20,23,26,.05)', CH.ink, 1.2);
+    poly([[-G.L/2, -G.D/2, 0], [G.L/2, -G.D/2, 0], [G.L/2, -G.D/2, southTop], [-G.L/2, -G.D/2, southTop]],
+         'rgba(20,23,26,.14)', CH.ink, 1.4);
+    const westBreaks = RF.n === 2 ? [G.D/2, 0, -G.D/2] : [G.D/2, -G.D/2];
+    poly([[-G.L/2, -G.D/2, 0], [-G.L/2, G.D/2, 0]].concat(westBreaks.map(y => [-G.L/2, y, topZ(y)])),
+         'rgba(20,23,26,.08)', CH.ink, 1.4);
+
+    /* ---- roof from Roof tab: both slopes so the stack height reads ---- */
     if (RF.n === 0) {
       poly([[-G.L/2,-G.D/2,H0], [G.L/2,-G.D/2,H0], [G.L/2,G.D/2,H0], [-G.L/2,G.D/2,H0]], 'rgba(20,23,26,.05)', CH.ink, 2);
     } else if (RF.n === 1) {
       poly([[-G.L/2,-G.D/2,H0], [G.L/2,-G.D/2,H0], [G.L/2,G.D/2,ridge], [-G.L/2,G.D/2,ridge]], 'rgba(20,23,26,.05)', CH.ink, 2);
     } else {
-      poly([[-G.L/2,-G.D/2,H0], [G.L/2,-G.D/2,H0], [G.L/2,0,ridge], [-G.L/2,0,ridge]], 'rgba(20,23,26,.05)', CH.ink, 2);
+      poly([[-G.L/2,G.D/2,H0], [G.L/2,G.D/2,H0], [G.L/2,0,ridge], [-G.L/2,0,ridge]], 'rgba(20,23,26,.04)', CH.ink, 1.6);
+      poly([[-G.L/2,-G.D/2,H0], [G.L/2,-G.D/2,H0], [G.L/2,0,ridge], [-G.L/2,0,ridge]], 'rgba(20,23,26,.06)', CH.ink, 2);
       const r0 = proj(-G.L/2, 0, ridge), r1 = proj(G.L/2, 0, ridge);
       stroke(ctx, CH.ink, 1.6); seg(ctx, r0[0], r0[1], r1[0], r1[1]);
     }
 
-    /* ---- openings on facades ---- */
-    Object.keys(OPEN).forEach(f => {
+    /* ---- true windows from Windows & Shading, drawn on their own walls ---- */
+    const sunlit = f => {
+      if (sun.alt <= 0) return false;
+      const wallAz = { S:180, N:0, E:90, W:270 }[f];
+      const dAz = Math.abs(((sun.azi - wallAz + 540) % 360) - 180);
+      return dAz < 89.5;
+    };
+    ['N', 'E', 'S', 'W'].forEach(f => {
       const o = OPEN[f];
       if (!o || !(o.wwr > 0)) return;
-      const win = winSize(f);
-      if (win.w <= 0 || win.h <= 0) return;
-      const span = f === 'S' || f === 'N' ? G.L : G.D;
-      const faceOffset = f === 'S' ? -G.D/2 : f === 'N' ? G.D/2 : f === 'E' ? G.L/2 : -G.L/2;
-      // Draw the window as a row of markers on the appropriate facade face,
-      // spaced roughly one per metre of its own width, at the real sill/head
-      // mid-height — so a wide or tall window reads as more than a single dot
-      const numOpenings = Math.max(1, Math.round(win.w));
-      const v = win.sillZ + win.h / 2;
-      for (let i = 0; i < numOpenings; i++) {
-        const u = -span/2 + span * (i+0.5) / numOpenings;
-        const p = (f === 'S' || f === 'N') ? [u, faceOffset, v] : [faceOffset, u, v];
-        const sp = proj(p[0], p[1], p[2]);
-        ctx.fillStyle = '#2563EB';
-        ctx.fillRect(sp[0]-4, sp[1]-4, 8, 8);
+      const rect = windowRectV(f);
+      if (rect.w <= 0 || rect.h <= 0) return;
+      const n = faceNormalV[f];
+      const lit = sunlit(f);
+      poly([facePointV(f, rect.u0, rect.v0), facePointV(f, rect.u1, rect.v0),
+            facePointV(f, rect.u1, rect.v1), facePointV(f, rect.u0, rect.v1)],
+           lit ? 'rgba(37,99,235,.22)' : 'rgba(37,99,235,.10)', lit ? '#2563EB' : CH.ink2, lit ? 1.8 : 1.2);
+      if (o.ovD > 0) {
+        const vs = o.ovN <= 1 ? [rect.v1]
+          : Array.from({ length:o.ovN }, (_, i) => rect.v0 + (rect.v1 - rect.v0) * (i / (o.ovN - 1)));
+        vs.forEach(vTop => {
+          const inA = facePointV(f, rect.u0, vTop), inB = facePointV(f, rect.u1, vTop);
+          const outA = [inA[0] + n[0]*o.ovD, inA[1] + n[1]*o.ovD, inA[2]];
+          const outB = [inB[0] + n[0]*o.ovD, inB[1] + n[1]*o.ovD, inB[2]];
+          poly([inA, inB, outB, outA], 'rgba(217,119,6,.18)', '#D97706', 1.2);
+        });
+      }
+      if (o.finN > 0 && o.finD > 0) {
+        const lo = o.finSide === 'right' ? 0 : rect.u0, hi = o.finSide === 'left' ? 0 : rect.u1;
+        const us = o.finN === 1 ? [(o.finSide === 'both' ? (lo + hi) / 2 : (o.finSide === 'right' ? hi : lo))]
+          : Array.from({ length:o.finN }, (_, i) => lo + (hi - lo) * (i / (o.finN - 1)));
+        us.forEach(uF => {
+          const inA = facePointV(f, uF, rect.v0), inB = facePointV(f, uF, rect.v1);
+          const outA = [inA[0] + n[0]*o.finD, inA[1] + n[1]*o.finD, inA[2]];
+          const outB = [inB[0] + n[0]*o.finD, inB[1] + n[1]*o.finD, inB[2]];
+          poly([inA, inB, outB, outA], 'rgba(220,38,38,.16)', '#DC2626', 1.2);
+        });
       }
     });
 
-    /* ---- vegetation (draggable) ---- */
-    VEGETATION.forEach((v, vi) => {
-      const vx = (v.x || 0) - G.L/2;
-      const vz = (v.y || 0) - G.D/2;
-      const vzWorld = v.z !== undefined ? v.z : vz;
+    /* ---- attached sunspace from Windows & Shading (a vented buffer, not an opening) ---- */
+    if (typeof SUNSP !== 'undefined' && SUNSP && SUNSP.on) {
+      const f = SUNSP.face, n = faceNormalV[f];
+      const fw = (f === 'S' || f === 'N') ? G.L : G.D;
+      const w = fw * SUNSP.widthFrac, hgt = Math.min(H0, 3.0);
+      const inA = facePointV(f, -w/2, 0), inB = facePointV(f, w/2, 0);
+      const inC = facePointV(f, w/2, hgt), inD = facePointV(f, -w/2, hgt);
+      const push = p => [p[0] + n[0]*SUNSP.depth, p[1] + n[1]*SUNSP.depth, p[2]];
+      const outA = push(inA), outB = push(inB), outC = push(inC), outD = push(inD);
+      poly([outA, outB, outC, outD], 'rgba(37,99,235,.07)', '#2563EB', 1.4, [5,4]);
+      [[inA,outA],[inB,outB]].forEach(([a,b]) => {
+        stroke(ctx, '#2563EB', 1.1, [5,4]); const pa = proj(a[0],a[1],a[2]), pb = proj(b[0],b[1],b[2]); seg(ctx, pa[0], pa[1], pb[0], pb[1]);
+      });
+    }
+
+    /* ---- trees stand on open garden ground (world metres, centred) ---- */
+    VEGETATION.forEach(v => {
       const vH = v.height;
-      const col = v.type.includes('pine') || v.type.includes('cypress') ? '#22c55e'
-        : v.type.includes('oak') || v.type.includes('olive') ? '#eab308' : '#a855f6';
-      // Draw trunk/canopy as a cylinder in isometric
-      const base = proj(vx, vzWorld, 0);
-      const top = proj(vx, vzWorld, vH);
-      const r = Math.max(1, v.density * 3 * s);
-      // trunk
-      ctx.strokeStyle = '#8B4513'; ctx.lineWidth = 2;
-      seg(ctx, base[0], base[1], top[0], top[1]);
-      // canopy (circle at top)
+      const col = /pine|cypress/.test(v.type) ? '#22c55e' : /oak|olive/.test(v.type) ? '#eab308' : '#a855f6';
+      const base = proj(v.x, v.y, 0), top = proj(v.x, v.y, vH);
+      const r = Math.max(2, (v.density || 0.6) * 2.2 * s);
+      stroke(ctx, '#8B4513', 2); seg(ctx, base[0], base[1], top[0], top[1]);
       ctx.fillStyle = col;
       ctx.beginPath(); ctx.arc(top[0], top[1], r, 0, 6.28); ctx.fill();
-      // label
       ctx.font = '8px ui-sans-serif'; ctx.fillStyle = '#14171a';
-      ctx.fillText(v.type.slice(0,4), top[0]+6, top[1]-3);
+      ctx.fillText(String(v.type).slice(0,4), top[0]+6, top[1]-3);
     });
 
-    /* ---- detached walls ---- */
+    /* ---- detached walls as true vertical quads ---- */
     WALLS.forEach(w => {
-      const xOff = w.side === 'S' ? -G.L/2 : w.side === 'N' ? G.L/2 : w.side === 'E' ? -G.D/2 : G.D/2;
-      const zOff = w.side === 'S' ? -G.D/2 : w.side === 'N' ? G.D/2 : w.side === 'E' ? -G.L/2 : G.L/2;
-      const wx = xOff + w.dx;
-      const wz = zOff + w.dz;
-      const wH = w.height;
-      const wL = w.length;
-      const p0 = proj(wx, wz, 0);
-      const p1 = proj(wx + (w.side === 'E' || w.side === 'W' ? wL : 0), wz + (w.side === 'S' || w.side === 'N' ? wL : 0), wH);
-      ctx.fillStyle = '#f87171';
-      ctx.fillRect(p0[0], p0[1], p1[0]-p0[0], p1[1]-p0[1]);
-      ctx.strokeStyle = '#dc2626'; ctx.lineWidth = 1; ctx.strokeRect(p0[0], p0[1], p1[0]-p0[0], p1[1]-p0[1]);
+      const hw = w.length / 2;
+      const quad = w.along === 'y'
+        ? [[w.x, w.y - hw, 0], [w.x, w.y + hw, 0], [w.x, w.y + hw, w.height], [w.x, w.y - hw, w.height]]
+        : [[w.x - hw, w.y, 0], [w.x + hw, w.y, 0], [w.x + hw, w.y, w.height], [w.x - hw, w.y, w.height]];
+      poly(quad, 'rgba(220,38,38,.14)', '#DC2626', 1.3);
     });
 
-    /* ---- ideal-pitch fan markers (from Roof tab) ---- */
-    if (RF.n > 0) {
-      const span = RF.n === 2 ? G.D/2 : G.D;
-      const eave = proj(-G.L/2, -G.D/2, H0);
-      [{ a:latN+15, tag:'winter' }, { a:Math.max(10,latN-15), tag:'summer' }, { a:latN, tag:'year' }].forEach(gd => {
-        const idealZ = H0 + span * Math.tan(gd.a * RAD);
-        const p1 = proj(-G.L/2, -G.D/2 + span, idealZ);
-        stroke(ctx, '#16A34A', 1.4, [5, 4]); seg(ctx, eave[0], eave[1], p1[0], p1[1]);
-      });
+    /* ---- summer cross-ventilation paths through opposite pairs ---- */
+    if (showAir) {
+      const arrow = (x1, y1, z1, x2, y2, z2, color, width) => {
+        const a = proj(x1,y1,z1), b = proj(x2,y2,z2);
+        stroke(ctx, color, width || 2); seg(ctx, a[0], a[1], b[0], b[1]);
+        const an = Math.atan2(b[1]-a[1], b[0]-a[0]), hl = 8;
+        seg(ctx, b[0], b[1], b[0]-hl*Math.cos(an-0.45), b[1]-hl*Math.sin(an-0.45));
+        seg(ctx, b[0], b[1], b[0]-hl*Math.cos(an+0.45), b[1]-hl*Math.sin(an+0.45));
+      };
+      const SN = pairScore('S','N') / 100, EW = pairScore('E','W') / 100;
+      const midH = clamp(h0live() * 0.55, 1.0, 2.6);
+      const mSN = (G.D/2 + gm), mEW = (G.L/2 + gm);
+      if (SN > 0.02) arrow(0, -mSN, midH, 0, mSN, midH, 'rgba(13,148,136,.85)', 1 + 3 * SN);
+      if (EW > 0.02) arrow(-mEW, 0, midH, mEW, 0, midH, 'rgba(124,58,237,.85)', 1 + 3 * EW);
+      const up = proj(0, 0, ridge), upTop = proj(0, 0, ridge + Math.max(1.2, h0live() * 0.5));
+      stroke(ctx, 'rgba(217,119,6,.8)', 1.6, [5,4]); seg(ctx, up[0], up[1], upTop[0], upTop[1]);
     }
 
     /* ---- score readout ---- */
     const ws = { S:winterScore('S'), N:winterScore('N'), E:winterScore('E'), W:winterScore('W') };
     const ss = summerScore();
     ctx.fillStyle = '#14171a'; ctx.font = 'bold 10px ui-monospace'; ctx.textAlign = 'left';
-    ctx.fillText('Winter: S-'+ws.S+' N-'+ws.N+' E-'+ws.E+' W-'+ws.W, 8, 14);
-    ctx.fillStyle = '#16A34A'; ctx.fillText('Summer cross-ventilation: '+ss+'/100', 8, 26);
+    ctx.fillText('Winter shelter S-'+ws.S+' N-'+ws.N+' E-'+ws.E+' W-'+ws.W, 8, 14);
+    ctx.fillStyle = '#0D9488'; ctx.fillText('Summer S–N '+pairScore('S','N')+' · E–W '+pairScore('E','W')+' · mean '+ss+'/100', 8, 26);
     ctx.fillStyle = '#7b838b'; ctx.font = '9px ui-sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText('T:'+terrainKey+' W:'+windKey+' | '+VEGETATION.length+'/10 plants | '+WALLS.length+' walls', CVW/2, CVH-6);
+    ctx.fillText(fmt(lat,2)+'° '+(lat<0?'S':'N')+' · '+fmt(Math.abs(lon),2)+'° '+(lon<0?'W':'E')+' · '+fmt(S.alt||0,0)+' m · ρ '+fmt(airDensity(),3)+' kg/m³ · eave '+fmt(eaveWind(),1)+' m/s · stack(5K) '+fmt(stackPa(5),1)+' Pa', CVW/2, CVH-18);
+    ctx.fillText(SH.key+' '+fmt(SH.h,2)+' h · sun '+fmt(sun.alt,0)+'°/'+fmt(sun.azi,0)+'° · '+VEGETATION.length+'/10 trees · '+WALLS.length+' walls', CVW/2, CVH-6);
   };
 
-  /* ---- click-to-place: vegetation or wall ---- */
+  /* ---- click-to-place on open garden ground (correct ground inversion) ---- */
   const getWorldPos = (clientX, clientY) => {
     const r = cv.getBoundingClientRect();
-    const px = clientX - r.left, py = clientY - r.top;
-    // Invert isometric projection: x = ((px-cx)/s + (py-cy)/s) / (2*ISO_C), y = ((cy-py)/s - (px-cx)/s) / (2*ISO_S)
-    const x = ((px - FR.cx) / FR.s + (py - FR.cy) / FR.s) / (2 * ISO_C);
-    const y = ((FR.cy - py) / FR.s - (px - FR.cx) / FR.s) / (2 * ISO_S);
-    return { x, y };
+    const sx = (clientX - r.left) * (CVW / Math.max(1, r.width));
+    const sy = (clientY - r.top) * (CVH / Math.max(1, r.height));
+    // ground plane z=0: X=(sx-cx)/(C·s)=x−y, Y=(cy−sy)/(S·s)=x+y
+    const X = (sx - FR.cx) / (ISO_C * FR.s), Y = (FR.cy - sy) / (ISO_S * FR.s);
+    return { x:(X + Y) / 2, y:(Y - X) / 2 };
   };
+  const onBuilding = (x, y) => Math.abs(x) <= G.L/2 + 0.3 && Math.abs(y) <= G.D/2 + 0.3;
   const clickHandler = ev => {
+    if (!plantArmed && !wallArmed) { toast('Arm a species or the wall tool first'); return; }
     const pos = getWorldPos(ev.clientX, ev.clientY);
-    // Clamp to building footprint
-    pos.x = clamp(pos.x, -G.L/2, G.L/2);
-    pos.y = clamp(pos.y, -G.D/2, G.D/2);
-    if (plantMode) {
-      if (VEGETATION.length >= 10) { toast('Maximum 10 species reached'); return; }
-      const sp = plantSpecies;
+    const lim = { x:G.L/2 + FR.garden, y:G.D/2 + FR.garden };
+    pos.x = clamp(pos.x, -lim.x, lim.x);
+    pos.y = clamp(pos.y, -lim.y, lim.y);
+    if (onBuilding(pos.x, pos.y)) { toast('Plant and build on open ground, not on the building'); return; }
+    if (plantArmed) {
+      if (VEGETATION.length >= 10) { toast('Maximum 10 trees reached'); return; }
+      const sp = plantArmed;
       const h = sp === 'pine' || sp === 'cypress' ? 12 : sp === 'oak' || sp === 'eucalyptus' ? 18 : sp === 'olive' || sp === 'cork' ? 8 : 6;
       const d = sp === 'pine' || sp === 'cypress' ? 0.7 : sp === 'oak' ? 0.5 : 0.6;
-      VEGETATION.push({ type:sp, height:h, density:d, side:'S', x:pos.x, y:pos.y, z:0 });
-      plantMode = null; plantSpecies = null;
+      VEGETATION.push({ type:sp, height:h, density:d, x:+pos.x.toFixed(1), y:+pos.y.toFixed(1) });
+      plantArmed = null;
+      vegBtns.forEach(x => x.classList.toggle('solid', false));
       refresh();
-    } else {
-      WALLS.push({ side:activeWallSide, dx:pos.x, dz:pos.y, height:2.0, length:2.0 });
+    } else if (wallArmed) {
+      const f = sideOf(pos.x, pos.y);
+      WALLS.push({ x:+pos.x.toFixed(1), y:+pos.y.toFixed(1), along:(f === 'S' || f === 'N') ? 'x' : 'y', height:2.0, length:3.0 });
+      wallArmed = false;
+      wallBtn.classList.toggle('solid', false);
       refresh();
     }
   };
 
-  /* ---- hover tooltip ---- */
-  const hoverHandler = ev => {
-    const r = cv.getBoundingClientRect();
-    const px = ev.clientX - r.left, py = ev.clientY - r.top;
-    const pos = getWorldPos(ev.clientX, ev.clientY);
-    cv.style.cursor = plantMode ? 'cell' : 'crosshair';
-  };
+  /* ---- hover cursor ---- */
+  const hoverHandler = () => { cv.style.cursor = (plantArmed || wallArmed) ? 'cell' : 'crosshair'; };
 
-  /* ---- right panel: controls ---- */
+  /* ---- model panel ---- */
   const panel = host.appendChild(el('div', { class:'panel' }));
   const pHead = panel.appendChild(el('div', { class:'panel-head' }, [
-    el('div', { class:'panel-title', html:'<h3>Plant &amp; wall placement</h3><p>Click palette items, then click the model</p>' }),
+    el('div', { class:'panel-title', html:'<h3>One model — site, roof, windows, sun and air</h3><p>Volume and eave height from Site, slopes from Roof, openings and sunspace from Windows &amp; Shading, shadows from the same sun, airflow from the opposite pairs</p>' }),
     el('div', { class:'panel-tools' })
   ]));
   const pBody = panel.appendChild(el('div', { class:'panel-body' }));
+  pBody.appendChild(cv);
 
   /* ---- refresh everything ---- */
   const refresh = () => {
     vegCount.textContent = VEGETATION.length + '/10';
+    placeHint.textContent = (plantArmed ? ' planting ' + plantArmed + ' — click open ground' : '') + (wallArmed ? ' placing wall — click open ground' : '');
+    const sn = sunPos(SH.doy, SH.h, lat, lon, tz);
+    liveLine.innerHTML = '';
+    liveLine.appendChild(document.createTextNode(
+      t('Site') + ' ' + fmt(Math.abs(lat), 2) + '° ' + (lat < 0 ? 'S' : 'N') + ' · ' +
+      fmt(Math.abs(lon), 2) + '° ' + (lon < 0 ? 'W' : 'E') + ' · ' + fmt(S.alt || 0, 0) + ' m' +
+      ' — ρ ' + fmt(airDensity(), 3) + ' kg/m³ · ' + t('eave wind') + ' ' + fmt(eaveWind(), 1) +
+      ' m/s · stack(ΔT 5K) ' + fmt(stackPa(5), 1) + ' Pa · ' + SH.key + ' ' + fmt(SH.h, 2) + ' h' +
+      ' · ' + t('sun') + ' ' + fmt(sn.alt, 0) + '°/' + fmt(sn.azi, 0) + '°' +
+      ' · S–N ' + pairScore('S','N') + ' · E–W ' + pairScore('E','W') + ' · ' + t('winter') +
+      ' S ' + winterScore('S') + '/N ' + winterScore('N') + '/E ' + winterScore('E') + '/W ' + winterScore('W')));
     draw();
   };
   cv.addEventListener('click', clickHandler);
   cv.addEventListener('mousemove', hoverHandler);
+  setDayV(SH.doy);
   refresh();
 
-  /* ---- CSV export ---- */
-  const slug = s => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 60);
-  const sitePrefix = () => {
-    const p = STATE.site.place || STATE.site.nuts;
-    return p ? p.toLowerCase().replace(/\s+/g, '-') : 'site';
-  };
+  /* ---- CSV export (self-describing, like the other tabs) ---- */
   pBody.appendChild(el('button', { class:'btn', onclick:() => {
+    const sn = sunPos(SH.doy, SH.h, lat, lon, tz);
     const rows = [['Parameter','Value']];
-    rows.push(['Terrain', terrainKey], ['Wind exposure', windKey]);
-    rows.push(['Winter protection S', winterScore('S')+'/100']);
-    rows.push(['Summer cross-ventilation', summerScore()+'/100']);
-    rows.push(['Vegetation species', VEGETATION.length]);
-    rows.push(['Detached walls', WALLS.length]);
-    VEGETATION.forEach(v => rows.push(['Plant', v.type+' h='+v.height+'m d='+v.density+' '+FACE_NAME[v.side]]));
-    WALLS.forEach(w => rows.push(['Wall', FACE_NAME[w.side]+' h='+w.height+'m l='+w.length]));
-    download(new Blob([csvRows(rows)], { type:'text/csv;charset=utf-8' }), slug(sitePrefix()+'-ventilation')+'.csv');
+    rows.push(['Latitude (°)', +lat.toFixed(3)], ['Longitude (°)', +lon.toFixed(3)], ['Altitude (m)', +(S.alt || 0)]);
+    rows.push(['Air density (kg/m³)', +airDensity().toFixed(3)]);
+    rows.push(['Reference wind 10 m (m/s)', +refWind.toFixed(1)], ['Terrain', terrainKey], ['Wind exposure', windKey]);
+    rows.push(['Eave wind (m/s)', +eaveWind().toFixed(2)]);
+    rows.push(['Eave height H0 (m)', +h0live().toFixed(2)], ['Stack Δp ΔT=5K (Pa)', +stackPa(5).toFixed(2)]);
+    rows.push(['Plan L×D (m)', G.L.toFixed(1) + '×' + G.D.toFixed(1)], ['Roof slopes', RF.n], ['Roof pitch (°)', +RF.th.toFixed(0)]);
+    ['S','N','E','W'].forEach(f => {
+      const r = windowRectV(f), o = OPEN[f];
+      rows.push([f + ' window w×h (m)', r.w.toFixed(2) + '×' + r.h.toFixed(2)],
+        [f + ' WWR', +o.wwr.toFixed(2)], [f + ' overhang (m×n)', o.ovD.toFixed(2) + '×' + o.ovN],
+        [f + ' fins (m×n×side)', o.finD.toFixed(2) + '×' + o.finN + '×' + o.finSide],
+        [f + ' openable area (m²)', +openArea(f).toFixed(2)], [f + ' blockage', +blockage(f).toFixed(2)],
+        [f + ' winter shelter', winterScore(f) + '/100']);
+    });
+    rows.push(['Summer S–N', pairScore('S','N') + '/100'], ['Summer E–W', pairScore('E','W') + '/100']);
+    rows.push(['Summer cross-ventilation', summerScore() + '/100']);
+    rows.push(['Sun day', SH.key], ['Solar time (h)', +SH.h.toFixed(2)]);
+    rows.push(['Sun altitude (°)', +sn.alt.toFixed(1)], ['Sun azimuth (°)', +sn.azi.toFixed(1)]);
+    rows.push(['Ridge shadow (m)', +shadowLenV(h0live() + ((RF.n === 0 ? 0 : RF.th) ? (RF.n === 2 ? G.D/2 : G.D) * Math.tan(RF.th * RAD) : 0), sn.alt).toFixed(1)]);
+    rows.push(['Sunspace', (typeof SUNSP !== 'undefined' && SUNSP && SUNSP.on) ? SUNSP.face + ' d=' + SUNSP.depth.toFixed(1) + 'm w=' + Math.round(SUNSP.widthFrac*100) + '%' : 'off']);
+    VEGETATION.forEach(v => rows.push(['Tree', v.type + ' h=' + v.height + 'm d=' + v.density + ' x=' + v.x + ' y=' + v.y + ' → ' + sideOf(v.x, v.y)]));
+    WALLS.forEach(w => rows.push(['Wall', 'x=' + w.x + ' y=' + w.y + ' ' + w.along + ' h=' + w.height + 'm l=' + w.length + 'm → ' + sideOf(w.x, w.y)]));
+    rows.push(['Köppen–Geiger', (C && C.k) ? C.k.code : '']);
+    rows.push(['Note', 'Openable area assumes 50% of geometric window; teaching index, not an energy model']);
+    download(new Blob([csvHeader([['Site', (S.place || S.nuts || '') + ' ' + lat.toFixed(2) + ' ' + lon.toFixed(2)]]) + csvRows(rows)], { type:'text/csv;charset=utf-8' }), slugify(sitePrefix() + '-ventilation') + '.csv');
     toast('CSV exported');
   }, text:'Export CSV' }));
 }
