@@ -605,7 +605,7 @@ footer{border-top:1px solid var(--line); margin-top:26px; background:var(--wash)
 /* ------------------------------------------------------------ 0. IDENTITY -- */
 const APP = {
   name:        'Architecture Advisor',
-  version:     '1.16.2',
+  version:     '1.16.3',
   author:      'Nuno Dinis Cortiços',
   institution: 'Lisbon School of Architecture, Universidade de Lisboa',
   builtWith:   'Claude Opus 5 (Anthropic)',
@@ -3411,6 +3411,18 @@ function buildVentilation(host) {
   const facePointV = (f, u, v) => f === 'S' ? [u, -G.D / 2, v] : f === 'N' ? [u, G.D / 2, v]
     : f === 'E' ? [G.L / 2, u, v] : [-G.L / 2, u, v];
   const faceNormalV = { S:[0,-1,0], N:[0,1,0], E:[1,0,0], W:[-1,0,0] };
+
+  /** Turn the model to face a facade — the same camera trick as Windows &
+      Shading: south or west keeps the default south-west corner view
+      (camS=1), north or east flips both world axes (camS=-1) to the
+      opposite corner instead. Only two states are ever needed, since each
+      one already shows two adjacent walls at once. */
+  let curFace = 'S';
+  const camSign = () => (curFace === 'S' || curFace === 'W') ? 1 : -1;
+  const faceVisible = () => camSign() === 1
+    ? { S:true, W:true, N:false, E:false }
+    : { N:true, E:true, S:false, W:false };
+
   const hullV = pts => {
     const p = pts.slice().sort((a, b) => a[0] - b[0] || a[1] - b[1]);
     const cross = (o, a, b) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
@@ -3514,6 +3526,15 @@ function buildVentilation(host) {
   const cAir = checkCtl('Show cross-ventilation paths', true, v => { showAir = v; refresh(); });
   host.appendChild(controls([cShadow, cAir]));
 
+  /* ---- turn the model: same facade-picking camera as Windows & Shading ---- */
+  host.appendChild(section('Turn the model',
+    'Click a facade to turn the view and face it — the compass marks whichever two are out of view.'));
+  const cFace = segCtl('Facade', FACES.map(f => ({ value:f, label:FACE_NAME[f] })), curFace,
+    v => { curFace = v; refresh(); });
+  host.appendChild(cFace);
+  host.appendChild(hint('vent-face',
+    'The camera only ever shows two adjacent walls at once, from whichever corner puts the chosen facade in view — south-west for South or West, north-east for North or East — exactly as on Windows &amp; Shading. Trees, walls and the airflow arrows are unaffected: they read from world position, not from whatever the camera currently shows.'));
+
   /* ---- sun controls: day + solar hour drive shadows and sunlit facades ---- */
   host.appendChild(section('Sun for shadows',
     'The same sun as Site and Windows & Shading. Summer noon shows what the shading must cut and what buoyancy can exhaust; winter shows what the sun still reaches.'));
@@ -3594,7 +3615,8 @@ function buildVentilation(host) {
     ctx.fillStyle = '#fafbf9';
     ctx.fillRect(0, 0, CVW, CVH);
 
-    const proj = (x, y, z) => projF(FR, x, y, z);
+    const camS = camSign();
+    const proj = (x, y, z) => projF(FR, camS * x, camS * y, z);
     const poly = (pts3, fill, strokeColor, width, dash) => {
       const p = pts3.map(q => proj(q[0], q[1], q[2]));
       ctx.beginPath();
@@ -3628,25 +3650,36 @@ function buildVentilation(host) {
       label(ctx, fmt(Lsh, 1) + ' m', tq[0] + 5, tq[1] - 5, CH.ink2, FM(9.5), 'left', 'middle');
     }
 
-    /* ---- compass: true north, so rotation from Site stays legible ---- */
+    /* ---- compass: true north, so rotation from Site stays legible — always
+       all four points, so the two facades currently out of view stay
+       locatable by direction (as on Windows & Shading) ---- */
     const compassR = Math.max(G.L, G.D) / 2 + 2.2;
+    const vis = faceVisible();
     [['N', 0, 1], ['E', 1, 0], ['S', 0, -1], ['W', -1, 0]].forEach(([c, dx, dy]) => {
       const p = proj(compassR * dx, compassR * dy, 0);
-      label(ctx, c, p[0], p[1], c === 'N' ? CH.ink : CH.muted, F(10, '600'), 'center', 'middle');
+      label(ctx, c, p[0], p[1], vis[c] ? (c === 'N' ? CH.ink : CH.muted) : CH.faint, F(10, '600'), 'center', 'middle');
     });
 
-    /* ---- full volume: back pair first, front pair over it ---- */
+    /* ---- full volume: whichever pair is behind the camera, first — the
+       default south-west view keeps north+east at the back as before;
+       turning to face north or east flips camS, so south+west become the
+       far pair instead and must be painted first to stay hidden ---- */
     const southTop = RF.n === 1 ? H0 : H0, northTop = RF.n === 1 ? ridge : H0;
-    poly([[-G.L/2, G.D/2, 0], [G.L/2, G.D/2, 0], [G.L/2, G.D/2, northTop], [-G.L/2, G.D/2, northTop]],
-         'rgba(20,23,26,.05)', CH.ink, 1.2);
-    const eastBreaks = RF.n === 2 ? [G.D/2, 0, -G.D/2] : [G.D/2, -G.D/2];
-    poly([[G.L/2, -G.D/2, 0], [G.L/2, G.D/2, 0]].concat(eastBreaks.map(y => [G.L/2, y, topZ(y)])),
-         'rgba(20,23,26,.05)', CH.ink, 1.2);
-    poly([[-G.L/2, -G.D/2, 0], [G.L/2, -G.D/2, 0], [G.L/2, -G.D/2, southTop], [-G.L/2, -G.D/2, southTop]],
-         'rgba(20,23,26,.14)', CH.ink, 1.4);
-    const westBreaks = RF.n === 2 ? [G.D/2, 0, -G.D/2] : [G.D/2, -G.D/2];
-    poly([[-G.L/2, -G.D/2, 0], [-G.L/2, G.D/2, 0]].concat(westBreaks.map(y => [-G.L/2, y, topZ(y)])),
-         'rgba(20,23,26,.08)', CH.ink, 1.4);
+    const drawNE = () => {
+      poly([[-G.L/2, G.D/2, 0], [G.L/2, G.D/2, 0], [G.L/2, G.D/2, northTop], [-G.L/2, G.D/2, northTop]],
+           'rgba(20,23,26,.05)', CH.ink, 1.2);
+      const eastBreaks = RF.n === 2 ? [G.D/2, 0, -G.D/2] : [G.D/2, -G.D/2];
+      poly([[G.L/2, -G.D/2, 0], [G.L/2, G.D/2, 0]].concat(eastBreaks.map(y => [G.L/2, y, topZ(y)])),
+           'rgba(20,23,26,.05)', CH.ink, 1.2);
+    };
+    const drawSW = () => {
+      poly([[-G.L/2, -G.D/2, 0], [G.L/2, -G.D/2, 0], [G.L/2, -G.D/2, southTop], [-G.L/2, -G.D/2, southTop]],
+           'rgba(20,23,26,.14)', CH.ink, 1.4);
+      const westBreaks = RF.n === 2 ? [G.D/2, 0, -G.D/2] : [G.D/2, -G.D/2];
+      poly([[-G.L/2, -G.D/2, 0], [-G.L/2, G.D/2, 0]].concat(westBreaks.map(y => [-G.L/2, y, topZ(y)])),
+           'rgba(20,23,26,.08)', CH.ink, 1.4);
+    };
+    if (camS === 1) { drawNE(); drawSW(); } else { drawSW(); drawNE(); }
 
     /* ---- roof from Roof tab: both slopes so the stack height reads ---- */
     if (RF.n === 0) {
@@ -3654,8 +3687,9 @@ function buildVentilation(host) {
     } else if (RF.n === 1) {
       poly([[-G.L/2,-G.D/2,H0], [G.L/2,-G.D/2,H0], [G.L/2,G.D/2,ridge], [-G.L/2,G.D/2,ridge]], 'rgba(20,23,26,.05)', CH.ink, 2);
     } else {
-      poly([[-G.L/2,G.D/2,H0], [G.L/2,G.D/2,H0], [G.L/2,0,ridge], [-G.L/2,0,ridge]], 'rgba(20,23,26,.04)', CH.ink, 1.6);
-      poly([[-G.L/2,-G.D/2,H0], [G.L/2,-G.D/2,H0], [G.L/2,0,ridge], [-G.L/2,0,ridge]], 'rgba(20,23,26,.06)', CH.ink, 2);
+      const drawRoofN = () => poly([[-G.L/2,G.D/2,H0], [G.L/2,G.D/2,H0], [G.L/2,0,ridge], [-G.L/2,0,ridge]], 'rgba(20,23,26,.04)', CH.ink, 1.6);
+      const drawRoofS = () => poly([[-G.L/2,-G.D/2,H0], [G.L/2,-G.D/2,H0], [G.L/2,0,ridge], [-G.L/2,0,ridge]], 'rgba(20,23,26,.06)', CH.ink, 2);
+      if (camS === 1) { drawRoofN(); drawRoofS(); } else { drawRoofS(); drawRoofN(); }
       const r0 = proj(-G.L/2, 0, ridge), r1 = proj(G.L/2, 0, ridge);
       stroke(ctx, CH.ink, 1.6); seg(ctx, r0[0], r0[1], r1[0], r1[1]);
     }
@@ -3780,9 +3814,12 @@ function buildVentilation(host) {
   };
   const getWorldPos = (clientX, clientY) => {
     const [sx, sy] = toBacking(clientX, clientY);
-    // ground plane z=0: X=(sx-cx)/(C·s)=x−y, Y=(cy−sy)/(S·s)=x+y
+    const camS = camSign();
+    // ground plane z=0: X=(sx-cx)/(C·s)=x−y, Y=(cy−sy)/(S·s)=x+y, in the
+    // camera's own (possibly flipped) axes — divide out camS to recover
+    // true world x/y, undoing the same flip proj() applies when drawing
     const X = (sx - FR.cx) / (ISO_C * FR.s), Y = (FR.cy - sy) / (ISO_S * FR.s);
-    return { x:(X + Y) / 2, y:(Y - X) / 2 };
+    return { x: camS * (X + Y) / 2, y: camS * (Y - X) / 2 };
   };
   const onBuilding = (x, y) => Math.abs(x) <= G.L/2 + 0.3 && Math.abs(y) <= G.D/2 + 0.3;
   const distSeg = (px, py, ax, ay, bx, by) => {
@@ -3795,7 +3832,8 @@ function buildVentilation(host) {
   const pickItem = (clientX, clientY) => {
     if (!FR) return null;
     const [sx, sy] = toBacking(clientX, clientY);
-    const proj = (x, y, z) => projF(FR, x, y, z);
+    const camS = camSign();
+    const proj = (x, y, z) => projF(FR, camS * x, camS * y, z);
     let best = null;
     VEGETATION.forEach((v, i) => {
       const p = proj(v.x, v.y, v.height);
