@@ -139,6 +139,8 @@ input[type=range]{width:120px; accent-color:var(--ink)}
 }
 .seg button:last-child{border-right:none}
 .seg button[aria-pressed="true"]{background:var(--ink); color:#fff}
+.seg.need{box-shadow:0 0 0 2px #DC2626}
+.seg.done{box-shadow:0 0 0 2px #16A34A}
 .divider{width:1px; align-self:stretch; background:var(--line); margin:0 2px}
 
 /* ---------- Stats ---------- */
@@ -605,7 +607,7 @@ footer{border-top:1px solid var(--line); margin-top:26px; background:var(--wash)
 /* ------------------------------------------------------------ 0. IDENTITY -- */
 const APP = {
   name:        'Architecture Advisor',
-  version:     '1.16.3',
+  version:     '1.16.4',
   author:      'Nuno Dinis Cortiços',
   institution: 'Lisbon School of Architecture, Universidade de Lisboa',
   builtWith:   'Claude Opus 5 (Anthropic)',
@@ -3453,13 +3455,32 @@ function buildVentilation(host) {
   const cTerrain = segCtl('Terrain', [{ value:'flat', label:'Flat' }, { value:'rolling', label:'Rolling' }, { value:'hilly', label:'Hilly' }, { value:'mountainous', label:'Mountainous' }], 'flat',
     v => { terrainKey = v; refresh(); });
   const cWind = segCtl('Wind exposure', [{ value:'sheltered', label:'Sheltered' }, { value:'moderate', label:'Moderate' }, { value:'exposed', label:'Exposed' }], 'moderate',
-    v => { windKey = v; refresh(); });
+    v => { windKey = v; setExposure('done'); refresh(); });
+  /* Exposure is the one judgement derivation cannot make for the student:
+     each successful derivation turns its control red until an option is
+     picked, then green. */
+  let exposureState = 'idle';
+  const expoPill = el('span', { class:'pill bad', text:'' });
+  expoPill.style.display = 'none';
+  function setExposure(st) {
+    exposureState = st;
+    const seg = cWind.querySelector('.seg');
+    if (seg) { seg.classList.toggle('need', st === 'need'); seg.classList.toggle('done', st === 'done'); }
+    if (st === 'idle') { expoPill.style.display = 'none'; return; }
+    expoPill.style.display = '';
+    if (st === 'need') { expoPill.className = 'pill bad'; expoPill.textContent = t('Judge the wind exposure — yours to decide'); }
+    else {
+      expoPill.className = 'pill ok';
+      expoPill.textContent = t('Exposure judged') + ': ' + t({ sheltered:'Sheltered', moderate:'Moderate', exposed:'Exposed' }[windKey]);
+    }
+  }
   const cRef = rangeCtl('Reference wind at 10 m', 1, 8, 0.5, refWind, v => { refWind = v; refresh(); }, v => fmt(v, 1) + ' m/s');
   host.appendChild(controls([cTerrain, cWind, cRef]));
   const TERRAIN_NAME = { flat:'Flat', rolling:'Rolling', hilly:'Hilly', mountainous:'Mountainous' };
   const deriveBtn = el('button', { class:'btn', text:'Derive terrain + wind from coordinates' });
   const deriveStatus = el('span', { class:'fieldstatus', text:'' });
   host.appendChild(controls([deriveBtn, deriveStatus]));
+  host.appendChild(el('div', { class:'limitrow' }, [expoPill]));
   let derivedRelief = null, derivedWindSrc = '';
   /** Terrain class from the relief around the site (same two public elevation
       services as the altitude lookup, one batched request each over a ~2 km
@@ -3513,6 +3534,7 @@ function buildVentilation(host) {
       deriveStatus.textContent = t('Relief') + ' ' + fmt(relief, 0) + ' m/2 km → ' + t(TERRAIN_NAME[terrainKey]) +
         ' · ' + t('mean wind') + ' ' + fmt(mean, 1) + ' m/s (' + derivedWindSrc + ') → ' + fmt(refWind, 1) +
         ' m/s · ' + t('exposure stays yours to judge');
+      setExposure('need');
       refresh();
     } catch (err) {
       deriveStatus.textContent = t('Derivation failed — keep the manual values');
@@ -4793,6 +4815,8 @@ Object.assign(PT, {
   "mean wind": "vento médio",
   "exposure stays yours to judge": "a exposição continua a seu juízo",
   "Derivation failed — keep the manual values": "Derivação falhou — manter os valores manuais",
+  "Judge the wind exposure — yours to decide": "Avalie a exposição ao vento — a decisão é sua",
+  "Exposure judged": "Exposição avaliada",
   "Pitch": "Inclinação",
   "Flat — frame the collectors, insulate for summer": "Plana — colectores em estrutura, isolar para o Verão",
   "Winter ideal": "Ideal de Inverno",
