@@ -607,7 +607,7 @@ footer{border-top:1px solid var(--line); margin-top:26px; background:var(--wash)
 /* ------------------------------------------------------------ 0. IDENTITY -- */
 const APP = {
   name:        'Architecture Advisor',
-  version:     '1.16.4',
+  version:     '1.16.5',
   author:      'Nuno Dinis Cortiços',
   institution: 'Lisbon School of Architecture, Universidade de Lisboa',
   builtWith:   'Claude Opus 5 (Anthropic)',
@@ -1454,6 +1454,19 @@ function koppen(t, p, south) {
 
 /** The label a site carries in a chip, a title and an export filename. */
 const sitePrefix = () => STATE.site ? (STATE.site.place || STATE.site.nuts) + ' ' : '';
+
+/** One line under the title of an exported PNG: place, region, coordinates
+   and Köppen class, so the figure is self-describing outside the page. */
+function siteCaption() {
+  const S = STATE.site;
+  if (!S) return null;
+  const K = STATE.clim && STATE.clim.k;
+  let s = (S.place || S.nuts || '');
+  if (S.place && S.nuts && S.place !== S.nuts) s += ' \u00b7 ' + S.nuts;
+  if (isFinite(S.lat) && isFinite(S.lon)) s += ' \u00b7 ' + fmt(S.lat, 2) + ', ' + fmt(S.lon, 2);
+  if (K) s += ' \u00b7 ' + K.code;
+  return s || null;
+}
 
 /** The site rows the shared CSV header asks each application to supply. */
 function csvSiteRows() {
@@ -3622,20 +3635,19 @@ function buildVentilation(host) {
   const placeHint = el('span', { class:'hint', text:'' });
   wallPalette.appendChild(placeHint);
 
-  /* ---- 3D canvas (wider: garden + shadows need room) ---- */
-  const CVW = 900, CVH = 420;
-  const cv = el('canvas', { width:CVW, height:CVH, class:'chart' });
-  cv.style.cursor = 'crosshair';
-  cv.style.width = '100%';
-  const ctx = cv.getContext('2d');
-  let FR = null;
+  /* ---- 3D canvas (wider: garden + shadows need room) ----
+     The same vectorial panel as Site and Roof: makePanel owns the canvas,
+     so this view gets device-pixel scaling, resize handling and 3x PNG
+     export instead of a fixed 900x420 backing store. The scene below draws
+     in CSS pixels for whatever width the layout gives it. ---- */
+  let ventPanel = null, FR = null;
 
-  const draw = () => {
-    FR = frame(CVW, CVH);
+  const draw = () => { if (ventPanel) ventPanel.draw(); };
+  const renderVent = (ctx, W, H) => {
+    FR = frame(W, H);
     const { cx, cy, s, H0, ridge, roofSpan, roofTh } = FR;
-    ctx.clearRect(0, 0, CVW, CVH);
     ctx.fillStyle = '#fafbf9';
-    ctx.fillRect(0, 0, CVW, CVH);
+    ctx.fillRect(0, 0, W, H);
 
     const camS = camSign();
     const proj = (x, y, z) => projF(FR, camS * x, camS * y, z);
@@ -3819,9 +3831,53 @@ function buildVentilation(host) {
     ctx.fillStyle = '#0D9488'; ctx.fillText('Summer S–N '+pairScore('S','N')+' · E–W '+pairScore('E','W')+' · mean '+ss+'/100', 8, 26);
     ctx.fillStyle = '#7b838b'; ctx.font = '9px ui-sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText(fmt(lat,2)+'° '+(lat<0?'S':'N')+' · '+fmt(Math.abs(lon),2)+'° '+(lon<0?'W':'E')+' · '+fmt(S.alt||0,0)+' m · ρ '+fmt(airDensity(),3)+' kg/m³ · eave '+fmt(eaveWind(),1)+' m/s · stack(5K) '+fmt(stackPa(5),1)+' Pa', CVW/2, CVH-18);
-    ctx.fillText(SH.key+' '+fmt(SH.h,2)+' h · sun '+fmt(sun.alt,0)+'°/'+fmt(sun.azi,0)+'° · '+VEGETATION.length+'/10 trees · '+WALLS.length+' walls', CVW/2, CVH-6);
+    ctx.fillText(fmt(lat,2)+'° '+(lat<0?'S':'N')+' · '+fmt(Math.abs(lon),2)+'° '+(lon<0?'W':'E')+' · '+fmt(S.alt||0,0)+' m · ρ '+fmt(airDensity(),3)+' kg/m³ · eave '+fmt(eaveWind(),1)+' m/s · stack(5K) '+fmt(stackPa(5),1)+' Pa', W/2, H-18);
+    ctx.fillText(SH.key+' '+fmt(SH.h,2)+' h · sun '+fmt(sun.alt,0)+'°/'+fmt(sun.azi,0)+'° · '+VEGETATION.length+'/10 trees · '+WALLS.length+' walls', W/2, H-6);
   };
+
+  /* ---- CSV behind the panel export: the same rows the old button
+     wrote, now returned for the panel's own CSV tool ---- */
+  const ventCSV = () => {
+    const sn = sunPos(SH.doy, SH.h, lat, lon, tz);
+    const rows = [['Parameter','Value']];
+    rows.push(['Latitude (°)', +lat.toFixed(3)], ['Longitude (°)', +lon.toFixed(3)], ['Altitude (m)', +(S.alt || 0)]);
+    rows.push(['Air density (kg/m³)', +airDensity().toFixed(3)]);
+    rows.push(['Reference wind 10 m (m/s)', +refWind.toFixed(1)], ['Terrain', terrainKey], ['Wind exposure', windKey]);
+    if (derivedRelief !== null) rows.push(['Relief 2 km window (m)', +derivedRelief.toFixed(0)]);
+    rows.push(['Reference wind source', derivedWindSrc ? derivedWindSrc + ' annual mean at 10 m' : 'entered by hand']);
+    rows.push(['Eave wind (m/s)', +eaveWind().toFixed(2)]);
+    rows.push(['Eave height H0 (m)', +h0live().toFixed(2)], ['Stack Δp ΔT=5K (Pa)', +stackPa(5).toFixed(2)]);
+    rows.push(['Plan L×D (m)', G.L.toFixed(1) + '×' + G.D.toFixed(1)], ['Roof slopes', RF.n], ['Roof pitch (°)', +RF.th.toFixed(0)]);
+    ['S','N','E','W'].forEach(f => {
+      const r = windowRectV(f), o = OPEN[f];
+      rows.push([f + ' window w×h (m)', r.w.toFixed(2) + '×' + r.h.toFixed(2)],
+        [f + ' WWR', +o.wwr.toFixed(2)], [f + ' overhang (m×n)', o.ovD.toFixed(2) + '×' + o.ovN],
+        [f + ' fins (m×n×side)', o.finD.toFixed(2) + '×' + o.finN + '×' + o.finSide],
+        [f + ' openable area (m²)', +openArea(f).toFixed(2)], [f + ' blockage', +blockage(f).toFixed(2)],
+        [f + ' winter shelter', winterScore(f) + '/100']);
+    });
+    rows.push(['Summer S–N', pairScore('S','N') + '/100'], ['Summer E–W', pairScore('E','W') + '/100']);
+    rows.push(['Summer cross-ventilation', summerScore() + '/100']);
+    rows.push(['Sun day', SH.key], ['Solar time (h)', +SH.h.toFixed(2)]);
+    rows.push(['Sun altitude (°)', +sn.alt.toFixed(1)], ['Sun azimuth (°)', +sn.azi.toFixed(1)]);
+    rows.push(['Ridge shadow (m)', +shadowLenV(h0live() + ((RF.n === 0 ? 0 : RF.th) ? (RF.n === 2 ? G.D/2 : G.D) * Math.tan(RF.th * RAD) : 0), sn.alt).toFixed(1)]);
+    rows.push(['Sunspace', (typeof SUNSP !== 'undefined' && SUNSP && SUNSP.on) ? SUNSP.face + ' d=' + SUNSP.depth.toFixed(1) + 'm w=' + Math.round(SUNSP.widthFrac*100) + '%' : 'off']);
+    VEGETATION.forEach(v => rows.push(['Tree', v.type + ' h=' + v.height + 'm d=' + v.density + ' x=' + v.x + ' y=' + v.y + ' → ' + sideOf(v.x, v.y)]));
+    WALLS.forEach(w => rows.push(['Wall', 'x=' + w.x + ' y=' + w.y + ' ' + w.along + ' h=' + w.height + 'm l=' + w.length + 'm → ' + sideOf(w.x, w.y)]));
+    rows.push(['Köppen–Geiger', (C && C.k) ? C.k.code : '']);
+    rows.push(['Note', 'Openable area assumes 50% of geometric window; teaching index, not an energy model']);
+    return csvHeader([['Site', (S.place || S.nuts || '') + ' ' + lat.toFixed(2) + ' ' + lon.toFixed(2)]]) + csvRows(rows);
+  };
+
+  ventPanel = makePanel(host, {
+    title: 'One model \u2014 site, roof, windows, sun and air',
+    note: 'Volume and eave height from Site, slopes from Roof, openings and sunspace from Windows & Shading, shadows from the same sun, airflow from the opposite pairs \u2014 arm a tool to place, drag items to move them, double-click to remove',
+    aspect: 900 / 420,
+    render: renderVent,
+    csv: ventCSV
+  });
+  const cv = ventPanel.canvas;
+  cv.style.cursor = 'crosshair';
 
   /* ---- pointer model, as on Site/Roof/Windows: click to place, drag to
      move, double-click to remove. Placement needs an armed tool; dragging
@@ -3829,10 +3885,12 @@ function buildVentilation(host) {
   cv.style.touchAction = 'none';
   cv.draggable = false;
   cv.addEventListener('dragstart', ev => ev.preventDefault());
+  /* CSS pixels: the panel canvas is device-pixel scaled, but its bounding
+     rect reports the CSS size the scene was drawn in, so no backing-store
+     factor is needed. */
   const toBacking = (clientX, clientY) => {
     const r = cv.getBoundingClientRect();
-    return [(clientX - r.left) * (CVW / Math.max(1, r.width)),
-            (clientY - r.top) * (CVH / Math.max(1, r.height))];
+    return [clientX - r.left, clientY - r.top];
   };
   const getWorldPos = (clientX, clientY) => {
     const [sx, sy] = toBacking(clientX, clientY);
@@ -3850,7 +3908,7 @@ function buildVentilation(host) {
     u = clamp(u, 0, 1);
     return Math.hypot(px - (ax + u * dx), py - (ay + u * dy));
   };
-  /** Nearest placed item to a pointer position (backing-store pixels). */
+  /** Nearest placed item to a pointer position (CSS pixels). */
   const pickItem = (clientX, clientY) => {
     if (!FR) return null;
     const [sx, sy] = toBacking(clientX, clientY);
@@ -3964,16 +4022,9 @@ function buildVentilation(host) {
     toast(hit.kind === 'tree' ? 'Tree removed' : 'Wall removed');
   });
 
-  /* ---- model panel ---- */
-  const panel = host.appendChild(el('div', { class:'panel' }));
-  const pHead = panel.appendChild(el('div', { class:'panel-head' }, [
-    el('div', { class:'panel-title', html:'<h3>One model — site, roof, windows, sun and air</h3><p>Volume and eave height from Site, slopes from Roof, openings and sunspace from Windows &amp; Shading, shadows from the same sun, airflow from the opposite pairs — arm a tool to place, drag items to move them, double-click to remove</p>' }),
-    el('div', { class:'panel-tools' })
-  ]));
-  const pBody = panel.appendChild(el('div', { class:'panel-body' }));
-  pBody.appendChild(cv);
-
-  /* ---- refresh everything ---- */
+  /* ---- refresh everything ----
+     The panel already owns the canvas; refresh only updates the live
+     readout and redraws through it. ---- */
   const refresh = () => {
     vegCount.textContent = VEGETATION.length + '/10';
     placeHint.textContent = (plantArmed ? ' planting ' + plantArmed + ' — click open ground' : '') + (wallArmed ? ' placing wall — click open ground' : '');
@@ -3992,40 +4043,6 @@ function buildVentilation(host) {
   cv.addEventListener('click', clickHandler);
   setDayV(SH.doy);
   refresh();
-
-  /* ---- CSV export (self-describing, like the other tabs) ---- */
-  pBody.appendChild(el('button', { class:'btn', onclick:() => {
-    const sn = sunPos(SH.doy, SH.h, lat, lon, tz);
-    const rows = [['Parameter','Value']];
-    rows.push(['Latitude (°)', +lat.toFixed(3)], ['Longitude (°)', +lon.toFixed(3)], ['Altitude (m)', +(S.alt || 0)]);
-    rows.push(['Air density (kg/m³)', +airDensity().toFixed(3)]);
-    rows.push(['Reference wind 10 m (m/s)', +refWind.toFixed(1)], ['Terrain', terrainKey], ['Wind exposure', windKey]);
-    if (derivedRelief !== null) rows.push(['Relief 2 km window (m)', +derivedRelief.toFixed(0)]);
-    rows.push(['Reference wind source', derivedWindSrc ? derivedWindSrc + ' annual mean at 10 m' : 'entered by hand']);
-    rows.push(['Eave wind (m/s)', +eaveWind().toFixed(2)]);
-    rows.push(['Eave height H0 (m)', +h0live().toFixed(2)], ['Stack Δp ΔT=5K (Pa)', +stackPa(5).toFixed(2)]);
-    rows.push(['Plan L×D (m)', G.L.toFixed(1) + '×' + G.D.toFixed(1)], ['Roof slopes', RF.n], ['Roof pitch (°)', +RF.th.toFixed(0)]);
-    ['S','N','E','W'].forEach(f => {
-      const r = windowRectV(f), o = OPEN[f];
-      rows.push([f + ' window w×h (m)', r.w.toFixed(2) + '×' + r.h.toFixed(2)],
-        [f + ' WWR', +o.wwr.toFixed(2)], [f + ' overhang (m×n)', o.ovD.toFixed(2) + '×' + o.ovN],
-        [f + ' fins (m×n×side)', o.finD.toFixed(2) + '×' + o.finN + '×' + o.finSide],
-        [f + ' openable area (m²)', +openArea(f).toFixed(2)], [f + ' blockage', +blockage(f).toFixed(2)],
-        [f + ' winter shelter', winterScore(f) + '/100']);
-    });
-    rows.push(['Summer S–N', pairScore('S','N') + '/100'], ['Summer E–W', pairScore('E','W') + '/100']);
-    rows.push(['Summer cross-ventilation', summerScore() + '/100']);
-    rows.push(['Sun day', SH.key], ['Solar time (h)', +SH.h.toFixed(2)]);
-    rows.push(['Sun altitude (°)', +sn.alt.toFixed(1)], ['Sun azimuth (°)', +sn.azi.toFixed(1)]);
-    rows.push(['Ridge shadow (m)', +shadowLenV(h0live() + ((RF.n === 0 ? 0 : RF.th) ? (RF.n === 2 ? G.D/2 : G.D) * Math.tan(RF.th * RAD) : 0), sn.alt).toFixed(1)]);
-    rows.push(['Sunspace', (typeof SUNSP !== 'undefined' && SUNSP && SUNSP.on) ? SUNSP.face + ' d=' + SUNSP.depth.toFixed(1) + 'm w=' + Math.round(SUNSP.widthFrac*100) + '%' : 'off']);
-    VEGETATION.forEach(v => rows.push(['Tree', v.type + ' h=' + v.height + 'm d=' + v.density + ' x=' + v.x + ' y=' + v.y + ' → ' + sideOf(v.x, v.y)]));
-    WALLS.forEach(w => rows.push(['Wall', 'x=' + w.x + ' y=' + w.y + ' ' + w.along + ' h=' + w.height + 'm l=' + w.length + 'm → ' + sideOf(w.x, w.y)]));
-    rows.push(['Köppen–Geiger', (C && C.k) ? C.k.code : '']);
-    rows.push(['Note', 'Openable area assumes 50% of geometric window; teaching index, not an energy model']);
-    download(new Blob([csvHeader([['Site', (S.place || S.nuts || '') + ' ' + lat.toFixed(2) + ' ' + lon.toFixed(2)]]) + csvRows(rows)], { type:'text/csv;charset=utf-8' }), slugify(sitePrefix() + '-ventilation') + '.csv');
-    toast('CSV exported');
-  }, text:'Export CSV' }));
 }
 /* --------------------------------------------------------------- 8. BOOT -- */
 const TABS = [
