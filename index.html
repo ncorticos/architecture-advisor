@@ -607,7 +607,7 @@ footer{border-top:1px solid var(--line); margin-top:26px; background:var(--wash)
 /* ------------------------------------------------------------ 0. IDENTITY -- */
 const APP = {
   name:        'Architecture Advisor',
-  version:     '1.21.0',
+  version:     '1.22.0',
   author:      'Nuno Dinis Cortiços',
   institution: 'Lisbon School of Architecture, Universidade de Lisboa',
   builtWith:   'Claude Opus 5 (Anthropic)',
@@ -3366,24 +3366,25 @@ function buildVentilation(host) {
      garrigue bushes to shelter the wall base against the wind. Heights are
      mature garden values a student can then tune per plant. */
   const SPECIES = {
-    pine:{ h:12, d:0.7, tr:7, cr:2.4, kind:'tree', c:'#22c55e' },
-    cypress:{ h:12, d:0.7, tr:7, cr:1.8, kind:'tree', c:'#22c55e' },
-    oak:{ h:18, d:0.5, tr:9, cr:3.5, kind:'tree', c:'#eab308' },
-    olive:{ h:8, d:0.6, tr:3.5, cr:2.2, kind:'tree', c:'#eab308' },
-    eucalyptus:{ h:18, d:0.6, tr:9, cr:3, kind:'tree', c:'#65A30D' },
-    poplar:{ h:15, d:0.5, tr:8, cr:2, kind:'tree', c:'#65A30D' },
-    cork:{ h:8, d:0.6, tr:3.5, cr:2.5, kind:'tree', c:'#a855f6' },
-    carob:{ h:10, d:0.6, tr:4, cr:3, kind:'tree', c:'#a855f6' },
-    medronheiro:{ h:4, d:0.6, tr:1.2, cr:1.6, kind:'tree', c:'#a855f6' },
-    mastic:{ h:4, d:0.7, tr:0, cr:2, kind:'bush', c:'#16A34A' },
-    kermes:{ h:2, d:0.7, tr:0, cr:1.2, kind:'bush', c:'#16A34A' },
-    esteva:{ h:1.5, d:0.7, tr:0, cr:1.2, kind:'bush', c:'#16A34A' },
-    giesta:{ h:2, d:0.6, tr:0, cr:1.2, kind:'bush', c:'#16A34A' },
-    murta:{ h:2.5, d:0.7, tr:0, cr:1.4, kind:'bush', c:'#16A34A' },
-    alecrim:{ h:0.8, d:0.75, tr:0, cr:0.6, kind:'bush', c:'#16A34A' },
-    alfazema:{ h:0.7, d:0.75, tr:0, cr:0.5, kind:'bush', c:'#16A34A' }
+    pine:{ h:12, d:0.7, tr:7, spr:0.48, kind:'tree', c:'#22c55e' },
+    cypress:{ h:12, d:0.7, tr:7, spr:0.36, kind:'tree', c:'#22c55e' },
+    oak:{ h:18, d:0.5, tr:9, spr:0.39, kind:'tree', c:'#eab308' },
+    olive:{ h:8, d:0.6, tr:3.5, spr:0.49, kind:'tree', c:'#eab308' },
+    eucalyptus:{ h:18, d:0.6, tr:9, spr:0.33, kind:'tree', c:'#65A30D' },
+    poplar:{ h:15, d:0.5, tr:8, spr:0.29, kind:'tree', c:'#65A30D' },
+    cork:{ h:8, d:0.6, tr:3.5, spr:0.56, kind:'tree', c:'#a855f6' },
+    carob:{ h:10, d:0.6, tr:4, spr:0.5, kind:'tree', c:'#a855f6' },
+    medronheiro:{ h:4, d:0.6, tr:1.2, spr:0.57, kind:'tree', c:'#a855f6' },
+    mastic:{ h:4, d:0.7, tr:0, spr:0.5, kind:'bush', c:'#16A34A' },
+    kermes:{ h:2, d:0.7, tr:0, spr:0.6, kind:'bush', c:'#16A34A' },
+    esteva:{ h:1.5, d:0.7, tr:0, spr:0.8, kind:'bush', c:'#16A34A' },
+    giesta:{ h:2, d:0.6, tr:0, spr:0.6, kind:'bush', c:'#16A34A' },
+    murta:{ h:2.5, d:0.7, tr:0, spr:0.56, kind:'bush', c:'#16A34A' },
+    alecrim:{ h:0.8, d:0.75, tr:0, spr:0.75, kind:'bush', c:'#16A34A' },
+    alfazema:{ h:0.7, d:0.75, tr:0, spr:0.71, kind:'bush', c:'#16A34A' }
   };
-  const specOf = sp => SPECIES[sp] || { h:6, d:0.6, tr:3.6, cr:1.5, kind:'tree', c:'#a855f6' };
+  const specOf = sp => SPECIES[sp] || { h:6, d:0.6, tr:3.6, spr:0.5, kind:'tree', c:'#a855f6' };
+  const spreadOf = v => { const s = specOf(v.type).spr; return s != null ? s : 0.5; };
   /* Crown habit per species: cypress rises as a cone, poplar as a column,
      bushes sit as mounds, everything else balls into a round crown. */
   const CROWN_FORM = { cypress:'cone', poplar:'column' };
@@ -3400,30 +3401,31 @@ function buildVentilation(host) {
      blockage is weighted by height, full from 2 m up. Every tree reaches
      that, so tree scores are unchanged. */
   const vegBlock = v => 0.25 * (v.density != null ? v.density : 0.6) * clamp(v.height / 2, 0.25, 1);
-  /* Trunk (clear stem) and canopy (crown radius) in metres. Items planted
-     before these fields existed keep the old look: trunk to the top. */
-  const trunkOf = v => clamp(v.trunk != null ? v.trunk : v.height, 0, Math.max(0.3, v.height - 0.05));
-  const canopyOf = v => v.canopy != null ? v.canopy
-    : (specOf(v.type).kind === 'bush' ? Math.max(0.4, v.height * 0.8) : Math.max(1.2, v.height / 5));
+  /* One plant, one sum: total height = trunk (clear stem) + canopy (crown
+     depth), all in metres. The crown's radius follows from its depth by
+     the species' spread, so dragging trunk or canopy re-sums the height
+     on its own. Items from before the depth model reuse trunk and depth
+     from their silhouette and species. */
+  const trunkOf = v => clamp(v.trunk != null ? v.trunk : specOf(v.type).tr, 0, Math.max(0.3, v.height - 0.3));
+  const canopyOf = v => v.canopyV === 2 ? v.canopy : Math.max(0.3, v.height - trunkOf(v));
   /** Crown geometry in screen pixels for the current scale: balls, columns
      and cones on a visible trunk for trees, low mounds for bushes. */
   const crownGeo = (v, s) => {
-    const canopyM = canopyOf(v), form = crownFormOf(v);
+    const D = canopyOf(v), form = crownFormOf(v), rxW = D * spreadOf(v);
     if (form === 'mound') {
-      const rx = Math.max(3, canopyM * s);
-      return { form, trunkH:0, canopyM, cz:v.height * 0.55, rx, ry:rx * 0.62 };
+      const rx = Math.max(3, rxW * s);
+      return { form, trunkH:0, canopyM:D, cz:D * 0.55, rx, ry:rx * 0.62 };
     }
     const trunkH = trunkOf(v);
-    const crownH = Math.max(0.3, v.height - trunkH);
     if (form === 'cone') {
-      return { form, trunkH, canopyM, baseZ:trunkH * 0.3, cz:(trunkH * 0.3 + v.height) / 2, rx:Math.max(2.5, canopyM * s), ry:Math.max(6, crownH * 0.45 * s) };
+      return { form, trunkH, canopyM:D, baseZ:trunkH * 0.3, cz:(trunkH * 0.3 + v.height) / 2, rx:Math.max(2.5, rxW * s), ry:Math.max(6, D * 0.45 * s) };
     }
     if (form === 'column') {
-      const rx = Math.max(2, canopyM * 0.55 * s);
-      return { form, trunkH, canopyM, cz:trunkH + crownH * 0.5, rx, ry:clamp(crownH * 0.45 * s, rx * 1.2, rx * 3) };
+      const rx = Math.max(2, rxW * 0.55 * s);
+      return { form, trunkH, canopyM:D, cz:trunkH + D * 0.5, rx, ry:clamp(D * 0.45 * s, rx * 1.2, rx * 3) };
     }
-    const rx = Math.max(2.5, canopyM * s);
-    return { form, trunkH, canopyM, cz:trunkH + crownH * 0.45, rx, ry:clamp(crownH * 0.42 * s, rx * 0.5, rx * 0.95) };
+    const rx = Math.max(2.5, rxW * s);
+    return { form, trunkH, canopyM:D, cz:trunkH + D * 0.45, rx, ry:clamp(D * 0.42 * s, rx * 0.5, rx * 0.95) };
   };
 
   /* ---- site climate + altitude physics (live, read at draw time) ----
@@ -3840,12 +3842,24 @@ function buildVentilation(host) {
   const selBox = host.appendChild(el('div', { class:'controls' }));
   const selHint = el('span', { class:'hint', text:'Nothing selected — click a placed item on the model.' });
   let selKey = '@';
+  let edH = null, edT = null, edC = null;
+  /** Re-sum the three linked sliders from the plant: height always reads
+     trunk + canopy, whichever toggle just moved. */
+  function syncPlantEd() {
+    const s = selItem();
+    if (!s || s.kind !== 'tree' || !edH) return;
+    const v = s.obj;
+    edH.range.value = v.height; edH.out.textContent = fmt(v.height, 1) + ' m';
+    edT.range.value = v.trunk; edT.out.textContent = fmt(v.trunk, 1) + ' m';
+    edC.range.value = v.canopy; edC.out.textContent = fmt(v.canopy, 1) + ' m';
+  }
   function syncEditor() {
     const s = selItem();
     const key = s ? s.kind + ':' + s.index : '@';
     if (key === selKey) return;
     selKey = key;
     selBox.innerHTML = '';
+    edH = edT = edC = null;
     if (!s) { selBox.appendChild(selHint); return; }
     if (s.kind === 'wall') {
       const w = s.obj;
@@ -3854,12 +3868,21 @@ function buildVentilation(host) {
       selBox.appendChild(el('button', { class:'btn small', text:'Delete wall', onclick:() => { WALLS.splice(s.index, 1); selected = null; refresh(); toast('Wall removed'); } }));
     } else {
       const v = s.obj;
-      selBox.appendChild(el('span', { class:'hint', text:v.type + ' — ' + vegKind(v).toLowerCase() + ', ' + FORM_NAME[crownFormOf(v)] }));
-      selBox.appendChild(rangeCtl('Height', 0.3, 20, 0.1, v.height, hv => { v.height = +hv.toFixed(1); v.trunk = Math.min(trunkOf(v), v.height); refresh(); }, hv => fmt(hv, 1) + ' m'));
-      selBox.appendChild(rangeCtl('Trunk', 0, 8, 0.1, trunkOf(v), tv => { v.trunk = clamp(+tv.toFixed(1), 0, v.height); refresh(); }, tv => fmt(tv, 1) + ' m'));
-      selBox.appendChild(rangeCtl('Canopy', 0.3, 6, 0.1, canopyOf(v), cv2 => { v.canopy = +cv2.toFixed(1); refresh(); }, cv2 => fmt(cv2, 1) + ' m'));
+      if (v.canopyV !== 2) { const _T = trunkOf(v); v.trunk = _T; v.canopy = Math.max(0.3, v.height - _T); v.height = _T + v.canopy; v.canopyV = 2; }
+      selBox.appendChild(el('span', { class:'hint', text:v.type + ' — ' + vegKind(v).toLowerCase() + ', ' + FORM_NAME[crownFormOf(v)] + ' · height = trunk + canopy' }));
+      edH = rangeCtl('Height', 0.6, 20, 0.1, v.height,
+        hv => { const H = +hv.toFixed(1); v.trunk = Math.min(v.trunk, H - 0.3); v.canopy = Math.max(0.3, H - v.trunk); v.height = v.trunk + v.canopy; syncPlantEd(); refresh(); },
+        hv => fmt(hv, 1) + ' m');
+      edT = rangeCtl('Trunk', 0, 10, 0.1, v.trunk,
+        tv => { v.trunk = clamp(+tv.toFixed(1), 0, v.height - 0.3); v.height = v.trunk + v.canopy; syncPlantEd(); refresh(); },
+        tv => fmt(tv, 1) + ' m');
+      edC = rangeCtl('Canopy', 0.3, 16, 0.1, v.canopy,
+        cv2 => { v.canopy = clamp(+cv2.toFixed(1), 0.3, 16); v.height = v.trunk + v.canopy; syncPlantEd(); refresh(); },
+        cv2 => fmt(cv2, 1) + ' m');
+      selBox.appendChild(edH); selBox.appendChild(edT); selBox.appendChild(edC);
       selBox.appendChild(rangeCtl('Density', 0.2, 0.9, 0.05, v.density, dv => { v.density = +dv.toFixed(2); refresh(); }, dv => fmt(dv, 2)));
       selBox.appendChild(el('button', { class:'btn small', text:'Delete plant', onclick:() => { VEGETATION.splice(s.index, 1); selected = null; refresh(); toast('Plant removed'); } }));
+      syncPlantEd();
     }
   }
 
@@ -3916,7 +3939,7 @@ function buildVentilation(host) {
         const L = shadowLenV(v.height, sun.alt);
         if (L < 0.3) return;
         const cxp = v.x + L * Math.sin(saz), cyp = v.y + L * Math.cos(saz);
-        const rr = Math.max(0.4, canopyOf(v));
+        const rr = Math.max(0.4, canopyOf(v) * spreadOf(v));
         const pts = [];
         for (let a = 0; a < 360; a += 30) pts.push([cxp + rr * Math.cos(a * RAD), cyp + rr * Math.sin(a * RAD)]);
         poly(pts, 'rgba(20,23,26,.10)', null, 1);
@@ -4234,7 +4257,7 @@ function buildVentilation(host) {
     if (hit.kind === 'tree') {
       const v = VEGETATION[hit.index], f = sideOf(v.x, v.y);
       return '<b>' + t(vegKind(v)) + ' ' + (hit.index + 1) + '</b> ' + v.type + '<br><span class="tv">' +
-        fmt(v.height, 1) + ' m · trunk ' + fmt(trunkOf(v), 1) + ' · crown ' + fmt(canopyOf(v), 1) + ' · ' + t('shelters') + ' ' + t(FACE_NAME[f]) + '</span><br><span class="tm">' +
+        fmt(v.height, 1) + ' m = ' + fmt(trunkOf(v), 1) + ' + ' + fmt(canopyOf(v), 1) + ' · ' + t('shelters') + ' ' + t(FACE_NAME[f]) + '</span><br><span class="tm">' +
         t('Click to tune · drag to move · double-click to remove') + '</span>';
     }
     const w = WALLS[hit.index], f = sideOf(w.x, w.y);
@@ -4252,7 +4275,7 @@ function buildVentilation(host) {
     if (plantArmed) {
       if (VEGETATION.length >= 10) { toast('Maximum 10 plantings reached'); return; }
       const spec = specOf(plantArmed);
-      VEGETATION.push({ type:plantArmed, height:spec.h, trunk:spec.tr, canopy:spec.cr, density:spec.d, x:+pos.x.toFixed(1), y:+pos.y.toFixed(1) });
+      VEGETATION.push({ type:plantArmed, height:spec.h, trunk:spec.tr, canopy:+(spec.h - spec.tr).toFixed(1), canopyV:2, density:spec.d, x:+pos.x.toFixed(1), y:+pos.y.toFixed(1) });
       plantArmed = null;
       vegBtns.forEach(x => x.classList.toggle('solid', false));
       selected = { kind:'tree', ref:VEGETATION[VEGETATION.length - 1] };
