@@ -607,7 +607,7 @@ footer{border-top:1px solid var(--line); margin-top:26px; background:var(--wash)
 /* ------------------------------------------------------------ 0. IDENTITY -- */
 const APP = {
   name:        'Architecture Advisor',
-  version:     '1.24.0',
+  version:     '1.25.0',
   author:      'Nuno Dinis Cortiços',
   institution: 'Lisbon School of Architecture, Universidade de Lisboa',
   builtWith:   'Claude Opus 5 (Anthropic)',
@@ -3321,7 +3321,7 @@ function buildVentilation(host) {
      below; default north at 3 m/s until judged. */
   /* The selected set of months — a cooling season to ventilate, deep winter
      to defend against gusts. Everything wind-driven reads the set. */
-  let windMonths = [6];
+  let windMonths = [6], windTouched = false;
   const WIND_M = [];
   for (let _m = 0; _m < 12; _m++) WIND_M.push({ dir:0, spd:3.0 });
   /** Vector-mean wind of the set: directions add as vectors weighted by
@@ -3700,6 +3700,7 @@ function buildVentilation(host) {
         monthly.push({ dir:(Math.round(Math.atan2(vx, vy) * DEG / 45) * 45 + 360) % 360, spd:clamp(Math.round(ss / n * 2) / 2, 0, 8) });
       }
       monthly.forEach((w, m) => { WIND_M[m].dir = w.dir; WIND_M[m].spd = w.spd; });
+      windTouched = true;
       syncWindCtls();
       derivedWindSrc = 'ERA5 ' + yr;
       const sw = setWind();
@@ -3755,7 +3756,7 @@ function buildVentilation(host) {
 
   /* ---- wind by month: the pattern the blue arrows draw ---- */
   host.appendChild(section('Wind by month — direction and speed',
-    'Toggle any set of months: a cooling season to test ventilation, deep winter to test gust defense. Direction and speed edits apply to every selected month at once — read them off the IPMA wind rose for the nearest station or Windy.com. The blue arrows draw the set mean, and both scores average over the set.'));
+    'Toggle any set of months: a cooling season to test ventilation, deep winter to test gust defense. The prevailing row below mirrors the set mean from each month\u2019s own wind — read those off the IPMA wind rose, Windy.com, or derive them from the coordinates. The blue arrows draw the set mean, and both scores average over the set.'));
   const DIRS = [0, 45, 90, 135, 180, 225, 270, 315];
   /* A toggle row, not a single-select: at least one month stays on. */
   const monthCtl = el('div', { class:'ctl' }, [el('label', { text:'Months' })]);
@@ -3781,15 +3782,22 @@ function buildVentilation(host) {
   });
   presetRow.appendChild(presetSeg);
   host.appendChild(controls([monthCtl, presetRow]));
+  /* What the set actually holds, month by month — the mirror the grey
+     prevailing row below is summarising. */
+  const windSetLine = el('div', { class:'hint', text:'' });
+  host.appendChild(windSetLine);
   /* The prevailing editors follow the month selection: with one month they
      edit that month's own wind; with a set they lock on the mean and only
      the local tune below stays live. */
   const cWDir = segCtl('Prevailing direction', DIRS.map(d => ({ value:d, label:COMPASS8[d / 45] })), setWind().dir,
-    v => { if (windMonths.length === 1) { WIND_M[windMonths[0]].dir = v; refresh(); } });
-  const cWSpd = rangeCtl('Wind speed at 10 m', 0, 8, 0.5, setWind().spd, v => { if (windMonths.length === 1) { WIND_M[windMonths[0]].spd = v; refresh(); } }, v => fmt(v, 1) + ' m/s');
+    v => { if (windMonths.length === 1) { WIND_M[windMonths[0]].dir = v; windTouched = true; refresh(); } });
+  const cWSpd = rangeCtl('Wind speed at 10 m', 0, 8, 0.5, setWind().spd, v => { if (windMonths.length === 1) { WIND_M[windMonths[0]].spd = v; windTouched = true; refresh(); } }, v => fmt(v, 1) + ' m/s');
   const windEditNote = el('span', { class:'hint', text:'' });
   host.appendChild(controls([cWDir, cWSpd, windEditNote]));
   function syncWindCtls() {
+    const parts = windMonths.slice().sort((a, b) => a - b)
+      .map(m => MON3[m] + ' ' + COMPASS8[Math.round(WIND_M[m].dir / 45) % 8] + ' ' + fmt(WIND_M[m].spd, 1));
+    windSetLine.textContent = parts.join(' · ') + (!windTouched ? ' — ' + t('defaults until derived or hand-set per month') : '');
     const single = windMonths.length === 1;
     const src = single ? WIND_M[windMonths[0]] : setWind();
     const near = DIRS.reduce((a, b) => Math.abs(b - src.dir) <= Math.abs(a - src.dir) ? b : a);
@@ -3824,7 +3832,7 @@ function buildVentilation(host) {
   let plantArmed = null;
   const vegPalette = host.appendChild(el('div', { class:'controls', style:'flex-wrap:wrap;gap:4px' }));
   const vegBtns = [];
-  Object.keys(SPECIES).forEach(sp => {
+  const addSpeciesBtn = sp => {
     const b = el('button', { class:'btn small', text:sp, title:sp + ' — ' + SPECIES[sp].kind + ', ' + SPECIES[sp].h + ' m', 'data-species':sp });
     b.onclick = () => {
       plantArmed = (plantArmed === sp) ? null : sp;
@@ -3835,7 +3843,13 @@ function buildVentilation(host) {
     };
     vegPalette.appendChild(b);
     vegBtns.push(b);
-  });
+  };
+  /* Two planting gestures, two groups: trees stand over their spot on a
+     trunk, bushes sit on it as a mound. */
+  vegPalette.appendChild(el('span', { class:'hint', text:'Trees' }));
+  Object.keys(SPECIES).filter(sp => SPECIES[sp].kind === 'tree').forEach(addSpeciesBtn);
+  vegPalette.appendChild(el('span', { class:'hint', text:'Bushes' }));
+  Object.keys(SPECIES).filter(sp => SPECIES[sp].kind === 'bush').forEach(addSpeciesBtn);
   const vegCount = el('span', { text:'0/10' });
   vegPalette.appendChild(vegCount);
   const vegClear = el('button', { class:'btn small', text:'Clear planting', onclick: () => { VEGETATION.length = 0; selected = null; refresh(); } });
@@ -4117,6 +4131,12 @@ function buildVentilation(host) {
             stroke(ctx, '#8B4513', Math.max(1, trunkWOf(v) * 0.45)); seg(ctx, collar[0], collar[1], tip[0], tip[1]);
           }
         }
+      }
+      if (g.form === 'mound') {
+        /* Ground contact: a bush sits ON its spot, a tree stands over it. */
+        const gp = proj(v.x, v.y, 0.02);
+        ctx.fillStyle = 'rgba(20,23,26,.16)';
+        ctx.beginPath(); ctx.ellipse(gp[0], gp[1], g.rx * 1.05, g.rx * 0.42, 0, 0, 6.28); ctx.fill();
       }
       /* A shaded sphere (or mound, or column): lit from the upper left,
          denser crowns more opaque — the same density that throttles wind. */
