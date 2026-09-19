@@ -607,7 +607,7 @@ footer{border-top:1px solid var(--line); margin-top:26px; background:var(--wash)
 /* ------------------------------------------------------------ 0. IDENTITY -- */
 const APP = {
   name:        'Architecture Advisor',
-  version:     '1.27.0',
+  version:     '1.28.0',
   author:      'Nuno Dinis Cortiços',
   institution: 'Lisbon School of Architecture, Universidade de Lisboa',
   builtWith:   'Claude Opus 5 (Anthropic)',
@@ -3375,13 +3375,13 @@ function buildVentilation(host) {
     cork:{ h:12, d:0.6, tr:4, spr:0.44, limbs:3, tw:1.3, kind:'tree', c:'#a855f6' },
     carob:{ h:10, d:0.6, tr:4, spr:0.58, limbs:3, tw:1.2, kind:'tree', c:'#a855f6' },
     medronheiro:{ h:5, d:0.6, tr:1.5, spr:0.6, limbs:3, tw:1, kind:'tree', c:'#a855f6' },
-    mastic:{ h:4, d:0.7, tr:0, spr:0.5, limbs:1, tw:1, kind:'bush', c:'#16A34A' },
-    kermes:{ h:2, d:0.7, tr:0, spr:0.6, limbs:1, tw:1, kind:'bush', c:'#16A34A' },
-    esteva:{ h:1.5, d:0.7, tr:0, spr:0.8, limbs:1, tw:1, kind:'bush', c:'#16A34A' },
+    mastic:{ h:3, d:0.7, tr:0, spr:0.6, limbs:1, tw:1, kind:'bush', c:'#0F5C30', fl:'#B03030', flN:5 },
+    kermes:{ h:1.2, d:0.7, tr:0, spr:0.67, limbs:1, tw:1, kind:'bush', c:'#1E6B38', wide:1.25, fl:'#C8A24A', flN:4 },
+    esteva:{ h:1.5, d:0.7, tr:0, spr:0.8, limbs:1, tw:1, kind:'bush', c:'#2A7A3D', fl:'#FAFAF5', flN:6, flR:2.6 },
     giesta:{ h:2, d:0.6, tr:0, spr:0.6, limbs:1, tw:1, kind:'bush', c:'#16A34A' },
-    murta:{ h:2.5, d:0.7, tr:0, spr:0.56, limbs:1, tw:1, kind:'bush', c:'#16A34A' },
-    alecrim:{ h:0.8, d:0.75, tr:0, spr:0.75, limbs:1, tw:1, kind:'bush', c:'#16A34A' },
-    alfazema:{ h:0.7, d:0.75, tr:0, spr:0.71, limbs:1, tw:1, kind:'bush', c:'#16A34A' }
+    murta:{ h:3, d:0.7, tr:0, spr:0.6, limbs:1, tw:1, kind:'bush', c:'#1A5C2E', fl:'#F2EFE4', flN:7 },
+    alecrim:{ h:1.0, d:0.75, tr:0, spr:0.7, limbs:1, tw:1, kind:'bush', c:'#3E7A4C', tuft:1, fl:'#A9BEE8', flN:5 },
+    alfazema:{ h:0.6, d:0.75, tr:0, spr:0.83, limbs:1, tw:1, kind:'bush', c:'#7A8B6F', spikes:1 }
   };
   const specOf = sp => SPECIES[sp] || { h:6, d:0.6, tr:3.6, spr:0.5, limbs:1, tw:1, kind:'tree', c:'#a855f6' };
   const limbsOf = v => specOf(v.type).limbs || 1;
@@ -3415,8 +3415,9 @@ function buildVentilation(host) {
   const crownGeo = (v, s) => {
     const D = canopyOf(v), form = crownFormOf(v), rxW = D * spreadOf(v);
     if (form === 'mound') {
-      const rx = Math.max(3, rxW * s);
-      return { form, trunkH:0, canopyM:D, cz:D * 0.55, rx, ry:rx * 0.62 };
+      const sp = specOf(v.type);
+      const rx = Math.max(3, rxW * s * (sp.tuft ? 0.72 : 1) * (sp.wide || 1));
+      return { form, trunkH:0, canopyM:D, cz:D * 0.55, rx, ry:rx * 0.62 * (sp.tuft ? 1.2 : 1) };
     }
     if (form === 'fountain') {
       const rx = Math.max(3, D * 0.5 * s);
@@ -4206,6 +4207,31 @@ function buildVentilation(host) {
       ctx.beginPath(); ctx.ellipse(mid[0], mid[1], g.rx, g.ry, 0, 0, 6.28); ctx.fill();
       ctx.restore();
       stroke(ctx, 'rgba(20,23,26,.5)', 1.2); ctx.stroke();
+      if (g.form === 'mound') {
+        /* Bloom and fruit, scattered deterministically so the crown never
+           shimmers between redraws: mastic's red berries, kermes acorns,
+           esteva's white flags, myrtle blossom, rosemary blue. */
+        const fsp = specOf(v.type);
+        if (fsp.fl) {
+          ctx.fillStyle = fsp.fl;
+          const nFl = fsp.flN || 5;
+          for (let fi = 0; fi < nFl; fi++) {
+            const fa = fi * 2.39996, fr = 0.15 + 0.75 * ((fi * 0.61803) % 1);
+            ctx.beginPath(); ctx.arc(mid[0] + Math.cos(fa) * g.rx * fr, mid[1] + Math.sin(fa) * g.ry * fr, fsp.flR || 2.2, 0, 6.28); ctx.fill();
+          }
+        }
+        if (fsp.spikes) {
+          /* Alfazema's purple rockets above grey foliage. */
+          const tipY = proj(v.x, v.y, v.height + 0.28)[1];
+          for (let qi = 0; qi < 5; qi++) {
+            const bx = mid[0] + (qi / 4 - 0.5) * g.rx * 1.1, by = mid[1] - g.ry * 0.35;
+            const tpx = bx + (qi - 2) * 2;
+            stroke(ctx, '#7D3C9E', 2); seg(ctx, bx, by, tpx, tipY + (qi % 2) * 4);
+            ctx.fillStyle = '#8E44AD';
+            ctx.beginPath(); ctx.arc(tpx, tipY + (qi % 2) * 4, 2.6, 0, 6.28); ctx.fill();
+          }
+        }
+      }
       ctx.fillStyle = '#14171a';
       ctx.fillText(String(v.type).slice(0,4), mid[0] + g.rx * 0.4, mid[1] - g.ry - 3);
       if (isSel) {
