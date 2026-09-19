@@ -607,7 +607,7 @@ footer{border-top:1px solid var(--line); margin-top:26px; background:var(--wash)
 /* ------------------------------------------------------------ 0. IDENTITY -- */
 const APP = {
   name:        'Architecture Advisor',
-  version:     '1.32.0',
+  version:     '1.33.0',
   author:      'Nuno Dinis Cortiços',
   institution: 'Lisbon School of Architecture, Universidade de Lisboa',
   builtWith:   'Claude Opus 5 (Anthropic)',
@@ -3671,19 +3671,31 @@ function buildVentilation(host) {
       immediate surroundings — street, courtyard, open field — which no
       gridded product sees. Relief bands are this app's own teaching
       heuristic, not a geomorphological standard. */
+  /* fetch that gives up: a stalled service must fail loudly in twenty
+     seconds, never freeze a classroom on 'Sampling…'. */
+  const fetchT = (url, opts) => {
+    const o = Object.assign({}, opts);
+    try { if (typeof AbortSignal !== 'undefined' && AbortSignal.timeout) o.signal = AbortSignal.timeout(20000); } catch (e) {}
+    return fetch(url, o);
+  };
   async function deriveFromSite() {
     deriveBtn.disabled = true;
     deriveStatus.textContent = t('Sampling relief and wind…');
+    let ok = false;
+    const notes = [];
+    /* Relief and wind derive independently: a blind elevation service
+       must never cost wind that is available, from the Alentejo plain
+       to a Madeiran slope. */
     try {
       const dLat = 0.009, dLon = 0.009 / Math.max(0.2, Math.cos(lat * RAD));
       const pts = [[0, 0]];
       for (let i = 0; i < 8; i++) pts.push([Math.sin(i * Math.PI / 4) * dLat, Math.cos(i * Math.PI / 4) * dLon]);
       const lats = pts.map(p => (lat + p[0]).toFixed(4)).join(',');
       const lons = pts.map(p => (lon + p[1]).toFixed(4)).join(',');
-      const meteo = fetch('https://api.open-meteo.com/v1/elevation?latitude=' + lats + '&longitude=' + lons)
+      const meteo = fetchT('https://api.open-meteo.com/v1/elevation?latitude=' + lats + '&longitude=' + lons)
         .then(r => r.json()).then(d => d.elevation);
       const locs = encodeURIComponent(pts.map(p => (lat + p[0]).toFixed(4) + ',' + (lon + p[1]).toFixed(4)).join('|'));
-      const elev = fetch('https://api.open-elevation.com/api/v1/lookup?locations=' + locs)
+      const elev = fetchT('https://api.open-elevation.com/api/v1/lookup?locations=' + locs)
         .then(r => r.json()).then(d => d.results.map(o => o.elevation));
       const [a, b] = await Promise.allSettled([meteo, elev]);
       const grids = [];
@@ -3695,12 +3707,18 @@ function buildVentilation(host) {
       });
       if (!grids.length) throw new Error('elevation');
       const relief = Math.max(...grids.map(g => Math.max(...g) - Math.min(...g)));
-      derivedRelief = relief;
       terrainKey = relief < 25 ? 'flat' : relief < 100 ? 'rolling' : relief < 300 ? 'hilly' : 'mountainous';
       const tBtns = cTerrain.querySelectorAll('button');
       ['flat', 'rolling', 'hilly', 'mountainous'].forEach((k, i) => {
         if (tBtns[i]) tBtns[i].setAttribute('aria-pressed', String(k === terrainKey));
       });
+      derivedRelief = relief;
+      notes.push(t('Relief') + ' ' + fmt(relief, 0) + ' m/2 km ' + t('→') + ' ' + t(TERRAIN_NAME[terrainKey]));
+      ok = true;
+    } catch (eRelief) {
+      notes.push(t('relief unavailable — terrain stays manual'));
+    }
+    try {
       const yr = new Date().getFullYear() - 1;
       const wj = await (await fetch('https://archive-api.open-meteo.com/v1/archive?latitude=' + lat.toFixed(3) +
         '&longitude=' + lon.toFixed(3) + '&start_date=' + yr + '-01-01&end_date=' + yr + '-12-31' +
@@ -3731,14 +3749,15 @@ function buildVentilation(host) {
       syncWindCtls();
       derivedWindSrc = 'ERA5 ' + yr;
       const sw = setWind();
-      deriveStatus.textContent = t('Relief') + ' ' + fmt(relief, 0) + ' m/2 km → ' + t(TERRAIN_NAME[terrainKey]) +
-        ' · ' + t('monthly wind') + ' ' + derivedWindSrc + ' → ' + monthSetName() + ' ' + dirName() + ' ' + fmt(sw.spd, 1) +
-        ' m/s · ' + t('directions stay editable per month') + ' · ' + t('exposure stays yours to judge');
-      setExposure('need');
-      refresh();
-    } catch (err) {
-      deriveStatus.textContent = t('Derivation failed (network?) — values stay hand-set at N 3.0; retry the button when online');
+      notes.push(t('monthly wind') + ' ' + derivedWindSrc + ' → ' + monthSetName() + ' ' + dirName() + ' ' + fmt(sw.spd, 1) +
+        ' m/s · ' + t('directions stay editable per month'));
+      ok = true;
+    } catch (eWind) {
+      notes.push(t('wind unavailable — months stay hand-set at N 3.0; retry when online'));
     }
+    deriveStatus.textContent = notes.join(' · ') + (ok ? ' · ' + t('exposure stays yours to judge') : '');
+    if (ok) setExposure('need');
+    refresh();
     deriveBtn.disabled = false;
   }
   deriveBtn.addEventListener('click', deriveFromSite);
