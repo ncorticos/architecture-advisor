@@ -607,7 +607,7 @@ footer{border-top:1px solid var(--line); margin-top:26px; background:var(--wash)
 /* ------------------------------------------------------------ 0. IDENTITY -- */
 const APP = {
   name:        'Architecture Advisor',
-  version:     '1.35.0',
+  version:     '1.36.0',
   author:      'Nuno Dinis Cortiços',
   institution: 'Lisbon School of Architecture, Universidade de Lisboa',
   builtWith:   'Claude Opus 5 (Anthropic)',
@@ -4334,6 +4334,10 @@ function buildVentilation(host) {
         ? [[w.x, w.y - hw, 0], [w.x, w.y + hw, 0], [w.x, w.y + hw, w.height], [w.x, w.y - hw, w.height]]
         : [[w.x - hw, w.y, 0], [w.x + hw, w.y, 0], [w.x + hw, w.y, w.height], [w.x - hw, w.y, w.height]];
       poly(quad, 'rgba(220,38,38,.14)', '#DC2626', 1.3);
+      /* Dimensions inscribed at the face centre, live through dot-drags,
+         so the student always reads the wall being placed. */
+      const mid = proj(w.x, w.y, w.height / 2);
+      label(ctx, fmt(w.length, 1) + ' × ' + fmt(w.height, 1) + ' m', mid[0], mid[1], CH.ink, FM(10), 'center', 'middle');
       if (sel && sel.kind === 'wall' && sel.index === i) {
         poly(quad, null, '#D97706', 2, [5,4]);
         const H = wallHandles(w, (x, y, z) => proj(x, y, z));
