@@ -607,7 +607,7 @@ footer{border-top:1px solid var(--line); margin-top:26px; background:var(--wash)
 /* ------------------------------------------------------------ 0. IDENTITY -- */
 const APP = {
   name:        'Architecture Advisor',
-  version:     '1.26.0',
+  version:     '1.27.0',
   author:      'Nuno Dinis Cortiços',
   institution: 'Lisbon School of Architecture, Universidade de Lisboa',
   builtWith:   'Claude Opus 5 (Anthropic)',
@@ -3718,13 +3718,13 @@ function buildVentilation(host) {
       setExposure('need');
       refresh();
     } catch (err) {
-      deriveStatus.textContent = t('Derivation failed — keep the manual values');
+      deriveStatus.textContent = t('Derivation failed (network?) — values stay hand-set at N 3.0; retry the button when online');
     }
     deriveBtn.disabled = false;
   }
   deriveBtn.addEventListener('click', deriveFromSite);
   host.appendChild(hint('vent-terrain',
-    'Open (flat) ground slows the wind least; broken and mountainous ground shelters more (power-law exponent 0.14–0.28). Exposure multiplies it again: sheltered 0.6, moderate 1.0, exposed 1.4 (Olgyay, pp.37–40; DeKay & Brown, Strategy 85). Derive terrain + wind from coordinates samples the relief around the site and twelve monthly prevailing winds for these coordinates — like the altitude lookup, it sends only the coordinates to Open-Meteo, nothing else. Exposure stays manual: it reads the immediate surroundings, which no gridded product sees.'));
+    'Open (flat) ground slows the wind least; broken and mountainous ground shelters more (power-law exponent 0.14–0.28). Exposure multiplies it again: sheltered 0.6, moderate 1.0, exposed 1.4 (Olgyay, pp.37–40; DeKay & Brown, Strategy 85). Terrain and twelve monthly prevailing winds derive from these coordinates automatically on entry (ERA5 reanalysis via Open-Meteo — like the altitude lookup, only the coordinates leave the browser); the button re-runs it. Exposure stays manual: it reads the immediate surroundings, which no gridded product sees. Exposure stays manual: it reads the immediate surroundings, which no gridded product sees.'));
   const cShadow = checkCtl('Show sun shadows', true, v => { showShadow = v; refresh(); });
   const cAir = checkCtl('Show cross-ventilation paths', true, v => { showAir = v; refresh(); });
   host.appendChild(controls([cShadow, cAir]));
@@ -3764,7 +3764,7 @@ function buildVentilation(host) {
 
   /* ---- wind by month: the pattern the blue arrows draw ---- */
   host.appendChild(section('Wind by month — direction and speed',
-    'Toggle any set of months: a cooling season to test ventilation, deep winter to test gust defense. The prevailing row below mirrors the set mean from each month\u2019s own wind — read those off the IPMA wind rose, Windy.com, or derive them from the coordinates. The blue arrows draw the set mean, and both scores average over the set.'));
+    'Toggle any set of months: a cooling season to test ventilation, deep winter to test gust defense. Monthly winds arrive derived for the site and stay editable per month. The prevailing row below mirrors the set mean; the blue arrows draw it, and both scores average over the set.'));
   const DIRS = [0, 45, 90, 135, 180, 225, 270, 315];
   /* A toggle row, not a single-select: at least one month stays on. */
   const monthCtl = el('div', { class:'ctl' }, [el('label', { text:'Months' })]);
@@ -4498,6 +4498,9 @@ function buildVentilation(host) {
   cv.addEventListener('click', clickHandler);
   setDayV(SH.doy);
   refresh();
+  /* Monthly wind should never sit on placeholder values while the site has
+     coordinates: derive on entry, once per mount — the button re-runs it. */
+  deriveFromSite();
 }
 /* --------------------------------------------------------------- 8. BOOT -- */
 const TABS = [
