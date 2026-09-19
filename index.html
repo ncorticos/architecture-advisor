@@ -607,7 +607,7 @@ footer{border-top:1px solid var(--line); margin-top:26px; background:var(--wash)
 /* ------------------------------------------------------------ 0. IDENTITY -- */
 const APP = {
   name:        'Architecture Advisor',
-  version:     '1.38.0',
+  version:     '1.39.0',
   author:      'Nuno Dinis Cortiços',
   institution: 'Lisbon School of Architecture, Universidade de Lisboa',
   builtWith:   'Claude Opus 5 (Anthropic)',
@@ -2535,7 +2535,7 @@ function buildRoof(host) {
 
   roofPanel = makePanel(host, {
     title: 'The roof in three dimensions',
-    note: 'Isometric view, matching the Site tab — the plan comes from there. Drag the black handle to re-pitch the roof; the green ticks show how far to drag it for each ideal pitch.',
+    note: 'Isometric view, matching the Site tab — the plan comes from there. Drag the black handle to re-pitch the roof; the green ticks show how far to drag it for each ideal pitch. The dashed line is the hidden north eave.',
     aspect: 1.7,
     render(ctx, W, H) {
       const FR = roofFrame(W, H);
@@ -2584,6 +2584,10 @@ function buildRoof(host) {
         // the ridge line itself, since the north-facing half stays hidden
         const r0 = proj(-G.L/2, 0, ridge), r1 = proj(G.L/2, 0, ridge);
         stroke(ctx, CH.ink, 1.6); seg(ctx, r0[0], r0[1], r1[0], r1[1]);
+        // the hidden north eave: occluded by the south slope at every pitch,
+        // dashed in so the wall plate still reads as one closed contour
+        const hn0 = proj(-G.L/2, G.D/2, H0), hn1 = proj(G.L/2, G.D/2, H0);
+        stroke(ctx, CH.faint, 1.1, [5, 4]); seg(ctx, hn0[0], hn0[1], hn1[0], hn1[1]);
       }
       const ridgeMid = proj(0, RF.n === 2 ? 0 : G.D / 2, ridge);
       label(ctx, fmt(ridge, 1) + ' m', ridgeMid[0] + 7, ridgeMid[1] - 9, CH.ink2, FM(10), 'left', 'middle');
