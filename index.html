@@ -607,7 +607,7 @@ footer{border-top:1px solid var(--line); margin-top:26px; background:var(--wash)
 /* ------------------------------------------------------------ 0. IDENTITY -- */
 const APP = {
   name:        'Architecture Advisor',
-  version:     '1.17.0',
+  version:     '1.18.0',
   author:      'Nuno Dinis Cortiços',
   institution: 'Lisbon School of Architecture, Universidade de Lisboa',
   builtWith:   'Claude Opus 5 (Anthropic)',
@@ -3319,11 +3319,29 @@ function buildVentilation(host) {
   /* Monthly wind, direction FROM in degrees plus speed at 10 m: the pattern
      the blue arrows draw and the pair scores are weighted by. Set per month
      below; default north at 3 m/s until judged. */
-  let windMonth = 6;
+  /* The selected set of months — a cooling season to ventilate, deep winter
+     to defend against gusts. Everything wind-driven reads the set. */
+  let windMonths = [6];
   const WIND_M = [];
   for (let _m = 0; _m < 12; _m++) WIND_M.push({ dir:0, spd:3.0 });
-  const monthWind = () => WIND_M[windMonth];
-  const dirName = () => COMPASS8[Math.round(monthWind().dir / 45) % 8];
+  /** Vector-mean wind of the set: directions add as vectors weighted by
+     speed, so opposing months cancel instead of averaging to a
+     meaningless middle. Dead calm everywhere yields 0 m/s from north. */
+  const setWind = () => {
+    let vx = 0, vy = 0, ss = 0;
+    windMonths.forEach(m => { const w = WIND_M[m]; vx += w.spd * Math.sin(w.dir * RAD); vy += w.spd * Math.cos(w.dir * RAD); ss += w.spd; });
+    if (ss <= 0) return { dir:0, spd:0 };
+    return { dir:(Math.atan2(vx, vy) * DEG + 360) % 360, spd:ss / windMonths.length };
+  };
+  const monthSetName = T3 => {
+    T3 = T3 || MON3;
+    const ms = windMonths.slice().sort((a, b) => a - b);
+    if (ms.length === 1) return T3[ms[0]];
+    if (ms.every((m, i) => i === 0 || m === ms[i - 1] + 1)) return T3[ms[0]] + '\u2013' + T3[ms[ms.length - 1]];
+    const list = ms.map(m => T3[m]);
+    return list.slice(0, 3).join('+') + (list.length > 3 ? '+' + (list.length - 3) + ' more' : '');
+  };
+  const dirName = () => COMPASS8[Math.round(setWind().dir / 45) % 8];
   /* Click-to-tune selection over the placed items — a reference, so index
      shifts from deletions cannot retarget it. Drag still moves,
      double-click still removes. */
@@ -3384,11 +3402,12 @@ function buildVentilation(host) {
   const ALPHA = { flat:0.14, rolling:0.18, hilly:0.22, mountainous:0.28 };
   const TERRAIN_WIND = { flat:1.0, rolling:0.9, hilly:0.8, mountainous:0.7 };
   const EXPOSURE_WIND = { sheltered:0.6, moderate:1.0, exposed:1.4 };
-  const eaveWind = () => {
+  const eaveFor = spd => {
     const H = Math.max(1, h0live());
     const a = ALPHA[terrainKey] != null ? ALPHA[terrainKey] : 0.18;
-    return monthWind().spd * (TERRAIN_WIND[terrainKey] || 1) * (EXPOSURE_WIND[windKey] || 1) * Math.pow(H / 10, a);
+    return spd * (TERRAIN_WIND[terrainKey] || 1) * (EXPOSURE_WIND[windKey] || 1) * Math.pow(H / 10, a);
   };
+  const eaveWind = () => eaveFor(setWind().spd);
   /** Stack-effect pressure for a ΔT across the full eave height (Pa). */
   const stackPa = dT => {
     const rho = airDensity(), H = h0live(), T = 273.15 + meanTemp();
@@ -3424,20 +3443,32 @@ function buildVentilation(host) {
   };
   /* Winter shelter 0–100 per facade (higher = better protected): small
      openings and upwind shelter help; exposure hurts. A teaching index. */
+  /* Winter shelter per facade, averaged over the selected set: each month
+     weighs the calm base by its own gusts — strong months drag the score
+     down, calm ones lift it slightly — and by whether the facade faces
+     that month's wind head-on. Pick deep winter to test gust defense. */
   const winterScore = f => {
     const o = OPEN[f];
     const wwrPen = clamp(1 - (o.wwr || 0) / 0.5, 0, 1);
     const shelter = blockage(f);
     const expo = windKey === 'exposed' ? 0.55 : windKey === 'sheltered' ? 1.0 : 0.8;
     const base = f === 'N' || f === 'E' ? 0.75 : 0.6;
-    return Math.round(clamp((0.35 + 0.35 * wwrPen + 0.3 * shelter / 0.7) * expo / 0.8 * base / 0.6 * 100, 0, 100));
+    const normAz = { S:180, N:0, E:90, W:270 }[f];
+    let sum = 0;
+    windMonths.forEach(m => {
+      const w = WIND_M[m];
+      const gust = clamp(3 / Math.max(0.5, w.spd), 0.5, 1.2);
+      const facing = 1 - 0.15 * Math.cos((w.dir - normAz) * RAD);
+      sum += clamp((0.35 + 0.35 * wwrPen + 0.3 * shelter / 0.7) * expo / 0.8 * base / 0.6 * gust * facing, 0, 1.5);
+    });
+    return Math.round(clamp(sum / windMonths.length, 0, 1) * 100);
   };
   /* A pair only breathes when the wind has something to push through it: the
      score is weighted by how squarely the month's wind meets the pair axis —
      full on, about a third across. A teaching weight, stated not hidden. */
-  const alignPair = (f1, f2) => {
+  const alignPair = (f1, f2, dir) => {
     const axis = (f1 === 'S' || f1 === 'N') ? 0 : 90;
-    const d = Math.abs((((monthWind().dir - axis) % 180) + 180) % 180);
+    const d = Math.abs((((dir - axis) % 180) + 180) % 180);
     return 0.35 + 0.65 * Math.abs(Math.cos(d * RAD));
   };
   /* Summer cross-ventilation 0–100 per opposite pair: the series effective
@@ -3447,8 +3478,13 @@ function buildVentilation(host) {
   const pairScore = (f1, f2) => {
     const ae = effectiveArea(f1, f2);
     const areaTerm = clamp(ae / 4, 0, 1);
-    const windTerm = clamp(eaveWind() / 3, 0.15, 1.3) / 1.3;
-    return Math.round(clamp(100 * (0.15 + 0.85 * areaTerm) * (0.45 + 0.55 * windTerm) * alignPair(f1, f2), 0, 100));
+    let sum = 0;
+    windMonths.forEach(m => {
+      const w = WIND_M[m];
+      const windTerm = clamp(eaveFor(w.spd) / 3, 0.15, 1.3) / 1.3;
+      sum += 100 * (0.15 + 0.85 * areaTerm) * (0.45 + 0.55 * windTerm) * alignPair(f1, f2, w.dir);
+    });
+    return Math.round(clamp(sum / windMonths.length, 0, 100));
   };
   const summerScore = () => Math.round((pairScore('S', 'N') + pairScore('E', 'W')) / 2);
 
@@ -3649,22 +3685,46 @@ function buildVentilation(host) {
 
   /* ---- wind by month: the pattern the blue arrows draw ---- */
   host.appendChild(section('Wind by month — direction and speed',
-    'Prevailing direction and mean speed at 10 m, one month at a time — read them off the IPMA wind rose for the nearest station or Windy.com. The blue arrows turn with the month, and each opposite pair is weighted by how squarely that wind meets it.'));
+    'Toggle any set of months: a cooling season to test ventilation, deep winter to test gust defense. Direction and speed edits apply to every selected month at once — read them off the IPMA wind rose for the nearest station or Windy.com. The blue arrows draw the set mean, and both scores average over the set.'));
   const DIRS = [0, 45, 90, 135, 180, 225, 270, 315];
-  const cWMonth = segCtl('Month', MON3.map((m, i) => ({ value:i, label:m })), windMonth,
-    v => { windMonth = v; syncWindCtls(); refresh(); });
-  const cWDir = segCtl('Prevailing direction', DIRS.map(d => ({ value:d, label:COMPASS8[d / 45] })), monthWind().dir,
-    v => { monthWind().dir = v; refresh(); });
-  const cWSpd = rangeCtl('Wind speed at 10 m', 0, 8, 0.5, monthWind().spd, v => { monthWind().spd = v; refresh(); }, v => fmt(v, 1) + ' m/s');
-  host.appendChild(controls([cWMonth]));
+  /* A toggle row, not a single-select: at least one month stays on. */
+  const monthCtl = el('div', { class:'ctl' }, [el('label', { text:'Months' })]);
+  const monthSeg = el('div', { class:'seg' });
+  const monthBtns = MON3.map((m, i) => el('button', { text:m, title:m, 'aria-pressed':String(windMonths.includes(i)),
+    onclick:() => toggleMonth(i) }));
+  monthBtns.forEach(b => monthSeg.appendChild(b));
+  monthCtl.appendChild(monthSeg);
+  function paintMonths() { monthBtns.forEach((b, i) => b.setAttribute('aria-pressed', String(windMonths.includes(i)))); }
+  function toggleMonth(i) {
+    const at = windMonths.indexOf(i);
+    if (at >= 0) {
+      if (windMonths.length === 1) { toast('Keep at least one month selected'); return; }
+      windMonths.splice(at, 1);
+    } else { windMonths.push(i); windMonths.sort((a, b) => a - b); }
+    paintMonths(); syncWindCtls(); refresh();
+  }
+  const setSeason = ms => { windMonths = ms.slice(); paintMonths(); syncWindCtls(); refresh(); };
+  const presetRow = el('div', { class:'ctl' }, [el('label', { text:'Season' })]);
+  const presetSeg = el('div', { class:'seg' });
+  [['Cooling Jun–Aug', [5, 6, 7]], ['Deep winter Dec–Feb', [11, 0, 1]], ['Whole year', [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]]].forEach(([label, ms]) => {
+    presetSeg.appendChild(el('button', { text:label, title:label, 'aria-pressed':'false', onclick:() => setSeason(ms) }));
+  });
+  presetRow.appendChild(presetSeg);
+  host.appendChild(controls([monthCtl, presetRow]));
+  const cWDir = segCtl('Prevailing direction', DIRS.map(d => ({ value:d, label:COMPASS8[d / 45] })), setWind().dir,
+    v => { windMonths.forEach(m => { WIND_M[m].dir = v; }); refresh(); });
+  const cWSpd = rangeCtl('Wind speed at 10 m', 0, 8, 0.5, setWind().spd, v => { windMonths.forEach(m => { WIND_M[m].spd = v; }); refresh(); }, v => fmt(v, 1) + ' m/s');
   host.appendChild(controls([cWDir, cWSpd]));
+  /* The two controls show the set mean (nearest eighth); an edit writes
+     through to every selected month. */
   function syncWindCtls() {
-    const wm = monthWind();
-    cWDir.querySelectorAll('button').forEach((b, i) => b.setAttribute('aria-pressed', String(DIRS[i] === wm.dir)));
-    cWSpd.range.value = wm.spd; cWSpd.out.textContent = fmt(wm.spd, 1) + ' m/s';
+    const sw = setWind();
+    const near = DIRS.reduce((a, b) => Math.abs(b - sw.dir) <= Math.abs(a - sw.dir) ? b : a);
+    cWDir.querySelectorAll('button').forEach((b, i) => b.setAttribute('aria-pressed', String(DIRS[i] === near)));
+    cWSpd.range.value = sw.spd; cWSpd.out.textContent = fmt(sw.spd, 1) + ' m/s';
   }
   host.appendChild(hint('vent-wind',
-    'Direction is where the wind comes from, in eighths like a site rose. A north wind drives the south–north pair and only brushes the east–west one — switch months and watch the blue pattern and the two pair scores move together.'));
+    'Direction is where the wind comes from, in eighths like a site rose. A north wind drives the south–north pair and only brushes the east–west one — toggle months and watch the blue pattern and both scores move together. Opposing months in one set cancel in the mean, exactly as alternating weather would.'));
 
   /* ---- vegetation palette: click to arm, then click the ground ---- */
   host.appendChild(section('Trees and bushes against the wind and sun',
@@ -3935,7 +3995,7 @@ function buildVentilation(host) {
       };
       /* One month, one pattern: three blue streamlines along the month's
          wind, the middle one strongest. Width follows the eave wind. */
-      const wm = monthWind();
+      const wm = setWind();
       const toA = (wm.dir + 180) % 360;
       const vx = Math.sin(toA * RAD), vy = Math.cos(toA * RAD);
       const midH = clamp(h0live() * 0.55, 1.0, 2.6);
@@ -3948,7 +4008,7 @@ function buildVentilation(host) {
           i === 1 ? 'rgba(29,78,216,.9)' : 'rgba(37,99,235,.55)', (i === 1 ? wBase + 1 : wBase));
       });
       const lp = proj(vx * (R + 1.4), vy * (R + 1.4), midH);
-      label(ctx, MON3[windMonth] + ' ' + dirName() + ' ' + fmt(wm.spd, 1) + ' m/s', lp[0], lp[1], '#1D4ED8', FM(10), 'center', 'middle');
+      label(ctx, monthSetName() + ' ' + dirName() + ' ' + fmt(wm.spd, 1) + ' m/s', lp[0], lp[1], '#1D4ED8', FM(10), 'center', 'middle');
       const up = proj(0, 0, ridge), upTop = proj(0, 0, ridge + Math.max(1.2, h0live() * 0.5));
       stroke(ctx, 'rgba(217,119,6,.8)', 1.6, [5,4]); seg(ctx, up[0], up[1], upTop[0], upTop[1]);
     }
@@ -3958,11 +4018,11 @@ function buildVentilation(host) {
     const ss = summerScore();
     ctx.fillStyle = '#14171a'; ctx.font = 'bold 10px ui-monospace'; ctx.textAlign = 'left';
     ctx.fillText('Winter shelter S-'+ws.S+' N-'+ws.N+' E-'+ws.E+' W-'+ws.W, 8, 14);
-    ctx.fillStyle = '#1D4ED8'; ctx.fillText('Summer ' + MON3[windMonth] + ' S–N '+pairScore('S','N')+' · E–W '+pairScore('E','W')+' · mean '+ss+'/100', 8, 26);
+    ctx.fillStyle = '#1D4ED8'; ctx.fillText('Summer ' + monthSetName() + ' S–N '+pairScore('S','N')+' · E–W '+pairScore('E','W')+' · mean '+ss+'/100', 8, 26);
     ctx.fillStyle = '#7b838b'; ctx.font = '9px ui-sans-serif';
     ctx.textAlign = 'center';
     ctx.fillText(fmt(lat,2)+'° '+(lat<0?'S':'N')+' · '+fmt(Math.abs(lon),2)+'° '+(lon<0?'W':'E')+' · '+fmt(S.alt||0,0)+' m · ρ '+fmt(airDensity(),3)+' kg/m³ · eave '+fmt(eaveWind(),1)+' m/s · stack(5K) '+fmt(stackPa(5),1)+' Pa', W/2, H-18);
-    ctx.fillText(SH.key+' '+fmt(SH.h,2)+' h · sun '+fmt(sun.alt,0)+'°/'+fmt(sun.azi,0)+'° · wind '+MON3[windMonth]+' '+dirName()+' '+fmt(monthWind().spd,1)+' · '+VEGETATION.length+'/10 planting · '+WALLS.length+' walls', W/2, H-6);
+    ctx.fillText(SH.key+' '+fmt(SH.h,2)+' h · sun '+fmt(sun.alt,0)+'°/'+fmt(sun.azi,0)+'° · wind '+monthSetName()+' '+dirName()+' '+fmt(setWind().spd,1)+' · '+VEGETATION.length+'/10 planting · '+WALLS.length+' walls', W/2, H-6);
   };
 
   /* ---- CSV behind the panel export: the same rows the old button
@@ -3973,10 +4033,11 @@ function buildVentilation(host) {
     rows.push(['Latitude (°)', +lat.toFixed(3)], ['Longitude (°)', +lon.toFixed(3)], ['Altitude (m)', +(S.alt || 0)]);
     rows.push(['Air density (kg/m³)', +airDensity().toFixed(3)]);
     rows.push(['Terrain', terrainKey], ['Wind exposure', windKey]);
+    rows.push(['Wind set', monthSetName(MON3_EN) + ' ' + COMPASS8_EN[Math.round(setWind().dir / 45) % 8] + ' ' + setWind().spd.toFixed(1) + ' m/s']);
     WIND_M.forEach((w, m) => rows.push(['Wind ' + MONTHS_EN[m], COMPASS8_EN[Math.round(w.dir / 45) % 8] + ' ' + w.spd.toFixed(1) + ' m/s']));
     if (derivedRelief !== null) rows.push(['Relief 2 km window (m)', +derivedRelief.toFixed(0)]);
     rows.push(['Wind speed source', derivedWindSrc ? derivedWindSrc + ' annual mean at 10 m, written to all months' : 'entered by hand, per month']);
-    rows.push(['Eave wind (' + MONTHS_EN[windMonth] + ', m/s)', +eaveWind().toFixed(2)]);
+    rows.push(['Eave wind (' + monthSetName(MON3_EN) + ', m/s)', +eaveWind().toFixed(2)]);
     rows.push(['Eave height H0 (m)', +h0live().toFixed(2)], ['Stack Δp ΔT=5K (Pa)', +stackPa(5).toFixed(2)]);
     rows.push(['Plan L×D (m)', G.L.toFixed(1) + '×' + G.D.toFixed(1)], ['Roof slopes', RF.n], ['Roof pitch (°)', +RF.th.toFixed(0)]);
     ['S','N','E','W'].forEach(f => {
@@ -3987,8 +4048,8 @@ function buildVentilation(host) {
         [f + ' openable area (m²)', +openArea(f).toFixed(2)], [f + ' blockage', +blockage(f).toFixed(2)],
         [f + ' winter shelter', winterScore(f) + '/100']);
     });
-    rows.push(['Summer S–N (' + MONTHS_EN[windMonth] + ')', pairScore('S','N') + '/100'], ['Summer E–W (' + MONTHS_EN[windMonth] + ')', pairScore('E','W') + '/100']);
-    rows.push(['Summer cross-ventilation (' + MONTHS_EN[windMonth] + ')', summerScore() + '/100']);
+    rows.push(['Summer S–N (' + monthSetName(MON3_EN) + ')', pairScore('S','N') + '/100'], ['Summer E–W (' + monthSetName(MON3_EN) + ')', pairScore('E','W') + '/100']);
+    rows.push(['Summer cross-ventilation (' + monthSetName(MON3_EN) + ')', summerScore() + '/100']);
     rows.push(['Sun day', SH.key], ['Solar time (h)', +SH.h.toFixed(2)]);
     rows.push(['Sun altitude (°)', +sn.alt.toFixed(1)], ['Sun azimuth (°)', +sn.azi.toFixed(1)]);
     rows.push(['Ridge shadow (m)', +shadowLenV(h0live() + ((RF.n === 0 ? 0 : RF.th) ? (RF.n === 2 ? G.D/2 : G.D) * Math.tan(RF.th * RAD) : 0), sn.alt).toFixed(1)]);
@@ -4186,7 +4247,7 @@ function buildVentilation(host) {
       ' — ρ ' + fmt(airDensity(), 3) + ' kg/m³ · ' + t('eave wind') + ' ' + fmt(eaveWind(), 1) +
       ' m/s · stack(ΔT 5K) ' + fmt(stackPa(5), 1) + ' Pa · ' + SH.key + ' ' + fmt(SH.h, 2) + ' h' +
       ' · ' + t('sun') + ' ' + fmt(sn.alt, 0) + '°/' + fmt(sn.azi, 0) + '°' +
-      ' · ' + t('wind') + ' ' + MON3[windMonth] + ' ' + dirName() + ' ' + fmt(monthWind().spd, 1) + ' m/s' +
+      ' · ' + t('wind') + ' ' + monthSetName() + ' ' + dirName() + ' ' + fmt(setWind().spd, 1) + ' m/s' +
       ' · S–N ' + pairScore('S','N') + ' · E–W ' + pairScore('E','W') + ' · ' + t('winter') +
       ' S ' + winterScore('S') + '/N ' + winterScore('N') + '/E ' + winterScore('E') + '/W ' + winterScore('W')));
     draw();
