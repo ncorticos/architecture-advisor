@@ -607,7 +607,7 @@ footer{border-top:1px solid var(--line); margin-top:26px; background:var(--wash)
 /* ------------------------------------------------------------ 0. IDENTITY -- */
 const APP = {
   name:        'Architecture Advisor',
-  version:     '1.22.0',
+  version:     '1.23.0',
   author:      'Nuno Dinis Cortiços',
   institution: 'Lisbon School of Architecture, Universidade de Lisboa',
   builtWith:   'Claude Opus 5 (Anthropic)',
@@ -3635,8 +3635,10 @@ function buildVentilation(host) {
   let derivedRelief = null, derivedWindSrc = '';
   /** Terrain class from the relief around the site (same two public elevation
       services as the altitude lookup, one batched request each over a ~2 km
-      window), monthly speeds from the ERA5 annual mean at 10 m above the
-      site (Open-Meteo archive). Exposure stays manual: it reads the
+      window), plus one prevailing wind per month from the ERA5 hourly
+      record at 10 m above the site (Open-Meteo archive): monthly mean
+      speed, and the speed-weighted vector mean direction. Exposure stays
+      manual: it reads the
       immediate surroundings — street, courtyard, open field — which no
       gridded product sees. Relief bands are this app's own teaching
       heuristic, not a geomorphological standard. */
@@ -3673,18 +3675,35 @@ function buildVentilation(host) {
       const yr = new Date().getFullYear() - 1;
       const wj = await (await fetch('https://archive-api.open-meteo.com/v1/archive?latitude=' + lat.toFixed(3) +
         '&longitude=' + lon.toFixed(3) + '&start_date=' + yr + '-01-01&end_date=' + yr + '-12-31' +
-        '&hourly=wind_speed_10m&wind_speed_unit=ms')).json();
-      const wh = (wj.hourly && Array.isArray(wj.hourly.wind_speed_10m) ? wj.hourly.wind_speed_10m : [])
-        .filter(v => typeof v === 'number' && isFinite(v));
-      if (!wh.length) throw new Error('wind');
-      const mean = wh.reduce((s, v) => s + v, 0) / wh.length;
-      const wAll = clamp(Math.round(mean * 2) / 2, 1, 8);
-      WIND_M.forEach(w => { w.spd = wAll; });
+        '&hourly=wind_speed_10m,wind_direction_10m&wind_speed_unit=ms')).json();
+      const hh = (wj.hourly && Array.isArray(wj.hourly.time)) ? wj.hourly.time : [];
+      const hs = (wj.hourly && Array.isArray(wj.hourly.wind_speed_10m)) ? wj.hourly.wind_speed_10m : [];
+      const hd = (wj.hourly && Array.isArray(wj.hourly.wind_direction_10m)) ? wj.hourly.wind_direction_10m : [];
+      /* Per month: scalar mean speed, prevailing direction as the
+         speed-weighted vector mean (a strong NW afternoon outweighs a
+         calm night, as it should for ventilation). Rounded to the
+         slider steps the month controls speak. */
+      const monthly = [];
+      for (let m = 0; m < 12; m++) {
+        let vx = 0, vy = 0, ss = 0, n = 0;
+        for (let i = 0; i < hh.length; i++) {
+          if (+String(hh[i]).slice(5, 7) !== m + 1) continue;
+          const s = hs[i], d = hd[i];
+          if (typeof s !== 'number' || !isFinite(s)) continue;
+          n++;
+          if (typeof d === 'number' && isFinite(d)) { vx += s * Math.sin(d * RAD); vy += s * Math.cos(d * RAD); }
+          ss += s;
+        }
+        if (!n) throw new Error('wind');
+        monthly.push({ dir:(Math.round(Math.atan2(vx, vy) * DEG / 45) * 45 + 360) % 360, spd:clamp(Math.round(ss / n * 2) / 2, 0, 8) });
+      }
+      monthly.forEach((w, m) => { WIND_M[m].dir = w.dir; WIND_M[m].spd = w.spd; });
       syncWindCtls();
       derivedWindSrc = 'ERA5 ' + yr;
+      const sw = setWind();
       deriveStatus.textContent = t('Relief') + ' ' + fmt(relief, 0) + ' m/2 km → ' + t(TERRAIN_NAME[terrainKey]) +
-        ' · ' + t('mean wind') + ' ' + fmt(mean, 1) + ' m/s (' + derivedWindSrc + ') → ' + fmt(wAll, 1) +
-        ' m/s, all months · ' + t('exposure stays yours to judge');
+        ' · ' + t('monthly wind') + ' ' + derivedWindSrc + ' → ' + monthSetName() + ' ' + dirName() + ' ' + fmt(sw.spd, 1) +
+        ' m/s · ' + t('directions stay editable per month') + ' · ' + t('exposure stays yours to judge');
       setExposure('need');
       refresh();
     } catch (err) {
@@ -3694,7 +3713,7 @@ function buildVentilation(host) {
   }
   deriveBtn.addEventListener('click', deriveFromSite);
   host.appendChild(hint('vent-terrain',
-    'Open (flat) ground slows the wind least; broken and mountainous ground shelters more (power-law exponent 0.14–0.28). Exposure multiplies it again: sheltered 0.6, moderate 1.0, exposed 1.4 (Olgyay, pp.37–40; DeKay & Brown, Strategy 85). Derive terrain + wind from coordinates samples the relief around the site and the ERA5 annual mean wind for these coordinates — like the altitude lookup, it sends only the coordinates to Open-Meteo, nothing else. Exposure stays manual: it reads the immediate surroundings, which no gridded product sees.'));
+    'Open (flat) ground slows the wind least; broken and mountainous ground shelters more (power-law exponent 0.14–0.28). Exposure multiplies it again: sheltered 0.6, moderate 1.0, exposed 1.4 (Olgyay, pp.37–40; DeKay & Brown, Strategy 85). Derive terrain + wind from coordinates samples the relief around the site and twelve monthly prevailing winds for these coordinates — like the altitude lookup, it sends only the coordinates to Open-Meteo, nothing else. Exposure stays manual: it reads the immediate surroundings, which no gridded product sees.'));
   const cShadow = checkCtl('Show sun shadows', true, v => { showShadow = v; refresh(); });
   const cAir = checkCtl('Show cross-ventilation paths', true, v => { showAir = v; refresh(); });
   host.appendChild(controls([cShadow, cAir]));
@@ -3774,6 +3793,7 @@ function buildVentilation(host) {
     const near = DIRS.reduce((a, b) => Math.abs(b - src.dir) <= Math.abs(a - src.dir) ? b : a);
     cWDir.querySelectorAll('button').forEach((b, i) => { b.setAttribute('aria-pressed', String(DIRS[i] === near)); b.disabled = !single; });
     cWSpd.range.disabled = !single;
+    cWSpd.range.value = src.spd; cWSpd.out.textContent = fmt(src.spd, 1) + ' m/s';
     cWDir.style.opacity = cWSpd.style.opacity = single ? '' : '0.55';
     windEditNote.textContent = single ? t('Editing') + ' ' + MON3[windMonths[0]] + t('\u2019s prevailing wind')
       : t('Set mean shown — pick one month to edit its prevailing wind');
@@ -4162,7 +4182,7 @@ function buildVentilation(host) {
     rows.push(['Local tune', (tuneDir >= 0 ? '+' : '') + tuneDir + '\u00b0 \u00d7' + tuneSpd.toFixed(2)]);
     WIND_M.forEach((w, m) => rows.push(['Wind ' + MONTHS_EN[m], COMPASS8_EN[Math.round(w.dir / 45) % 8] + ' ' + w.spd.toFixed(1) + ' m/s']));
     if (derivedRelief !== null) rows.push(['Relief 2 km window (m)', +derivedRelief.toFixed(0)]);
-    rows.push(['Wind speed source', derivedWindSrc ? derivedWindSrc + ' annual mean at 10 m, written to all months' : 'entered by hand, per month']);
+    rows.push(['Wind speed source', derivedWindSrc ? derivedWindSrc + ' monthly prevailing at 10 m' : 'entered by hand, per month']);
     rows.push(['Eave wind (' + monthSetName(MON3_EN) + ', m/s)', +eaveWind().toFixed(2)]);
     rows.push(['Eave height H0 (m)', +h0live().toFixed(2)], ['Stack Δp ΔT=5K (Pa)', +stackPa(5).toFixed(2)]);
     rows.push(['Plan L×D (m)', G.L.toFixed(1) + '×' + G.D.toFixed(1)], ['Roof slopes', RF.n], ['Roof pitch (°)', +RF.th.toFixed(0)]);
