@@ -607,7 +607,7 @@ footer{border-top:1px solid var(--line); margin-top:26px; background:var(--wash)
 /* ------------------------------------------------------------ 0. IDENTITY -- */
 const APP = {
   name:        'Architecture Advisor',
-  version:     '1.36.0',
+  version:     '1.37.0',
   author:      'Nuno Dinis Cortiços',
   institution: 'Lisbon School of Architecture, Universidade de Lisboa',
   builtWith:   'Claude Opus 5 (Anthropic)',
@@ -4337,7 +4337,7 @@ function buildVentilation(host) {
       /* Dimensions inscribed at the face centre, live through dot-drags,
          so the student always reads the wall being placed. */
       const mid = proj(w.x, w.y, w.height / 2);
-      label(ctx, fmt(w.length, 1) + ' × ' + fmt(w.height, 1) + ' m', mid[0], mid[1], CH.ink, FM(10), 'center', 'middle');
+      label(ctx, 'L ' + fmt(w.length, 1) + ' × H ' + fmt(w.height, 1) + ' m', mid[0], mid[1], CH.ink, FM(10), 'center', 'middle');
       if (sel && sel.kind === 'wall' && sel.index === i) {
         poly(quad, null, '#D97706', 2, [5,4]);
         const H = wallHandles(w, (x, y, z) => proj(x, y, z));
@@ -4517,7 +4517,7 @@ function buildVentilation(host) {
     }
     const w = WALLS[hit.index], f = sideOf(w.x, w.y);
     return '<b>' + t('Wall') + ' ' + (hit.index + 1) + '</b><br><span class="tv">' +
-      fmt(w.length, 1) + ' × ' + fmt(w.height, 1) + ' m · ' + t('shelters') + ' ' + t(FACE_NAME[f]) +
+      t('L ' + fmt(w.length, 1) + ' × H ' + fmt(w.height, 1) + ' m') + ' · ' + t('shelters') + ' ' + t(FACE_NAME[f]) +
       '</span><br><span class="tm">' + t('Drag corners to resize · drag to move · double-click to remove') + '</span>';
   };
   const clickHandler = ev => {
@@ -5504,6 +5504,7 @@ Object.assign(PT, {
   "Window sizing — WWR": "Dimensionamento das janelas — WWR",
   "Glazing area as a fraction of the facade’s own wall area": "Área envidraçada como fracção da área de parede dessa fachada",
   "Window-to-wall ratio": "Relação janela-parede",
+  "L {} × H {} m": "C {} × A {} m",
   "Sill height": "Altura do peitoril",
   "Head height": "Altura da verga",
   "Below the recommended range": "Abaixo do intervalo recomendado",
