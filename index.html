@@ -607,7 +607,7 @@ footer{border-top:1px solid var(--line); margin-top:26px; background:var(--wash)
 /* ------------------------------------------------------------ 0. IDENTITY -- */
 const APP = {
   name:        'Architecture Advisor',
-  version:     '1.33.0',
+  version:     '1.34.0',
   author:      'Nuno Dinis Cortiços',
   institution: 'Lisbon School of Architecture, Universidade de Lisboa',
   builtWith:   'Claude Opus 5 (Anthropic)',
@@ -3505,12 +3505,13 @@ function buildVentilation(host) {
     return y >= 0 ? 'N' : 'S';
   };
   /** Wind blockage on one facade, 0 (open) to 0.7 (fully sheltered): each
-      detached wall counts ~0.30, each plant its height-weighted density ×
-      0.25, nearest facade only. */
+      detached wall ~0.30 scaled by its length against a 3 m reference
+      (a 3 m wall scores exactly as before), each plant its
+      height-weighted density × 0.25, nearest facade only. */
   const blockage = f => {
     let b = 0;
     VEGETATION.forEach(v => { if (sideOf(v.x, v.y) === f) b += vegBlock(v); });
-    WALLS.forEach(w => { if (sideOf(w.x, w.y) === f) b += 0.30; });
+    WALLS.forEach(w => { if (sideOf(w.x, w.y) === f) b += 0.30 * clamp(w.length / 3, 0.5, 2); });
     return clamp(b, 0, 0.7);
   };
   const effectiveArea = (f1, f2) => {
@@ -3903,7 +3904,7 @@ function buildVentilation(host) {
 
   /* ---- detached walls: arm, then click the ground; orientation follows the nearest facade ---- */
   host.appendChild(section('Detached walls',
-    'Arm the wall tool, then click open ground. Click a placed wall to tune its height and length, drag to move it, double-click to remove it. A wall near a south or north facade runs east–west; near east or west it runs north–south. Each wall shelters its nearest facade.'));
+    'Arm the wall tool, then click open ground. Click a placed wall to tune it, drag its corner dots to resize it, drag the wall to move it, double-click to remove it. A wall near a south or north facade runs east–west; near east or west it runs north–south. Each wall shelters its nearest facade.'));
   const wallPalette = host.appendChild(el('div', { class:'controls' }));
   let wallArmed = false;
   const wallBtn = el('button', { class:'btn small', text:'Place wall', onclick: () => {
@@ -3924,7 +3925,14 @@ function buildVentilation(host) {
   const selBox = host.appendChild(el('div', { class:'controls' }));
   const selHint = el('span', { class:'hint', text:'Nothing selected — click a placed item on the model.' });
   let selKey = '@';
-  let edH = null, edT = null, edC = null;
+  let edH = null, edT = null, edC = null, edWH = null, edWL = null;
+  /** Wall sliders mirror the corner dots, whichever side just moved. */
+  function syncWallEd() {
+    const s = selItem();
+    if (!s || s.kind !== 'wall' || !edWH) return;
+    edWH.range.value = s.obj.height; edWH.out.textContent = fmt(s.obj.height, 1) + ' m';
+    edWL.range.value = s.obj.length; edWL.out.textContent = fmt(s.obj.length, 1) + ' m';
+  }
   /** Re-sum the three linked sliders from the plant: height always reads
      trunk + canopy, whichever toggle just moved. */
   function syncPlantEd() {
@@ -3941,12 +3949,13 @@ function buildVentilation(host) {
     if (key === selKey) return;
     selKey = key;
     selBox.innerHTML = '';
-    edH = edT = edC = null;
+    edH = edT = edC = edWH = edWL = null;
     if (!s) { selBox.appendChild(selHint); return; }
     if (s.kind === 'wall') {
       const w = s.obj;
-      selBox.appendChild(rangeCtl('Height', 0.5, 3, 0.1, w.height, v => { w.height = +v.toFixed(1); refresh(); }, v => fmt(v, 1) + ' m'));
-      selBox.appendChild(rangeCtl('Length', 1, 8, 0.5, w.length, v => { w.length = +v.toFixed(1); refresh(); }, v => fmt(v, 1) + ' m'));
+      edWH = rangeCtl('Height', 0.5, 4, 0.1, w.height, v => { w.height = +v.toFixed(1); refresh(); }, v => fmt(v, 1) + ' m');
+      edWL = rangeCtl('Length', 1, 12, 0.5, w.length, v => { w.length = +v.toFixed(1); refresh(); }, v => fmt(v, 1) + ' m');
+      selBox.appendChild(edWH); selBox.appendChild(edWL);
       selBox.appendChild(el('button', { class:'btn small', text:'Delete wall', onclick:() => { WALLS.splice(s.index, 1); selected = null; refresh(); toast('Wall removed'); } }));
     } else {
       const v = s.obj;
@@ -4325,7 +4334,15 @@ function buildVentilation(host) {
         ? [[w.x, w.y - hw, 0], [w.x, w.y + hw, 0], [w.x, w.y + hw, w.height], [w.x, w.y - hw, w.height]]
         : [[w.x - hw, w.y, 0], [w.x + hw, w.y, 0], [w.x + hw, w.y, w.height], [w.x - hw, w.y, w.height]];
       poly(quad, 'rgba(220,38,38,.14)', '#DC2626', 1.3);
-      if (sel && sel.kind === 'wall' && sel.index === i) poly(quad, null, '#D97706', 2, [5,4]);
+      if (sel && sel.kind === 'wall' && sel.index === i) {
+        poly(quad, null, '#D97706', 2, [5,4]);
+        const H = wallHandles(w, (x, y, z) => proj(x, y, z));
+        ['endA', 'endB', 'top'].forEach(k => {
+          ctx.fillStyle = '#ffffff';
+          ctx.beginPath(); ctx.arc(H[k][0], H[k][1], 7, 0, 6.28); ctx.fill();
+          stroke(ctx, '#D97706', 2); ctx.stroke();
+        });
+      }
     });
 
     /* ---- summer cross-ventilation paths through opposite pairs ---- */
@@ -4408,7 +4425,7 @@ function buildVentilation(host) {
 
   ventPanel = makePanel(host, {
     title: 'One model \u2014 site, roof, windows, sun and air',
-    note: 'Volume and eave height from Site, slopes from Roof, openings and sunspace from Windows & Shading, shadows from the same sun, airflow from the opposite pairs \u2014 arm a tool to place, click to tune, drag to move, double-click to remove',
+    note: 'Volume and eave height from Site, slopes from Roof, openings and sunspace from Windows & Shading, shadows from the same sun, airflow from the opposite pairs \u2014 arm a tool to place, click to tune, drag corners to resize, drag to move, double-click to remove',
     aspect: 900 / 420,
     render: renderVent,
     csv: ventCSV
@@ -4445,6 +4462,14 @@ function buildVentilation(host) {
     u = clamp(u, 0, 1);
     return Math.hypot(px - (ax + u * dx), py - (ay + u * dy));
   };
+  /** Corner dots of a wall in screen pixels: both ends at the ground plus
+     the top middle, drawn for the selected wall and grabbed to resize it. */
+  const wallHandles = (w, pr) => {
+    const hw = w.length / 2;
+    const a = w.along === 'y' ? [w.x, w.y - hw] : [w.x - hw, w.y];
+    const b = w.along === 'y' ? [w.x, w.y + hw] : [w.x + hw, w.y];
+    return { endA:pr(a[0], a[1], 0.1), endB:pr(b[0], b[1], 0.1), top:pr(w.x, w.y, w.height + 0.15) };
+  };
   /** Nearest placed item to a pointer position (CSS pixels). */
   const pickItem = (clientX, clientY) => {
     if (!FR) return null;
@@ -4452,6 +4477,13 @@ function buildVentilation(host) {
     const camS = camSign();
     const proj = (x, y, z) => projF(FR, camS * x, camS * y, z);
     let best = null;
+    const selH = selItem();
+    if (selH && selH.kind === 'wall') {
+      const H = wallHandles(selH.obj, proj);
+      for (const part of ['endA', 'endB', 'top']) {
+        if (Math.hypot(sx - H[part][0], sy - H[part][1]) <= 11) return { kind:'handle', index:selH.index, part };
+      }
+    }
     VEGETATION.forEach((v, i) => {
       const g = crownGeo(v, FR.s);
       const p = proj(v.x, v.y, g.cz);
@@ -4482,7 +4514,7 @@ function buildVentilation(host) {
     const w = WALLS[hit.index], f = sideOf(w.x, w.y);
     return '<b>' + t('Wall') + ' ' + (hit.index + 1) + '</b><br><span class="tv">' +
       fmt(w.length, 1) + ' × ' + fmt(w.height, 1) + ' m · ' + t('shelters') + ' ' + t(FACE_NAME[f]) +
-      '</span><br><span class="tm">' + t('Click to tune · drag to move · double-click to remove') + '</span>';
+      '</span><br><span class="tm">' + t('Drag corners to resize · drag to move · double-click to remove') + '</span>';
   };
   const clickHandler = ev => {
     if (!plantArmed && !wallArmed) return;
@@ -4511,11 +4543,21 @@ function buildVentilation(host) {
 
   /* ---- drag placed items across the garden; a press that barely moves is
      a click, and a click tunes the item below ---- */
-  let dragV = null, downXY = null;
+  let dragV = null, downXY = null, handleDrag = null;
   cv.addEventListener('pointerdown', ev => {
     if (plantArmed || wallArmed || !FR) return;
     const hit = pickItem(ev.clientX, ev.clientY);
     if (!hit) return;
+    if (hit.kind === 'handle') {
+      ev.preventDefault();
+      const w = WALLS[hit.index];
+      handleDrag = { index:hit.index, part:hit.part, x0:ev.clientX, y0:ev.clientY,
+                     len:w.length, h:w.height, cx:w.x, cy:w.y };
+      try { cv.setPointerCapture(ev.pointerId); } catch (err) {}
+      cv.style.cursor = hit.part === 'top' ? 'ns-resize' : 'ew-resize';
+      hideTip();
+      return;
+    }
     downXY = [ev.clientX, ev.clientY];
     ev.preventDefault();
     const pos = getWorldPos(ev.clientX, ev.clientY);
@@ -4526,6 +4568,28 @@ function buildVentilation(host) {
     hideTip();
   });
   cv.addEventListener('pointermove', ev => {
+    if (handleDrag) {
+      ev.preventDefault();
+      const w = WALLS[handleDrag.index];
+      if (!w) { handleDrag = null; return; }
+      if (handleDrag.part === 'top') {
+        w.height = +clamp(handleDrag.h + (handleDrag.y0 - ev.clientY) / Math.max(1, FR.s), 0.5, 4).toFixed(1);
+      } else {
+        /* The grabbed end follows the pointer along the wall axis while
+           the opposite end stays put: open and close the area at will. */
+        const pos = getWorldPos(ev.clientX, ev.clientY);
+        const ax = w.along === 'y' ? [0, 1] : [1, 0];
+        const hw0 = handleDrag.len / 2, sgn = handleDrag.part === 'endA' ? -1 : 1;
+        const fx = handleDrag.cx + ax[0] * sgn * hw0, fy = handleDrag.cy + ax[1] * sgn * hw0;
+        const rel = ((pos.x - fx) * ax[0] + (pos.y - fy) * ax[1]) * sgn;
+        const nl = clamp(rel, 1, 12);
+        w.length = +nl.toFixed(1);
+        w.x = +(fx + ax[0] * sgn * nl / 2).toFixed(1);
+        w.y = +(fy + ax[1] * sgn * nl / 2).toFixed(1);
+      }
+      refresh();
+      return;
+    }
     if (dragV) {
       ev.preventDefault();
       const pos = getWorldPos(ev.clientX, ev.clientY);
@@ -4545,10 +4609,14 @@ function buildVentilation(host) {
     }
     if (plantArmed || wallArmed) { cv.style.cursor = 'cell'; hideTip(); return; }
     const hit = pickItem(ev.clientX, ev.clientY);
-    if (hit) { cv.style.cursor = 'grab'; showTip(itemTip(hit), ev); }
+    if (hit) {
+      cv.style.cursor = hit.kind === 'handle' ? (hit.part === 'top' ? 'ns-resize' : 'ew-resize') : 'grab';
+      showTip(hit.kind === 'handle' ? t('Drag to resize the wall') : itemTip(hit), ev);
+    }
     else { cv.style.cursor = 'crosshair'; hideTip(); }
   });
   const endDragV = ev => {
+    if (handleDrag) { handleDrag = null; cv.style.cursor = 'default'; refresh(); return; }
     if (dragV) {
       const moved = (ev && downXY) ? Math.hypot(ev.clientX - downXY[0], ev.clientY - downXY[1]) : 99;
       const dk = dragV.kind, di = dragV.index;
@@ -4583,6 +4651,8 @@ function buildVentilation(host) {
      readout and redraws through it. ---- */
   const refresh = () => {
     syncEditor();
+    syncWallEd();
+    syncPlantEd();
     syncWindCtls();
     vegCount.textContent = VEGETATION.length + '/10';
     placeHint.textContent = (plantArmed ? ' planting ' + plantArmed + ' — click open ground' : '') + (wallArmed ? ' placing wall — click open ground' : '');
