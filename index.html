@@ -607,7 +607,7 @@ footer{border-top:1px solid var(--line); margin-top:26px; background:var(--wash)
 /* ------------------------------------------------------------ 0. IDENTITY -- */
 const APP = {
   name:        'Architecture Advisor',
-  version:     '1.29.0',
+  version:     '1.30.0',
   author:      'Nuno Dinis Cortiços',
   institution: 'Lisbon School of Architecture, Universidade de Lisboa',
   builtWith:   'Claude Opus 5 (Anthropic)',
@@ -3368,14 +3368,14 @@ function buildVentilation(host) {
   const SPECIES = {
     pine:{ h:15, d:0.7, tr:8, spr:0.64, limbs:1, tw:1.3, kind:'tree', c:'#22c55e' },
     cypress:{ h:12, d:0.7, tr:2, spr:0.15, limbs:1, tw:1, kind:'tree', c:'#22c55e' },
-    oak:{ h:11, d:0.55, tr:3, spr:0.7, limbs:3, tw:1.3, kind:'tree', c:'#7E9078' },
+    oak:{ h:11, d:0.6, tr:3, spr:0.45, limbs:3, tw:1.2, kind:'tree', c:'#3E8E41' },
     olive:{ h:8, d:0.55, tr:2, spr:0.55, limbs:5, fork:0.15, tw:1.2, kind:'tree', c:'#8FA08A' },
     eucalyptus:{ h:18, d:0.45, tr:5, spr:0.31, limbs:5, tw:1.8, kind:'tree', c:'#6E9A76' },
     poplar:{ h:18, d:0.5, tr:9, spr:0.29, limbs:1, tw:1, kind:'tree', c:'#65A30D' },
     cork:{ h:12, d:0.6, tr:5, spr:0.55, limbs:3, tw:1.3, kind:'tree', c:'#1C5630' },
     carob:{ h:10, d:0.65, tr:3, spr:0.62, limbs:3, tw:1.2, kind:'tree', c:'#14522B' },
     medronheiro:{ h:5, d:0.6, tr:1.5, spr:0.6, limbs:3, tw:1, kind:'tree', c:'#2E7D46', fl:'#C03028', flN:5, fl2:'#F2EFE4', fl2N:4 },
-    mastic:{ h:3, d:0.7, tr:0, spr:0.6, limbs:1, tw:1, kind:'bush', c:'#0F5C30', fl:'#B03030', flN:5 },
+    mastic:{ h:3, d:0.7, tr:0, spr:0.6, limbs:1, tw:1, kind:'bush', c:'#0F5C30', fl:'#A02828', flN:8, flR:1.8, flIn:1 },
     kermes:{ h:1.2, d:0.7, tr:0, spr:0.67, limbs:1, tw:1, kind:'bush', c:'#1E6B38', wide:1.25, fl:'#C8A24A', flN:4 },
     esteva:{ h:1.5, d:0.7, tr:0, spr:0.8, limbs:1, tw:1, kind:'bush', c:'#2A7A3D', fl:'#FAFAF5', flN:6, flR:2.6 },
     giesta:{ h:2, d:0.6, tr:0, spr:0.6, limbs:1, tw:1, kind:'bush', c:'#16A34A' },
@@ -3389,9 +3389,9 @@ function buildVentilation(host) {
   const spreadOf = v => { const s = specOf(v.type).spr; return s != null ? s : 0.5; };
   /* Crown habit per species: cypress rises as a cone, poplar as a column,
      bushes sit as mounds, everything else balls into a round crown. */
-  const CROWN_FORM = { cypress:'cone', poplar:'column', pine:'umbrella', giesta:'fountain', oak:'dome', olive:'vase', cork:'dome', carob:'dome' };
+  const CROWN_FORM = { cypress:'cone', poplar:'column', pine:'umbrella', giesta:'fountain', oak:'pyramid', olive:'vase', cork:'dome', carob:'dome', mastic:'globe' };
   const crownFormOf = v => CROWN_FORM[v.type] || (specOf(v.type).kind === 'bush' ? 'mound' : 'ball');
-  const FORM_NAME = { ball:'round crown', column:'columnar crown', cone:'conical crown', mound:'mound', umbrella:'umbrella crown', fountain:'flowering fountain', dome:'broad dome', vase:'open vase' };
+  const FORM_NAME = { ball:'round crown', column:'columnar crown', cone:'conical crown', mound:'mound', umbrella:'umbrella crown', fountain:'flowering fountain', dome:'broad dome', vase:'open vase', globe:'fruiting globe', pyramid:'tiered pyramid' };
   /** Scale a hex colour toward white (>1) or black (<1) for crown shading. */
   const shade = (hex, f) => {
     const h = hex.replace('#', '');
@@ -3423,6 +3423,12 @@ function buildVentilation(host) {
       const rx = Math.max(3, D * 0.5 * s);
       return { form, trunkH:0, canopyM:D, cz:v.height * 0.55, rx, ry:Math.max(6, v.height * 0.42 * s) };
     }
+    if (form === 'globe') {
+      /* Nursery aroeira: a dense ball straight out of the pot, touching
+         the soil all round. */
+      const rx = Math.max(3, rxW * s);
+      return { form, trunkH:0, canopyM:D, cz:rxW * 0.85, rx, ry:rx * 0.85 };
+    }
     const trunkH = trunkOf(v);
     if (form === 'umbrella') {
       const rx = Math.max(3, rxW * s);
@@ -3442,6 +3448,10 @@ function buildVentilation(host) {
     if (form === 'vase') {
       const rx = Math.max(2.5, rxW * s);
       return { form, trunkH, canopyM:D, cz:trunkH + D * 0.55, rx, ry:rx * 0.42 };
+    }
+    if (form === 'pyramid') {
+      const rx = Math.max(2.5, rxW * s);
+      return { form, trunkH, canopyM:D, cz:trunkH + D * 0.5, rx, ry:rx * 1.0 };
     }
     const rx = Math.max(2.5, rxW * s);
     return { form, trunkH, canopyM:D, cz:trunkH + D * 0.45, rx, ry:clamp(D * 0.42 * s, rx * 0.5, rx * 0.95) };
@@ -4129,6 +4139,31 @@ function buildVentilation(host) {
         return;
       }
       const mid = proj(v.x, v.y, g.cz);
+      if (g.form === 'pyramid') {
+        /* A young oak after the photo: one leader straight to the tip,
+           three branch tiers narrowing upward, widest at the lower third. */
+        const base = proj(v.x, v.y, 0), tipT = proj(v.x, v.y, v.height * 0.98);
+        stroke(ctx, '#8B4513', trunkWOf(v)); seg(ctx, base[0], base[1], tipT[0], tipT[1]);
+        [[0.22, 1.0], [0.55, 0.8], [0.82, 0.55]].forEach(([f, w]) => {
+          const c = proj(v.x, v.y, g.trunkH + g.canopyM * f);
+          const rx = g.rx * w, ry = Math.max(3, rx * 0.55);
+          const rg = ctx.createRadialGradient(c[0] - rx * 0.3, c[1] - ry * 0.4, Math.max(1, rx * 0.1), c[0], c[1], rx);
+          rg.addColorStop(0, shade(col, 1.5)); rg.addColorStop(0.6, col); rg.addColorStop(1, shade(col, 0.62));
+          ctx.save();
+          ctx.globalAlpha = densA(v);
+          ctx.fillStyle = rg;
+          ctx.beginPath(); ctx.ellipse(c[0], c[1], rx, ry, 0, 0, 6.28); ctx.fill();
+          ctx.restore();
+          stroke(ctx, 'rgba(20,23,26,.45)', 1.1); ctx.stroke();
+        });
+        ctx.fillStyle = '#14171a';
+        ctx.fillText(String(v.type).slice(0,4), mid[0] + g.rx * 0.4, mid[1] - g.ry - 3);
+        if (isSel) {
+          stroke(ctx, '#D97706', 1.6, [5,4]);
+          ctx.beginPath(); ctx.ellipse(mid[0], mid[1], g.rx + 6, g.ry + 6, 0, 0, 6.28); ctx.stroke();
+        }
+        return;
+      }
       if (g.form === 'umbrella') {
         /* A stone pine: one thick bole straight to a flat parasol disc. */
         const base = proj(v.x, v.y, 0), top = proj(v.x, v.y, v.height);
@@ -4201,7 +4236,7 @@ function buildVentilation(host) {
           }
         }
       }
-      if (g.form === 'mound' || g.form === 'fountain') {
+      if (g.form === 'mound' || g.form === 'fountain' || g.form === 'globe') {
         /* Ground contact: a bush sits ON its spot, a tree stands over it. */
         const gp = proj(v.x, v.y, 0.02);
         ctx.fillStyle = 'rgba(20,23,26,.16)';
@@ -4219,17 +4254,20 @@ function buildVentilation(host) {
       ctx.beginPath(); ctx.ellipse(mid[0], mid[1], g.rx, g.ry, 0, 0, 6.28); ctx.fill();
       ctx.restore();
       stroke(ctx, 'rgba(20,23,26,.5)', 1.2); ctx.stroke();
-      if (g.form === 'mound' || (g.form === 'ball' && specOf(v.type).fl)) {
+      if (g.form === 'mound' || g.form === 'globe' || (g.form === 'ball' && specOf(v.type).fl)) {
         /* Bloom and fruit, scattered deterministically so the crown never
            shimmers between redraws: mastic's red berries, kermes acorns,
            esteva's white flags, myrtle blossom, rosemary blue - and the
            strawberry tree wearing red fruit and white urns together. */
         const fsp = specOf(v.type);
         if (fsp.fl) {
+          /* Interior fruit like the mastic's clusters deep inside: smaller
+             dots on tighter radii, half-veiled by the foliage. */
+          const inner = fsp.flIn ? { lo:0.08, hi:0.42 } : { lo:0.15, hi:0.9 };
           ctx.fillStyle = fsp.fl;
           const nFl = fsp.flN || 5;
           for (let fi = 0; fi < nFl; fi++) {
-            const fa = fi * 2.39996, fr = 0.15 + 0.75 * ((fi * 0.61803) % 1);
+            const fa = fi * 2.39996, fr = inner.lo + (inner.hi - inner.lo) * ((fi * 0.61803) % 1);
             ctx.beginPath(); ctx.arc(mid[0] + Math.cos(fa) * g.rx * fr, mid[1] + Math.sin(fa) * g.ry * fr, fsp.flR || 2.2, 0, 6.28); ctx.fill();
           }
         }
