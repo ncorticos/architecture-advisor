@@ -607,7 +607,7 @@ footer{border-top:1px solid var(--line); margin-top:26px; background:var(--wash)
 /* ------------------------------------------------------------ 0. IDENTITY -- */
 const APP = {
   name:        'Architecture Advisor',
-  version:     '1.19.0',
+  version:     '1.20.0',
   author:      'Nuno Dinis Cortiços',
   institution: 'Lisbon School of Architecture, Universidade de Lisboa',
   builtWith:   'Claude Opus 5 (Anthropic)',
@@ -3341,7 +3341,17 @@ function buildVentilation(host) {
     const list = ms.map(m => T3[m]);
     return list.slice(0, 3).join('+') + (list.length > 3 ? '+' + (list.length - 3) + ' more' : '');
   };
-  const dirName = () => COMPASS8[Math.round(setWind().dir / 45) % 8];
+  const dirName = () => COMPASS8[Math.round(tunedWind().dir / 45) % 8];
+  /* Local tune, applied ON TOP of the monthly prevailing values: a valley
+     channels, a street grid turns, a corner accelerates. The months keep
+     their own mesoscale wind; this is the site's microscale answer. */
+  let tuneDir = 0, tuneSpd = 1.0;
+  const tunedWind = () => {
+    const sw = setWind();
+    return { dir:(sw.dir + tuneDir + 360) % 360, spd:sw.spd * tuneSpd };
+  };
+  const tuneTxt = () => (tuneDir !== 0 || tuneSpd !== 1)
+    ? ' (' + t('local') + ' ' + (tuneDir >= 0 ? '+' : '') + fmt(tuneDir, 0) + '\u00b0 \u00d7' + fmt(tuneSpd, 2) + ')' : '';
   /* Click-to-tune selection over the placed items — a reference, so index
      shifts from deletions cannot retarget it. Drag still moves,
      double-click still removes. */
@@ -3425,7 +3435,7 @@ function buildVentilation(host) {
     const a = ALPHA[terrainKey] != null ? ALPHA[terrainKey] : 0.18;
     return spd * (TERRAIN_WIND[terrainKey] || 1) * (EXPOSURE_WIND[windKey] || 1) * Math.pow(H / 10, a);
   };
-  const eaveWind = () => eaveFor(setWind().spd);
+  const eaveWind = () => eaveFor(tunedWind().spd);
   /** Stack-effect pressure for a ΔT across the full eave height (Pa). */
   const stackPa = dT => {
     const rho = airDensity(), H = h0live(), T = 273.15 + meanTemp();
@@ -3475,8 +3485,9 @@ function buildVentilation(host) {
     let sum = 0;
     windMonths.forEach(m => {
       const w = WIND_M[m];
-      const gust = clamp(3 / Math.max(0.5, w.spd), 0.5, 1.2);
-      const facing = 1 - 0.15 * Math.cos((w.dir - normAz) * RAD);
+      const tdir = (w.dir + tuneDir + 360) % 360, tspd = w.spd * tuneSpd;
+      const gust = clamp(3 / Math.max(0.5, tspd), 0.5, 1.2);
+      const facing = 1 - 0.15 * Math.cos((tdir - normAz) * RAD);
       sum += clamp((0.35 + 0.35 * wwrPen + 0.3 * shelter / 0.7) * expo / 0.8 * base / 0.6 * gust * facing, 0, 1.5);
     });
     return Math.round(clamp(sum / windMonths.length, 0, 1) * 100);
@@ -3499,8 +3510,8 @@ function buildVentilation(host) {
     let sum = 0;
     windMonths.forEach(m => {
       const w = WIND_M[m];
-      const windTerm = clamp(eaveFor(w.spd) / 3, 0.15, 1.3) / 1.3;
-      sum += 100 * (0.15 + 0.85 * areaTerm) * (0.45 + 0.55 * windTerm) * alignPair(f1, f2, w.dir);
+      const windTerm = clamp(eaveFor(w.spd * tuneSpd) / 3, 0.15, 1.3) / 1.3;
+      sum += 100 * (0.15 + 0.85 * areaTerm) * (0.45 + 0.55 * windTerm) * alignPair(f1, f2, (w.dir + tuneDir + 360) % 360);
     });
     return Math.round(clamp(sum / windMonths.length, 0, 100));
   };
@@ -3729,18 +3740,39 @@ function buildVentilation(host) {
   });
   presetRow.appendChild(presetSeg);
   host.appendChild(controls([monthCtl, presetRow]));
+  /* The prevailing editors follow the month selection: with one month they
+     edit that month's own wind; with a set they lock on the mean and only
+     the local tune below stays live. */
   const cWDir = segCtl('Prevailing direction', DIRS.map(d => ({ value:d, label:COMPASS8[d / 45] })), setWind().dir,
-    v => { windMonths.forEach(m => { WIND_M[m].dir = v; }); refresh(); });
-  const cWSpd = rangeCtl('Wind speed at 10 m', 0, 8, 0.5, setWind().spd, v => { windMonths.forEach(m => { WIND_M[m].spd = v; }); refresh(); }, v => fmt(v, 1) + ' m/s');
-  host.appendChild(controls([cWDir, cWSpd]));
-  /* The two controls show the set mean (nearest eighth); an edit writes
-     through to every selected month. */
+    v => { if (windMonths.length === 1) { WIND_M[windMonths[0]].dir = v; refresh(); } });
+  const cWSpd = rangeCtl('Wind speed at 10 m', 0, 8, 0.5, setWind().spd, v => { if (windMonths.length === 1) { WIND_M[windMonths[0]].spd = v; refresh(); } }, v => fmt(v, 1) + ' m/s');
+  const windEditNote = el('span', { class:'hint', text:'' });
+  host.appendChild(controls([cWDir, cWSpd, windEditNote]));
   function syncWindCtls() {
-    const sw = setWind();
-    const near = DIRS.reduce((a, b) => Math.abs(b - sw.dir) <= Math.abs(a - sw.dir) ? b : a);
-    cWDir.querySelectorAll('button').forEach((b, i) => b.setAttribute('aria-pressed', String(DIRS[i] === near)));
-    cWSpd.range.value = sw.spd; cWSpd.out.textContent = fmt(sw.spd, 1) + ' m/s';
+    const single = windMonths.length === 1;
+    const src = single ? WIND_M[windMonths[0]] : setWind();
+    const near = DIRS.reduce((a, b) => Math.abs(b - src.dir) <= Math.abs(a - src.dir) ? b : a);
+    cWDir.querySelectorAll('button').forEach((b, i) => { b.setAttribute('aria-pressed', String(DIRS[i] === near)); b.disabled = !single; });
+    cWSpd.range.disabled = !single;
+    cWDir.style.opacity = cWSpd.style.opacity = single ? '' : '0.55';
+    windEditNote.textContent = single ? t('Editing') + ' ' + MON3[windMonths[0]] + t('\u2019s prevailing wind')
+      : t('Set mean shown — pick one month to edit its prevailing wind');
   }
+  /* Local landscape and urban tune: the deflection the site itself adds —
+     a valley channeling along its axis, a street grid turning the flow,
+     an open corner accelerating it. Shift turns the set mean, factor
+     scales it; both ride through arrows and scores. */
+  host.appendChild(section('Local landscape and urban tune',
+    'The correction the plot itself demands, after the months have spoken. A valley reach can turn the prevailing wind along its axis; a street canyon does the same between facades. Shift in degrees, factor as a multiplier — reset returns to the months untouched.'));
+  const cTuneDir = rangeCtl('Direction shift', -45, 45, 5, tuneDir, v => { tuneDir = v; refresh(); }, v => (v >= 0 ? '+' : '') + fmt(v, 0) + '\u00b0');
+  const cTuneSpd = rangeCtl('Speed factor', 0.5, 1.5, 0.05, tuneSpd, v => { tuneSpd = +v.toFixed(2); refresh(); }, v => '\u00d7' + fmt(v, 2));
+  const tuneReset = el('button', { class:'btn small', text:'Reset tune', onclick:() => {
+    tuneDir = 0; tuneSpd = 1.0;
+    cTuneDir.range.value = 0; cTuneDir.out.textContent = '+0\u00b0';
+    cTuneSpd.range.value = 1; cTuneSpd.out.textContent = '\u00d71.00';
+    refresh(); toast('Back to the months untouched');
+  } });
+  host.appendChild(controls([cTuneDir, cTuneSpd, tuneReset]));
   host.appendChild(hint('vent-wind',
     'Direction is where the wind comes from, in eighths like a site rose. A north wind drives the south–north pair and only brushes the east–west one — toggle months and watch the blue pattern and both scores move together. Opposing months in one set cancel in the mean, exactly as alternating weather would.'));
 
@@ -4020,7 +4052,7 @@ function buildVentilation(host) {
       };
       /* One month, one pattern: three blue streamlines along the month's
          wind, the middle one strongest. Width follows the eave wind. */
-      const wm = setWind();
+      const wm = tunedWind();
       const toA = (wm.dir + 180) % 360;
       const vx = Math.sin(toA * RAD), vy = Math.cos(toA * RAD);
       const midH = clamp(h0live() * 0.55, 1.0, 2.6);
@@ -4033,7 +4065,7 @@ function buildVentilation(host) {
           i === 1 ? 'rgba(29,78,216,.9)' : 'rgba(37,99,235,.55)', (i === 1 ? wBase + 1 : wBase));
       });
       const lp = proj(vx * (R + 1.4), vy * (R + 1.4), midH);
-      label(ctx, monthSetName() + ' ' + dirName() + ' ' + fmt(wm.spd, 1) + ' m/s', lp[0], lp[1], '#1D4ED8', FM(10), 'center', 'middle');
+      label(ctx, monthSetName() + ' ' + dirName() + ' ' + fmt(wm.spd, 1) + ' m/s' + (tuneTxt() ? ' *' : ''), lp[0], lp[1], '#1D4ED8', FM(10), 'center', 'middle');
       const up = proj(0, 0, ridge), upTop = proj(0, 0, ridge + Math.max(1.2, h0live() * 0.5));
       stroke(ctx, 'rgba(217,119,6,.8)', 1.6, [5,4]); seg(ctx, up[0], up[1], upTop[0], upTop[1]);
     }
@@ -4047,7 +4079,7 @@ function buildVentilation(host) {
     ctx.fillStyle = '#7b838b'; ctx.font = '9px ui-sans-serif';
     ctx.textAlign = 'center';
     ctx.fillText(fmt(lat,2)+'° '+(lat<0?'S':'N')+' · '+fmt(Math.abs(lon),2)+'° '+(lon<0?'W':'E')+' · '+fmt(S.alt||0,0)+' m · ρ '+fmt(airDensity(),3)+' kg/m³ · eave '+fmt(eaveWind(),1)+' m/s · stack(5K) '+fmt(stackPa(5),1)+' Pa', W/2, H-18);
-    ctx.fillText(SH.key+' '+fmt(SH.h,2)+' h · sun '+fmt(sun.alt,0)+'°/'+fmt(sun.azi,0)+'° · wind '+monthSetName()+' '+dirName()+' '+fmt(setWind().spd,1)+' · '+VEGETATION.length+'/10 planting · '+WALLS.length+' walls', W/2, H-6);
+    ctx.fillText(SH.key+' '+fmt(SH.h,2)+' h · sun '+fmt(sun.alt,0)+'°/'+fmt(sun.azi,0)+'° · wind '+monthSetName()+' '+dirName()+' '+fmt(tunedWind().spd,1)+tuneTxt()+' · '+VEGETATION.length+'/10 planting · '+WALLS.length+' walls', W/2, H-6);
   };
 
   /* ---- CSV behind the panel export: the same rows the old button
@@ -4058,7 +4090,8 @@ function buildVentilation(host) {
     rows.push(['Latitude (°)', +lat.toFixed(3)], ['Longitude (°)', +lon.toFixed(3)], ['Altitude (m)', +(S.alt || 0)]);
     rows.push(['Air density (kg/m³)', +airDensity().toFixed(3)]);
     rows.push(['Terrain', terrainKey], ['Wind exposure', windKey]);
-    rows.push(['Wind set', monthSetName(MON3_EN) + ' ' + COMPASS8_EN[Math.round(setWind().dir / 45) % 8] + ' ' + setWind().spd.toFixed(1) + ' m/s']);
+    rows.push(['Wind set', monthSetName(MON3_EN) + ' ' + COMPASS8_EN[Math.round(tunedWind().dir / 45) % 8] + ' ' + tunedWind().spd.toFixed(1) + ' m/s']);
+    rows.push(['Local tune', (tuneDir >= 0 ? '+' : '') + tuneDir + '\u00b0 \u00d7' + tuneSpd.toFixed(2)]);
     WIND_M.forEach((w, m) => rows.push(['Wind ' + MONTHS_EN[m], COMPASS8_EN[Math.round(w.dir / 45) % 8] + ' ' + w.spd.toFixed(1) + ' m/s']));
     if (derivedRelief !== null) rows.push(['Relief 2 km window (m)', +derivedRelief.toFixed(0)]);
     rows.push(['Wind speed source', derivedWindSrc ? derivedWindSrc + ' annual mean at 10 m, written to all months' : 'entered by hand, per month']);
@@ -4263,6 +4296,7 @@ function buildVentilation(host) {
      readout and redraws through it. ---- */
   const refresh = () => {
     syncEditor();
+    syncWindCtls();
     vegCount.textContent = VEGETATION.length + '/10';
     placeHint.textContent = (plantArmed ? ' planting ' + plantArmed + ' — click open ground' : '') + (wallArmed ? ' placing wall — click open ground' : '');
     const sn = sunPos(SH.doy, SH.h, lat, lon, tz);
@@ -4273,7 +4307,7 @@ function buildVentilation(host) {
       ' — ρ ' + fmt(airDensity(), 3) + ' kg/m³ · ' + t('eave wind') + ' ' + fmt(eaveWind(), 1) +
       ' m/s · stack(ΔT 5K) ' + fmt(stackPa(5), 1) + ' Pa · ' + SH.key + ' ' + fmt(SH.h, 2) + ' h' +
       ' · ' + t('sun') + ' ' + fmt(sn.alt, 0) + '°/' + fmt(sn.azi, 0) + '°' +
-      ' · ' + t('wind') + ' ' + monthSetName() + ' ' + dirName() + ' ' + fmt(setWind().spd, 1) + ' m/s' +
+      ' · ' + t('wind') + ' ' + monthSetName() + ' ' + dirName() + ' ' + fmt(tunedWind().spd, 1) + ' m/s' + tuneTxt() +
       ' · S–N ' + pairScore('S','N') + ' · E–W ' + pairScore('E','W') + ' · ' + t('winter') +
       ' S ' + winterScore('S') + '/N ' + winterScore('N') + '/E ' + winterScore('E') + '/W ' + winterScore('W')));
     draw();
