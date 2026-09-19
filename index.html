@@ -607,7 +607,7 @@ footer{border-top:1px solid var(--line); margin-top:26px; background:var(--wash)
 /* ------------------------------------------------------------ 0. IDENTITY -- */
 const APP = {
   name:        'Architecture Advisor',
-  version:     '1.34.0',
+  version:     '1.35.0',
   author:      'Nuno Dinis Cortiços',
   institution: 'Lisbon School of Architecture, Universidade de Lisboa',
   builtWith:   'Claude Opus 5 (Anthropic)',
@@ -4580,7 +4580,9 @@ function buildVentilation(host) {
         const pos = getWorldPos(ev.clientX, ev.clientY);
         const ax = w.along === 'y' ? [0, 1] : [1, 0];
         const hw0 = handleDrag.len / 2, sgn = handleDrag.part === 'endA' ? -1 : 1;
-        const fx = handleDrag.cx + ax[0] * sgn * hw0, fy = handleDrag.cy + ax[1] * sgn * hw0;
+        /* The anchor is the OPPOSITE end: grabbing A pins B, so the dot
+           under the cursor is the one that travels. */
+        const fx = handleDrag.cx - ax[0] * sgn * hw0, fy = handleDrag.cy - ax[1] * sgn * hw0;
         const rel = ((pos.x - fx) * ax[0] + (pos.y - fy) * ax[1]) * sgn;
         const nl = clamp(rel, 1, 12);
         w.length = +nl.toFixed(1);
