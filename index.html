@@ -607,7 +607,7 @@ footer{border-top:1px solid var(--line); margin-top:26px; background:var(--wash)
 /* ------------------------------------------------------------ 0. IDENTITY -- */
 const APP = {
   name:        'Architecture Advisor',
-  version:     '1.23.0',
+  version:     '1.24.0',
   author:      'Nuno Dinis Cortiços',
   institution: 'Lisbon School of Architecture, Universidade de Lisboa',
   builtWith:   'Claude Opus 5 (Anthropic)',
@@ -3366,24 +3366,26 @@ function buildVentilation(host) {
      garrigue bushes to shelter the wall base against the wind. Heights are
      mature garden values a student can then tune per plant. */
   const SPECIES = {
-    pine:{ h:12, d:0.7, tr:7, spr:0.48, kind:'tree', c:'#22c55e' },
-    cypress:{ h:12, d:0.7, tr:7, spr:0.36, kind:'tree', c:'#22c55e' },
-    oak:{ h:18, d:0.5, tr:9, spr:0.39, kind:'tree', c:'#eab308' },
-    olive:{ h:8, d:0.6, tr:3.5, spr:0.49, kind:'tree', c:'#eab308' },
-    eucalyptus:{ h:18, d:0.6, tr:9, spr:0.33, kind:'tree', c:'#65A30D' },
-    poplar:{ h:15, d:0.5, tr:8, spr:0.29, kind:'tree', c:'#65A30D' },
-    cork:{ h:8, d:0.6, tr:3.5, spr:0.56, kind:'tree', c:'#a855f6' },
-    carob:{ h:10, d:0.6, tr:4, spr:0.5, kind:'tree', c:'#a855f6' },
-    medronheiro:{ h:4, d:0.6, tr:1.2, spr:0.57, kind:'tree', c:'#a855f6' },
-    mastic:{ h:4, d:0.7, tr:0, spr:0.5, kind:'bush', c:'#16A34A' },
-    kermes:{ h:2, d:0.7, tr:0, spr:0.6, kind:'bush', c:'#16A34A' },
-    esteva:{ h:1.5, d:0.7, tr:0, spr:0.8, kind:'bush', c:'#16A34A' },
-    giesta:{ h:2, d:0.6, tr:0, spr:0.6, kind:'bush', c:'#16A34A' },
-    murta:{ h:2.5, d:0.7, tr:0, spr:0.56, kind:'bush', c:'#16A34A' },
-    alecrim:{ h:0.8, d:0.75, tr:0, spr:0.75, kind:'bush', c:'#16A34A' },
-    alfazema:{ h:0.7, d:0.75, tr:0, spr:0.71, kind:'bush', c:'#16A34A' }
+    pine:{ h:12, d:0.7, tr:7, spr:0.48, limbs:1, tw:1, kind:'tree', c:'#22c55e' },
+    cypress:{ h:12, d:0.7, tr:7, spr:0.36, limbs:1, tw:1, kind:'tree', c:'#22c55e' },
+    oak:{ h:18, d:0.5, tr:9, spr:0.39, limbs:3, tw:1.3, kind:'tree', c:'#eab308' },
+    olive:{ h:8, d:0.6, tr:3.5, spr:0.49, limbs:3, tw:1.2, kind:'tree', c:'#eab308' },
+    eucalyptus:{ h:18, d:0.6, tr:5, spr:0.33, limbs:5, tw:1.8, kind:'tree', c:'#65A30D' },
+    poplar:{ h:15, d:0.5, tr:8, spr:0.29, limbs:1, tw:1, kind:'tree', c:'#65A30D' },
+    cork:{ h:8, d:0.6, tr:3.5, spr:0.56, limbs:3, tw:1.3, kind:'tree', c:'#a855f6' },
+    carob:{ h:10, d:0.6, tr:4, spr:0.5, limbs:3, tw:1.2, kind:'tree', c:'#a855f6' },
+    medronheiro:{ h:4, d:0.6, tr:1.2, spr:0.57, limbs:3, tw:1, kind:'tree', c:'#a855f6' },
+    mastic:{ h:4, d:0.7, tr:0, spr:0.5, limbs:1, tw:1, kind:'bush', c:'#16A34A' },
+    kermes:{ h:2, d:0.7, tr:0, spr:0.6, limbs:1, tw:1, kind:'bush', c:'#16A34A' },
+    esteva:{ h:1.5, d:0.7, tr:0, spr:0.8, limbs:1, tw:1, kind:'bush', c:'#16A34A' },
+    giesta:{ h:2, d:0.6, tr:0, spr:0.6, limbs:1, tw:1, kind:'bush', c:'#16A34A' },
+    murta:{ h:2.5, d:0.7, tr:0, spr:0.56, limbs:1, tw:1, kind:'bush', c:'#16A34A' },
+    alecrim:{ h:0.8, d:0.75, tr:0, spr:0.75, limbs:1, tw:1, kind:'bush', c:'#16A34A' },
+    alfazema:{ h:0.7, d:0.75, tr:0, spr:0.71, limbs:1, tw:1, kind:'bush', c:'#16A34A' }
   };
-  const specOf = sp => SPECIES[sp] || { h:6, d:0.6, tr:3.6, spr:0.5, kind:'tree', c:'#a855f6' };
+  const specOf = sp => SPECIES[sp] || { h:6, d:0.6, tr:3.6, spr:0.5, limbs:1, tw:1, kind:'tree', c:'#a855f6' };
+  const limbsOf = v => specOf(v.type).limbs || 1;
+  const trunkWOf = v => (1.5 + Math.min(3, v.height / 10)) * (specOf(v.type).tw || 1);
   const spreadOf = v => { const s = specOf(v.type).spr; return s != null ? s : 0.5; };
   /* Crown habit per species: cypress rises as a cone, poplar as a column,
      bushes sit as mounds, everything else balls into a round crown. */
@@ -4097,8 +4099,24 @@ function buildVentilation(host) {
       }
       const mid = proj(v.x, v.y, g.cz);
       if (g.form !== 'mound' && g.trunkH > 0.05) {
-        const base = proj(v.x, v.y, 0), collar = proj(v.x, v.y, g.trunkH);
-        stroke(ctx, '#8B4513', 1.5 + Math.min(3, v.height / 10)); seg(ctx, base[0], base[1], collar[0], collar[1]);
+        /* The bole never stops short of its cup: it rises at least to the
+           crown's underside, then limbs fan out inside - the eucalyptus
+           fork, not a ball on a stick. Limbs draw before the crown so she
+           covers their tops. */
+        const meet = Math.min(v.height, Math.max(g.trunkH, g.cz - g.ry / s));
+        const base = proj(v.x, v.y, 0), collar = proj(v.x, v.y, meet);
+        stroke(ctx, '#8B4513', trunkWOf(v)); seg(ctx, base[0], base[1], collar[0], collar[1]);
+        const nl = limbsOf(v);
+        if (nl > 1) {
+          /* Tips stay well inside the cup: low enough that the narrowing
+             crown still covers their sideways reach. */
+          const spread = g.rx / Math.max(1, s) * 0.4;
+          for (let li = 0; li < nl; li++) {
+            const aa = 0.3 + li * 6.283 / nl;
+            const tip = proj(v.x + Math.cos(aa) * spread, v.y + Math.sin(aa) * spread, Math.min(v.height, meet + (v.height - meet) * 0.45));
+            stroke(ctx, '#8B4513', Math.max(1, trunkWOf(v) * 0.45)); seg(ctx, collar[0], collar[1], tip[0], tip[1]);
+          }
+        }
       }
       /* A shaded sphere (or mound, or column): lit from the upper left,
          denser crowns more opaque — the same density that throttles wind. */
