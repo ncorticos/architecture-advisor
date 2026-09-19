@@ -607,7 +607,7 @@ footer{border-top:1px solid var(--line); margin-top:26px; background:var(--wash)
 /* ------------------------------------------------------------ 0. IDENTITY -- */
 const APP = {
   name:        'Architecture Advisor',
-  version:     '1.20.0',
+  version:     '1.21.0',
   author:      'Nuno Dinis Cortiços',
   institution: 'Lisbon School of Architecture, Universidade de Lisboa',
   builtWith:   'Claude Opus 5 (Anthropic)',
@@ -3384,6 +3384,17 @@ function buildVentilation(host) {
     alfazema:{ h:0.7, d:0.75, tr:0, cr:0.5, kind:'bush', c:'#16A34A' }
   };
   const specOf = sp => SPECIES[sp] || { h:6, d:0.6, tr:3.6, cr:1.5, kind:'tree', c:'#a855f6' };
+  /* Crown habit per species: cypress rises as a cone, poplar as a column,
+     bushes sit as mounds, everything else balls into a round crown. */
+  const CROWN_FORM = { cypress:'cone', poplar:'column' };
+  const crownFormOf = v => specOf(v.type).kind === 'bush' ? 'mound' : (CROWN_FORM[v.type] || 'ball');
+  const FORM_NAME = { ball:'round crown', column:'columnar crown', cone:'conical crown', mound:'mound' };
+  /** Scale a hex colour toward white (>1) or black (<1) for crown shading. */
+  const shade = (hex, f) => {
+    const h = hex.replace('#', '');
+    const v = [0, 2, 4].map(i => Math.round(clamp(parseInt(h.slice(i, i + 2), 16) * f, 0, 255)));
+    return 'rgb(' + v[0] + ',' + v[1] + ',' + v[2] + ')';
+  };
   const vegKind = v => specOf(v.type).kind === 'bush' ? 'Bush' : 'Tree';
   /** A low bush shelters the wall base, not the whole window band: its
      blockage is weighted by height, full from 2 m up. Every tree reaches
@@ -3394,18 +3405,25 @@ function buildVentilation(host) {
   const trunkOf = v => clamp(v.trunk != null ? v.trunk : v.height, 0, Math.max(0.3, v.height - 0.05));
   const canopyOf = v => v.canopy != null ? v.canopy
     : (specOf(v.type).kind === 'bush' ? Math.max(0.4, v.height * 0.8) : Math.max(1.2, v.height / 5));
-  /** Crown geometry in screen pixels for the current scale: cup-shaped —
-     a wide ellipse on a visible trunk for trees, a low mound for bushes. */
+  /** Crown geometry in screen pixels for the current scale: balls, columns
+     and cones on a visible trunk for trees, low mounds for bushes. */
   const crownGeo = (v, s) => {
-    const canopyM = canopyOf(v);
-    if (specOf(v.type).kind === 'bush') {
+    const canopyM = canopyOf(v), form = crownFormOf(v);
+    if (form === 'mound') {
       const rx = Math.max(3, canopyM * s);
-      return { trunkH:0, canopyM, cz:v.height * 0.55, rx, ry:rx * 0.62, bush:true };
+      return { form, trunkH:0, canopyM, cz:v.height * 0.55, rx, ry:rx * 0.62 };
     }
     const trunkH = trunkOf(v);
     const crownH = Math.max(0.3, v.height - trunkH);
+    if (form === 'cone') {
+      return { form, trunkH, canopyM, baseZ:trunkH * 0.3, cz:(trunkH * 0.3 + v.height) / 2, rx:Math.max(2.5, canopyM * s), ry:Math.max(6, crownH * 0.45 * s) };
+    }
+    if (form === 'column') {
+      const rx = Math.max(2, canopyM * 0.55 * s);
+      return { form, trunkH, canopyM, cz:trunkH + crownH * 0.5, rx, ry:clamp(crownH * 0.45 * s, rx * 1.2, rx * 3) };
+    }
     const rx = Math.max(2.5, canopyM * s);
-    return { trunkH, canopyM, cz:trunkH + crownH * 0.45, rx, ry:clamp(crownH * 0.42 * s, rx * 0.5, rx * 0.95), bush:false };
+    return { form, trunkH, canopyM, cz:trunkH + crownH * 0.45, rx, ry:clamp(crownH * 0.42 * s, rx * 0.5, rx * 0.95) };
   };
 
   /* ---- site climate + altitude physics (live, read at draw time) ----
@@ -3836,7 +3854,7 @@ function buildVentilation(host) {
       selBox.appendChild(el('button', { class:'btn small', text:'Delete wall', onclick:() => { WALLS.splice(s.index, 1); selected = null; refresh(); toast('Wall removed'); } }));
     } else {
       const v = s.obj;
-      selBox.appendChild(el('span', { class:'hint', text:v.type + ' — ' + vegKind(v).toLowerCase() }));
+      selBox.appendChild(el('span', { class:'hint', text:v.type + ' — ' + vegKind(v).toLowerCase() + ', ' + FORM_NAME[crownFormOf(v)] }));
       selBox.appendChild(rangeCtl('Height', 0.3, 20, 0.1, v.height, hv => { v.height = +hv.toFixed(1); v.trunk = Math.min(trunkOf(v), v.height); refresh(); }, hv => fmt(hv, 1) + ' m'));
       selBox.appendChild(rangeCtl('Trunk', 0, 8, 0.1, trunkOf(v), tv => { v.trunk = clamp(+tv.toFixed(1), 0, v.height); refresh(); }, tv => fmt(tv, 1) + ' m'));
       selBox.appendChild(rangeCtl('Canopy', 0.3, 6, 0.1, canopyOf(v), cv2 => { v.canopy = +cv2.toFixed(1); refresh(); }, cv2 => fmt(cv2, 1) + ' m'));
@@ -4008,24 +4026,51 @@ function buildVentilation(host) {
        trees rise on a trunk with a crown, bushes hug the ground as a low
        mound — the selected one wears an amber ring ---- */
     const sel = selItem();
+    const densA = v => 0.55 + 0.45 * clamp(v.density != null ? v.density : 0.6, 0, 1);
     VEGETATION.forEach((v, i) => {
       const g = crownGeo(v, s), col = specOf(v.type).c;
-      const mid = proj(v.x, v.y, g.cz);
-      if (!g.bush && g.trunkH > 0.05) {
-        const base = proj(v.x, v.y, 0), collar = proj(v.x, v.y, g.trunkH);
-        stroke(ctx, '#8B4513', 2.5); seg(ctx, base[0], base[1], collar[0], collar[1]);
+      const isSel = sel && sel.kind === 'tree' && sel.index === i;
+      ctx.font = '8px ui-sans-serif';
+      if (g.form === 'cone') {
+        /* A cypress: foliage almost to the ground, apex at full height. */
+        const b = proj(v.x, v.y, g.baseZ), ap = proj(v.x, v.y, v.height);
+        if (g.baseZ > 0.05) { const bb = proj(v.x, v.y, 0); stroke(ctx, '#8B4513', 2); seg(ctx, bb[0], bb[1], b[0], b[1]); }
+        const hw = g.rx;
+        const lg = ctx.createLinearGradient(ap[0], ap[1], b[0], b[1]);
+        lg.addColorStop(0, shade(col, 1.45)); lg.addColorStop(0.55, col); lg.addColorStop(1, shade(col, 0.62));
+        ctx.save();
+        ctx.globalAlpha = densA(v);
+        ctx.fillStyle = lg;
+        ctx.beginPath(); ctx.moveTo(b[0] - hw, b[1]); ctx.lineTo(ap[0], ap[1]); ctx.lineTo(b[0] + hw, b[1]); ctx.closePath(); ctx.fill();
+        ctx.restore();
+        stroke(ctx, 'rgba(20,23,26,.5)', 1.2); ctx.stroke();
+        ctx.fillStyle = '#14171a';
+        ctx.fillText(String(v.type).slice(0,4), ap[0] + hw * 0.3, ap[1] - 4);
+        if (isSel) {
+          stroke(ctx, '#D97706', 1.6, [5,4]);
+          ctx.beginPath(); ctx.ellipse((b[0] + ap[0]) / 2, (b[1] + ap[1]) / 2, hw + 7, Math.abs(b[1] - ap[1]) / 2 + 7, 0, 0, 6.28); ctx.stroke();
+        }
+        return;
       }
-      /* Denser crowns read more opaque — the same density that throttles
-         the wind. */
+      const mid = proj(v.x, v.y, g.cz);
+      if (g.form !== 'mound' && g.trunkH > 0.05) {
+        const base = proj(v.x, v.y, 0), collar = proj(v.x, v.y, g.trunkH);
+        stroke(ctx, '#8B4513', 1.5 + Math.min(3, v.height / 10)); seg(ctx, base[0], base[1], collar[0], collar[1]);
+      }
+      /* A shaded sphere (or mound, or column): lit from the upper left,
+         denser crowns more opaque — the same density that throttles wind. */
+      const rr = Math.max(g.rx, g.ry);
+      const rg = ctx.createRadialGradient(mid[0] - g.rx * 0.35, mid[1] - g.ry * 0.4, Math.max(1, rr * 0.1), mid[0], mid[1], rr);
+      rg.addColorStop(0, shade(col, 1.55)); rg.addColorStop(0.55, col); rg.addColorStop(1, shade(col, 0.6));
       ctx.save();
-      ctx.globalAlpha = 0.55 + 0.45 * clamp(v.density != null ? v.density : 0.6, 0, 1);
-      ctx.fillStyle = col;
+      ctx.globalAlpha = densA(v);
+      ctx.fillStyle = rg;
       ctx.beginPath(); ctx.ellipse(mid[0], mid[1], g.rx, g.ry, 0, 0, 6.28); ctx.fill();
       ctx.restore();
-      stroke(ctx, 'rgba(20,23,26,.45)', 1.2); ctx.stroke();
-      ctx.font = '8px ui-sans-serif'; ctx.fillStyle = '#14171a';
+      stroke(ctx, 'rgba(20,23,26,.5)', 1.2); ctx.stroke();
+      ctx.fillStyle = '#14171a';
       ctx.fillText(String(v.type).slice(0,4), mid[0] + g.rx * 0.4, mid[1] - g.ry - 3);
-      if (sel && sel.kind === 'tree' && sel.index === i) {
+      if (isSel) {
         stroke(ctx, '#D97706', 1.6, [5,4]);
         ctx.beginPath(); ctx.ellipse(mid[0], mid[1], g.rx + 6, g.ry + 6, 0, 0, 6.28); ctx.stroke();
       }
@@ -4112,7 +4157,7 @@ function buildVentilation(host) {
     rows.push(['Sun altitude (°)', +sn.alt.toFixed(1)], ['Sun azimuth (°)', +sn.azi.toFixed(1)]);
     rows.push(['Ridge shadow (m)', +shadowLenV(h0live() + ((RF.n === 0 ? 0 : RF.th) ? (RF.n === 2 ? G.D/2 : G.D) * Math.tan(RF.th * RAD) : 0), sn.alt).toFixed(1)]);
     rows.push(['Sunspace', (typeof SUNSP !== 'undefined' && SUNSP && SUNSP.on) ? SUNSP.face + ' d=' + SUNSP.depth.toFixed(1) + 'm w=' + Math.round(SUNSP.widthFrac*100) + '%' : 'off']);
-    VEGETATION.forEach(v => rows.push([vegKind(v), v.type + ' h=' + v.height + 'm trunk=' + trunkOf(v).toFixed(1) + 'm canopy=' + canopyOf(v).toFixed(1) + 'm d=' + v.density + ' x=' + v.x + ' y=' + v.y + ' → ' + sideOf(v.x, v.y)]));
+    VEGETATION.forEach(v => rows.push([vegKind(v), v.type + ' h=' + v.height + 'm trunk=' + trunkOf(v).toFixed(1) + 'm canopy=' + canopyOf(v).toFixed(1) + 'm ' + crownFormOf(v) + ' d=' + v.density + ' x=' + v.x + ' y=' + v.y + ' → ' + sideOf(v.x, v.y)]));
     WALLS.forEach(w => rows.push(['Wall', 'x=' + w.x + ' y=' + w.y + ' ' + w.along + ' h=' + w.height + 'm l=' + w.length + 'm → ' + sideOf(w.x, w.y)]));
     rows.push(['Köppen–Geiger', (C && C.k) ? C.k.code : '']);
     rows.push(['Note', 'Openable area assumes 50% of geometric window; teaching index, not an energy model']);
