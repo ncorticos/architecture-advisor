@@ -607,7 +607,7 @@ footer{border-top:1px solid var(--line); margin-top:26px; background:var(--wash)
 /* ------------------------------------------------------------ 0. IDENTITY -- */
 const APP = {
   name:        'Architecture Advisor',
-  version:     '1.43.0',
+  version:     '1.44.0',
   author:      'Nuno Dinis Cortiços',
   institution: 'Lisbon School of Architecture, Universidade de Lisboa',
   builtWith:   'Claude Opus 5 (Anthropic)',
@@ -2876,7 +2876,7 @@ function buildOpenings(host) {
   const southSlopeArea = () => RF.n === 0 ? G.L * G.D : southSlant() * G.L;
   const rwArea = () => { const z = rwSize(); return (RWIN.s + ((RF.n === 2 || RF.n === 3) ? RWIN.n : 0) + (RF.n === 3 ? RWIN.e + RWIN.w : 0)) * z.w * z.h; };
   host.appendChild(section('Roof windows',
-    'Daylight and winter sun from above: south-slope glass earns its keep where the climate leans heating and overheats where it leans cooling; north glass gives soft diffuse light with little gain either way. They share the south slope with the collectors on the Roof tab — each glazed square metre is one less for collection. Hip ends take east and west rows where they are widest.'));
+    'Daylight and winter sun from above: south-slope glass earns its keep where the climate leans heating and overheats where it leans cooling; north glass gives soft diffuse light with little gain either way. They share the south slope with the collectors on the Roof tab — each glazed square metre is one less for collection. Hip ends take east and west rows where they are widest. Windows on the far slope draw dashed at their true positions.'));
   const cRwSize = selectCtl('Standard size', Object.keys(RW_SIZES).map(k => ({ value:k, label:RW_SIZES[k].label })), RWIN.size,
     v => { RWIN.size = v; refreshOpenings(); });
   const cRwS = rangeCtl(RF.n === 0 ? 'Skylights' : 'South slope windows', 0, 4, 1, RWIN.s,
@@ -3186,7 +3186,10 @@ function buildOpenings(host) {
           const span = count * wEff + (count - 1) * 0.4;
           return { wEff, span };
         };
-        const rowOnSlope = (slope, count) => {
+        /* Far-slope rows draw dashed at their true projected positions:
+           the roof reads as one visible volume, so hiding them entirely
+           looks like lost work. */
+        const rowOnSlope = (slope, count, hidden) => {
           const H = ridge - H0, slant = southSlant();
           const hEff = Math.min(z.h, slant * 0.85);
           const { wEff, span } = rowSpans(count, G.L);
@@ -3196,12 +3199,14 @@ function buildOpenings(host) {
           for (let i = 0; i < count; i++) {
             const u = -span / 2 + wEff / 2 + i * (wEff + 0.4);
             const f0 = 0.5 - (hEff / H) / 2, f1 = 0.5 + (hEff / H) / 2;
-            poly([P(u - wEff / 2, f0), P(u + wEff / 2, f0), P(u + wEff / 2, f1), P(u - wEff / 2, f1)],
+            if (hidden) poly([P(u - wEff / 2, f0), P(u + wEff / 2, f0), P(u + wEff / 2, f1), P(u - wEff / 2, f1)],
+              'rgba(37,99,235,.05)', 'rgba(37,99,235,.65)', 1.2, [5, 4]);
+            else poly([P(u - wEff / 2, f0), P(u + wEff / 2, f0), P(u + wEff / 2, f1), P(u - wEff / 2, f1)],
               'rgba(37,99,235,.14)', '#2563EB', 1.4);
           }
         };
         /* Hip ends: one low-centred row per triangle, where it is widest. */
-        const rowOnHip = (side, count) => {
+        const rowOnHip = (side, count, hiddenSide) => {
           const H = ridge - H0, run = G.D / 2, f0 = 0.35;
           const halfW = run * (1 - f0);
           const wMax = (2 * halfW * 0.8 - (count - 1) * 0.4) / count;
@@ -3213,8 +3218,9 @@ function buildOpenings(host) {
           for (let i = 0; i < count; i++) {
             const v = -span / 2 + wE / 2 + i * (wE + 0.4);
             const fa = f0 - (hEffOf() / H) / 2, fb = f0 + (hEffOf() / H) / 2;
-            poly([P(v - wE / 2, fa), P(v + wE / 2, fa), P(v + wE / 2, fb), P(v - wE / 2, fb)],
-              'rgba(37,99,235,.14)', '#2563EB', 1.4);
+            const quad = [P(v - wE / 2, fa), P(v + wE / 2, fa), P(v + wE / 2, fb), P(v - wE / 2, fb)];
+            if (hiddenSide) poly(quad, 'rgba(37,99,235,.05)', 'rgba(37,99,235,.65)', 1.2, [5, 4]);
+            else poly(quad, 'rgba(37,99,235,.14)', '#2563EB', 1.4);
           }
         };
         const hEffOf = () => Math.min(z.h, (southSlant()) * 0.85);
@@ -3230,10 +3236,11 @@ function buildOpenings(host) {
             }
           }
         } else {
-          if (RWIN.s > 0 && camS === 1) rowOnSlope('S', RWIN.s);
-          if ((RF.n === 2 || RF.n === 3) && RWIN.n > 0 && camS === -1) rowOnSlope('N', RWIN.n);
-          if (RF.n === 3 && RWIN.e > 0 && camS === -1) rowOnHip('E', RWIN.e);
-          if (RF.n === 3 && RWIN.w > 0 && camS === 1) rowOnHip('W', RWIN.w);
+          const vis = faceVisible();
+          if (RWIN.s > 0) rowOnSlope('S', RWIN.s, !vis.S);
+          if ((RF.n === 2 || RF.n === 3) && RWIN.n > 0) rowOnSlope('N', RWIN.n, !vis.N);
+          if (RF.n === 3 && RWIN.e > 0) rowOnHip('E', RWIN.e, !vis.E);
+          if (RF.n === 3 && RWIN.w > 0) rowOnHip('W', RWIN.w, !vis.W);
         }
       }
 
