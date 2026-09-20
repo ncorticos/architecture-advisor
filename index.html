@@ -607,7 +607,7 @@ footer{border-top:1px solid var(--line); margin-top:26px; background:var(--wash)
 /* ------------------------------------------------------------ 0. IDENTITY -- */
 const APP = {
   name:        'Architecture Advisor',
-  version:     '1.41.0',
+  version:     '1.42.0',
   author:      'Nuno Dinis Cortiços',
   institution: 'Lisbon School of Architecture, Universidade de Lisboa',
   builtWith:   'Claude Opus 5 (Anthropic)',
@@ -966,7 +966,7 @@ let PANELS = [];
    the roof pitch, and the roof's south-collector area follows the plan's
    footprint — so both tabs read and write the same two objects, reset
    fresh each time a site is mounted. */
-let MASS = null, ROOF = null, OPEN = null, SUNSP = null;
+let MASS = null, ROOF = null, OPEN = null, SUNSP = null, RWIN = null;
 /**
  * Build a titled panel that owns one canvas. `o.render(ctx, W, H)` draws in CSS
  * pixels; the panel handles device-pixel scaling, resize and 3× PNG export, so
@@ -2843,6 +2843,33 @@ function buildOpenings(host) {
     v => { SUNSP.widthFrac = v / 100; refreshOpenings(); }, v => fmt(v, 0) + '%');
   host.appendChild(controls([cSunOn, cSunFace, cSunWidth]));
 
+  /** Catalogue roof-window rectangles (w x h, m) with per-slope counts.
+      South slope reads from the south-west corner, north slope (gable
+      only) from the north-east one; flat roofs take level skylights. */
+  const RW_SIZES = {
+    '55x78':{ w:0.55, h:0.78, label:'55 x 78 cm' },
+    '78x98':{ w:0.78, h:0.98, label:'78 x 98 cm' },
+    '78x140':{ w:0.78, h:1.40, label:'78 x 140 cm' },
+    '114x118':{ w:1.14, h:1.18, label:'114 x 118 cm' }
+  };
+  const rwSize = () => RW_SIZES[RWIN.size] || RW_SIZES['78x140'];
+  const southSlant = () => (RF.n === 2 ? G.D / 2 : G.D) / Math.cos(roofTh);
+  const southSlopeArea = () => RF.n === 0 ? G.L * G.D : southSlant() * G.L;
+  const rwArea = () => { const z = rwSize(); return (RWIN.s + (RF.n === 2 ? RWIN.n : 0)) * z.w * z.h; };
+  host.appendChild(section('Roof windows',
+    'Daylight and winter sun from above: south-slope glass earns its keep where the climate leans heating and overheats where it leans cooling; north glass gives soft diffuse light with little gain either way. They share the south slope with the collectors on the Roof tab — each glazed square metre is one less for collection.'));
+  const cRwSize = selectCtl('Standard size', Object.keys(RW_SIZES).map(k => ({ value:k, label:RW_SIZES[k].label })), RWIN.size,
+    v => { RWIN.size = v; refreshOpenings(); });
+  const cRwS = rangeCtl(RF.n === 0 ? 'Skylights' : 'South slope windows', 0, 4, 1, RWIN.s,
+    v => { RWIN.s = v; refreshOpenings(); }, v => fmt(v, 0));
+  host.appendChild(controls([cRwSize, cRwS]));
+  const cRwN = rangeCtl('North slope windows', 0, 4, 1, RWIN.n,
+    v => { RWIN.n = v; refreshOpenings(); }, v => fmt(v, 0));
+  const rwNorthRow = controls([cRwN]);
+  host.appendChild(rwNorthRow);
+  const rwLine = el('div', { class:'hint' });
+  host.appendChild(rwLine);
+
   host.appendChild(hint('open-accuracy',
     'This tab sizes glazing and shading the way a first design pass would — geometric rules of thumb, not a simulation. It does not model diffuse or reflected light, glare, internal or solar heat gain, or a real sky, and the shading figure below is averaged over a fixed set of daytime hours on 21 June and 21 December only, not the whole year or an actual weather file. Olgyay himself called his shading coefficients "approximate values" (p.67); Lechner recommends checking any shading design against a physical model (p.251); Ching &amp; Shapiro note that optimal glazing sizing "should be calculated by computer simulation" (p.101). A value outside the coloured range is not forbidden — some briefs need it — but treat it as a flag to justify, not a default.'));
 
@@ -2990,6 +3017,14 @@ function buildOpenings(host) {
     else if (sc >= 80) { pillShade.className = 'pill ok'; pillShade.textContent = t(heating ? 'Cuts summer sun while keeping winter gains' : 'Cuts most of the June-noon sun on this window'); }
     else if (sc >= 50) { pillShade.className = 'pill empty'; pillShade.textContent = t(heating ? 'Some seasonal discrimination, but still costs real winter sun' : 'Leaves some of the June-noon sun on this window'); }
     else { pillShade.className = 'pill bad'; pillShade.textContent = t(heating ? 'Blocks winter sun almost as much as summer — too deep for this climate' : 'Leaves much of the June-noon sun on this window'); }
+    rwNorthRow.style.display = RF.n === 2 ? '' : 'none';
+    {
+      const z = rwSize(), slope = southSlopeArea();
+      const sG = RWIN.s * z.w * z.h, nG = (RF.n === 2 ? RWIN.n : 0) * z.w * z.h;
+      rwLine.textContent = t('Roof glazing') + ' ' + fmt(sG + nG, 1) + ' m\u00b2 (' +
+        fmt(slope > 0 ? 100 * sG / slope : 0, 0) + '% ' + t('of the south slope') + ') · ' +
+        t('left for collectors') + ' ' + fmt(Math.max(0, slope - sG), 1) + ' m\u00b2';
+    }
     if (openPanel) openPanel.draw();
   }
 
@@ -3102,6 +3137,47 @@ function buildOpenings(host) {
       }
       FACES.forEach(f => drawFace(f, f === curFace));
 
+      /* Roof windows ride the slopes: one centred row per sun-facing slope,
+         flat skylights as level rectangles. Only slopes facing the camera. */
+      {
+        const z = rwSize();
+        const rowSpans = (count, len) => {
+          const wMax = (len * 0.8 - (count - 1) * 0.4) / count;
+          const wEff = Math.min(z.w, Math.max(0.3, wMax));
+          const span = count * wEff + (count - 1) * 0.4;
+          return { wEff, span };
+        };
+        const rowOnSlope = (slope, count) => {
+          const H = ridge - H0, slant = southSlant();
+          const hEff = Math.min(z.h, slant * 0.85);
+          const { wEff, span } = rowSpans(count, G.L);
+          const P = (uu, f) => slope === 'S'
+            ? [uu, -G.D / 2 + f * (RF.n === 2 ? G.D / 2 : G.D), H0 + f * H]
+            : [uu, G.D / 2 - f * G.D / 2, H0 + f * H];
+          for (let i = 0; i < count; i++) {
+            const u = -span / 2 + wEff / 2 + i * (wEff + 0.4);
+            const f0 = 0.5 - (hEff / H) / 2, f1 = 0.5 + (hEff / H) / 2;
+            poly([P(u - wEff / 2, f0), P(u + wEff / 2, f0), P(u + wEff / 2, f1), P(u - wEff / 2, f1)],
+              'rgba(37,99,235,.14)', '#2563EB', 1.4);
+          }
+        };
+        if (RF.n === 0) {
+          if (RWIN.s > 0) {
+            const hEff = Math.min(z.h, G.D * 0.7);
+            const { wEff, span } = rowSpans(RWIN.s, G.L);
+            for (let i = 0; i < RWIN.s; i++) {
+              const u = -span / 2 + wEff / 2 + i * (wEff + 0.4);
+              poly([[u - wEff / 2, -hEff / 2, H0 + 0.03], [u + wEff / 2, -hEff / 2, H0 + 0.03],
+                    [u + wEff / 2, hEff / 2, H0 + 0.03], [u - wEff / 2, hEff / 2, H0 + 0.03]],
+                'rgba(37,99,235,.14)', '#2563EB', 1.4);
+            }
+          }
+        } else {
+          if (RWIN.s > 0 && camS === 1) rowOnSlope('S', RWIN.s);
+          if (RF.n === 2 && RWIN.n > 0 && camS === -1) rowOnSlope('N', RWIN.n);
+        }
+      }
+
       if (SUNSP.on && faceVisible()[SUNSP.face]) {
         const f = SUNSP.face, n = faceNormal[f];
         const w = faceWidth(f) * SUNSP.widthFrac, hgt = Math.min(H0, 3.0);
@@ -3154,6 +3230,13 @@ function buildOpenings(host) {
       const rows = [['Facade', 'WWR', 'Sill (m)', 'Head (m)', 'Overhang depth (m)', 'Overhang count', 'Fin depth (m)', 'Fin count', 'Fin side']];
       FACES.forEach(f => { const o = OPEN[f]; rows.push([faceName[f], fmt(o.wwr, 2), fmt(o.sillZ, 2), fmt(o.headZ, 2), fmt(o.ovD, 2), o.ovN, fmt(o.finD, 2), o.finN, o.finSide]); });
       rows.push(['Sunspace', SUNSP.on ? SUNSP.face : 'off', '', '', fmt(SUNSP.depth, 2), '', '', '', '', fmt(SUNSP.widthFrac, 2)]);
+      rows.push(['Roof window size', RW_SIZES[RWIN.size].label]);
+      if (RF.n === 0) rows.push(['Skylights', RWIN.s]);
+      else {
+        rows.push(['South slope roof windows', RWIN.s]);
+        if (RF.n === 2) rows.push(['North slope roof windows', RWIN.n]);
+      }
+      rows.push(['Roof glazing total (m\u00b2)', +rwArea().toFixed(1)]);
       return csvRows(rows);
     }
   });
@@ -5062,6 +5145,7 @@ function mountApp(site, clim, keepTab) {
   OPEN = { S: faceDefault(), N: faceDefault(), E: faceDefault(), W: faceDefault() };
   OPEN.S.wwr = 0.35;   // a defensible start, not a recommendation — the badge judges it live
   SUNSP = { on:false, face:'S', depth:2.2, widthFrac:0.6 };
+  RWIN = { size:'78x140', s:0, n:0 };
   const app = $('#app');
   app.innerHTML = '';
   app.hidden = false;
