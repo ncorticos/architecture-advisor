@@ -607,7 +607,7 @@ footer{border-top:1px solid var(--line); margin-top:26px; background:var(--wash)
 /* ------------------------------------------------------------ 0. IDENTITY -- */
 const APP = {
   name:        'Architecture Advisor',
-  version:     '1.40.0',
+  version:     '1.41.0',
   author:      'Nuno Dinis Cortiços',
   institution: 'Lisbon School of Architecture, Universidade de Lisboa',
   builtWith:   'Claude Opus 5 (Anthropic)',
@@ -3013,7 +3013,7 @@ function buildOpenings(host) {
 
   openPanel = makePanel(host, {
     title: 'The facades in three dimensions',
-    note: 'Isometric view, matching Site and Roof for the plan and roof — the compass marks true north, and the two scores in the corner (as on the Site tab) read the current WWR and shading fit. The model turns to face whichever facade is selected above, so its window stays visible: drag its top-right corner to resize it (width and height), its lower corner to open it down to the floor like a door, or the sunspace’s outer glazed corner to change its width and depth.',
+    note: 'Isometric view, matching Site and Roof for the plan and roof — the compass marks true north, and the two scores in the corner (as on the Site tab) read the current WWR and shading fit. The model turns to face whichever facade is selected above, so its window stays visible: drag its top-right corner to resize it (width and height), its lower corner to open it down to the floor like a door, or the sunspace’s outer glazed corner to change its width and depth. Solid lines behind the ridge are the hidden far eave and far rake.',
     aspect: 1.6,
     render(ctx, W, H) {
       const FR = openFrame(W, H);
@@ -3055,6 +3055,19 @@ function buildOpenings(host) {
         poly([[-G.L/2,frontY,H0],[G.L/2,frontY,H0],[G.L/2,0,ridge],[-G.L/2,0,ridge]], 'rgba(20,23,26,.05)', CH.ink, 2);
         const r0 = proj(-G.L/2, 0, ridge), r1 = proj(G.L/2, 0, ridge);
         stroke(ctx, CH.ink, 1.6); seg(ctx, r0[0], r0[1], r1[0], r1[1]);
+      }
+      if (RF.n === 2) {
+        // the hidden upper contour: the eave of the far wall plus the far
+        // gable's own rakes, solid black like every other edge so the wall
+        // plate reads as one closed contour from either camera corner
+        const backY = -frontY, backX = -sideX;
+        const hb0 = proj(-G.L/2, backY, topZ(backY)), hb1 = proj(G.L/2, backY, topZ(backY));
+        stroke(ctx, CH.ink, 1.4); seg(ctx, hb0[0], hb0[1], hb1[0], hb1[1]);
+        const hs = sideBreaks.map(y => proj(backX, y, topZ(y)));
+        stroke(ctx, CH.ink, 1.4);
+        ctx.beginPath();
+        hs.forEach((q, i) => i ? ctx.lineTo(q[0], q[1]) : ctx.moveTo(q[0], q[1]));
+        ctx.stroke();
       }
 
       /** Draws one facade's window and shading; `active` highlights the
