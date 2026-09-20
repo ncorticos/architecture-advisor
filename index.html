@@ -607,7 +607,7 @@ footer{border-top:1px solid var(--line); margin-top:26px; background:var(--wash)
 /* ------------------------------------------------------------ 0. IDENTITY -- */
 const APP = {
   name:        'Architecture Advisor',
-  version:     '1.42.0',
+  version:     '1.43.0',
   author:      'Nuno Dinis Cortiços',
   institution: 'Lisbon School of Architecture, Universidade de Lisboa',
   builtWith:   'Claude Opus 5 (Anthropic)',
@@ -2033,14 +2033,19 @@ function buildSite(host) {
   const labFF = () => {
     const H0 = G.fl * G.fh;
     const th = (RF.n === 0 ? 0 : RF.th) * RAD;   // a flat roof pitches nothing
-    const span = RF.n === 2 ? G.D / 2 : G.D;
+    const span = (RF.n === 0 || RF.n === 1) ? G.D : G.D / 2;
     const rise = span * Math.tan(th);
     const slope = span / Math.cos(th);
-    const wallEW = 2 * G.L * H0 + (RF.n === 2 ? 0 : G.L * rise);
-    const wallNS = 2 * (G.D * H0 + (G.D * rise) / 2);
-    const roof = (RF.n === 2 ? 2 * slope : slope) * G.L;
+    const rl = Math.max(0, G.L / 2 - G.D / 2);   // hip ridge half-length, 0 for a pyramid
+    const wallEW = 2 * G.L * H0 + (RF.n === 2 || RF.n === 3 ? 0 : G.L * rise);
+    const wallNS = 2 * G.D * H0 + ((RF.n === 1 || RF.n === 2) ? G.D * rise : 0);
+    /* Hip roof by the prismoidal formula — exact for the hipped solid,
+       collapsing to the pyramid (L=D) and the gable (L>>D) at its ends. */
+    const roof = RF.n === 3 ? (G.L + 2 * rl + G.D) * slope
+      : (RF.n === 2 ? 2 * slope : slope) * G.L;
+    const roofVol = RF.n === 3 ? Math.max(0, rise * G.D * (3 * G.L - G.D) / 6) : G.L * G.D * rise / 2;
     const A = wallEW + wallNS + roof + G.L * G.D;
-    const V = G.L * G.D * (H0 + rise / 2);
+    const V = G.L * G.D * H0 + roofVol;
     return { H:H0 + rise, V, A, ff:A / V };
   };
   const SUN_DEC = noonSun(355), SUN_JUN = noonSun(172);   // site constants, CSV only
@@ -2486,7 +2491,7 @@ function buildRoof(host) {
     'A south surface collects most when the noon ray meets it near-perpendicularly: <b>winter = latitude + 15°, summer = latitude − 15°, year-round = latitude</b> (Galloway; Lechner) — here <b>%1° / %2° / %3°</b>. %4. Traditional Portuguese tile roofs sit far shallower, so collectors usually need their own frame — the tension is the lesson.',
     [fmt(idealW, 0), fmt(idealS, 0), fmt(idealB, 0), t(lean)]));
 
-  const cN = segCtl('Roof slopes', [{ value:0, label:'Flat' }, { value:1, label:'Shed' }, { value:2, label:'Gable' }], 2,
+  const cN = segCtl('Roof slopes', [{ value:0, label:'Flat' }, { value:1, label:'Shed' }, { value:2, label:'Gable' }, { value:3, label:'Hip' }], 2,
     v => { RF.n = v; cP.range.disabled = v === 0; roofDraw(); });
   const cP = rangeCtl('Pitch', 10, 60, 1, RF.th, v => { RF.th = v; roofDraw(); }, v => fmt(v, 0) + '°');
   const pillRoof = el('span', { class:'pill ok' });
@@ -2494,7 +2499,7 @@ function buildRoof(host) {
     statCard('Winter ideal', fmt(idealW, 0), '°', t('steep for the low sun')),
     statCard('Summer ideal', fmt(idealS, 0), '°', t('shallow against the high sun')),
     statCard('Year-round ideal', fmt(idealB, 0), '°', t('the latitude itself')),
-    statCard('South collector', fmt(((RF.n === 2 ? G.D / 2 : G.D) / Math.cos(RF.th * RAD)) * G.L, 0), 'm²',
+    statCard('South collector', fmt(RF.n === 3 ? (G.L + 2 * Math.max(0, G.L / 2 - G.D / 2)) / 2 * (G.D / 2) / Math.cos(RF.th * RAD) : ((RF.n === 2 ? G.D / 2 : G.D) / Math.cos(RF.th * RAD)) * G.L, 0), 'm²',
       t('at your pitch — live below'))
   ]));
   host.appendChild(controls([cN, cP]));
@@ -2516,7 +2521,7 @@ function buildRoof(host) {
     const cx = W / 2;
     const H0 = G.fl * G.fh;
     const th = (RF.n === 0 ? 0 : RF.th) * RAD;
-    const span = RF.n === 2 ? G.D / 2 : G.D;
+    const span = (RF.n === 2 || RF.n === 3) ? G.D / 2 : G.D;
     const ridge = H0 + span * Math.tan(th);
     const fanTop = H0 + span * Math.tan(idealW * RAD);   // winter is always the steepest ideal marker
     const margin = 3;                          // room for the sun rays
@@ -2560,13 +2565,14 @@ function buildRoof(host) {
           ramps south (low) to north (high), gable peaks at the centre. */
       const topZ = y => RF.n === 0 ? H0
         : RF.n === 1 ? H0 + (y + G.D / 2) * Math.tan(th)
+        : RF.n === 3 ? H0
         : H0 + Math.max(0, G.D / 2 - Math.abs(y)) * Math.tan(th);
 
       // south wall — always a plain rectangle to the eave
       poly([[-G.L/2, -G.D/2, 0], [G.L/2, -G.D/2, 0], [G.L/2, -G.D/2, H0], [-G.L/2, -G.D/2, H0]],
            'rgba(20,23,26,.14)', CH.ink, 1.4);
 
-      // west wall — a rectangle (flat/shed) or a pentagon with a gable
+      // west wall — a rectangle (flat/shed/hip) or a pentagon with a gable
       const westBreaks = RF.n === 2 ? [G.D / 2, 0, -G.D / 2] : [G.D / 2, -G.D / 2];
       const westPts = [[-G.L/2, -G.D/2, 0], [-G.L/2, G.D/2, 0]].concat(westBreaks.map(y => [-G.L/2, y, topZ(y)]));
       poly(westPts, 'rgba(20,23,26,.08)', CH.ink, 1.4);
@@ -2578,7 +2584,7 @@ function buildRoof(host) {
       } else if (RF.n === 1) {
         poly([[-G.L/2,-G.D/2,H0], [G.L/2,-G.D/2,H0], [G.L/2,G.D/2,ridge], [-G.L/2,G.D/2,ridge]],
              'rgba(20,23,26,.05)', CH.ink, 2);
-      } else {
+      } else if (RF.n === 2) {
         poly([[-G.L/2,-G.D/2,H0], [G.L/2,-G.D/2,H0], [G.L/2,0,ridge], [-G.L/2,0,ridge]],
              'rgba(20,23,26,.05)', CH.ink, 2);
         // the ridge line itself, since the north-facing half stays hidden
@@ -2591,14 +2597,24 @@ function buildRoof(host) {
         stroke(ctx, CH.ink, 1.4); seg(ctx, hn0[0], hn0[1], hn1[0], hn1[1]);
         const hre = proj(G.L/2, 0, ridge), hne = proj(G.L/2, G.D/2, H0);
         stroke(ctx, CH.ink, 1.4); seg(ctx, hre[0], hre[1], hne[0], hne[1]);
+      } else {
+        // hip: trapezoid facing south, triangle closing the west end, ridge
+        // shortened by half the depth at each end (a pyramid when L<=D)
+        const rl = Math.max(0, G.L / 2 - G.D / 2);
+        poly([[-G.L/2,-G.D/2,H0], [G.L/2,-G.D/2,H0], [rl,0,ridge], [-rl,0,ridge]],
+             'rgba(20,23,26,.05)', CH.ink, 2);
+        poly([[-G.L/2,-G.D/2,H0], [-G.L/2,G.D/2,H0], [-rl,0,ridge]],
+             'rgba(20,23,26,.08)', CH.ink, 1.4);
+        const q0 = proj(-rl, 0, ridge), q1 = proj(rl, 0, ridge);
+        stroke(ctx, CH.ink, 1.6); seg(ctx, q0[0], q0[1], q1[0], q1[1]);
       }
-      const ridgeMid = proj(0, RF.n === 2 ? 0 : G.D / 2, ridge);
+      const ridgeMid = proj(0, (RF.n === 2 || RF.n === 3) ? 0 : G.D / 2, ridge);
       label(ctx, fmt(ridge, 1) + ' m', ridgeMid[0] + 7, ridgeMid[1] - 9, CH.ink2, FM(10), 'left', 'middle');
 
       // the ideal-pitch fan: from the same eave point the pitch drag pivots
       // on, out to the real roof's horizontal run — so each line runs
       // alongside the actual slope, at the height that angle would reach
-      const span = RF.n === 2 ? G.D / 2 : G.D;
+      const span = (RF.n === 2 || RF.n === 3) ? G.D / 2 : G.D;
       const topY = -G.D / 2 + span;
       const eave = proj(-G.L / 2, -G.D / 2, H0);
       [{ a:idealW, tag:'winter' }, { a:idealS, tag:'summer' }, { a:idealB, tag:'year' }].forEach(gd => {
@@ -2612,20 +2628,20 @@ function buildRoof(host) {
 
       // the pitch handle: the one point on the model that drags — a white
       // ring with a black centre, the same affordance the Site tab uses
-      const handle = proj(-G.L / 2, topY, ridge);
+      const handle = proj(RF.n === 3 ? -Math.max(0, G.L / 2 - G.D / 2) : -G.L / 2, topY, ridge);
       ctx.fillStyle = '#fff';
       ctx.beginPath(); ctx.arc(handle[0], handle[1], 8, 0, 6.284); ctx.fill();
       ctx.fillStyle = CH.ink;
       ctx.beginPath(); ctx.arc(handle[0], handle[1], 4.5, 0, 6.284); ctx.fill();
 
       // live readout
-      const coll = span / Math.cos(th) * G.L;
+      const coll = RF.n === 3 ? (G.L + 2 * Math.max(0, G.L / 2 - G.D / 2)) / 2 * span / Math.cos(th) : span / Math.cos(th) * G.L;
       label(ctx, 'θ ' + fmt(RF.n === 0 ? 0 : RF.th, 0) + '° · ' + t('South collector') + ' ' + fmt(coll, 0) + ' m² · '
         + t('ridge') + ' ' + fmt(ridge, 1) + ' m',
         8, 12, CH.ink2, FM(11), 'left', 'middle');
     },
     csv: () => {
-      const sp = RF.n === 2 ? G.D / 2 : G.D;
+      const sp = (RF.n === 2 || RF.n === 3) ? G.D / 2 : G.D;
       const thE = RF.n === 0 ? 0 : RF.th;
       const rg = G.fl * G.fh + sp * Math.tan(thE * RAD);
       return csvRows([['Parameter', 'Value'],
@@ -2633,7 +2649,7 @@ function buildRoof(host) {
       ['Winter solar ideal (°)', +idealW.toFixed(0)],
       ['Summer solar ideal (°)', +idealS.toFixed(0)],
       ['Year-round solar ideal (°)', idealB],
-      ['South collector area (m²)', +((sp / Math.cos(thE * RAD)) * G.L).toFixed(1)],
+      ['South collector area (m²)', RF.n === 3 ? +(((G.L + 2 * Math.max(0, G.L / 2 - G.D / 2)) / 2 * sp / Math.cos(thE * RAD))).toFixed(1) : +((sp / Math.cos(thE * RAD)) * G.L).toFixed(1)],
       ['Ridge height (m)', +rg.toFixed(1)],
       ['Köppen–Geiger', STATE.clim.k.code]]);
     }
@@ -2665,8 +2681,9 @@ function buildRoof(host) {
     return { y, z };
   };
   const slopeEnds = FR => {
-    const topY = RF.n === 2 ? 0 : G.D / 2;
-    return { p1: projF(FR, -G.L / 2, -G.D / 2, FR.H0), p2: projF(FR, -G.L / 2, topY, FR.ridge) };
+    const topY = (RF.n === 2 || RF.n === 3) ? 0 : G.D / 2;
+    const hx = RF.n === 3 ? -Math.max(0, G.L / 2 - G.D / 2) : -G.L / 2;
+    return { p1: projF(FR, -G.L / 2, -G.D / 2, FR.H0), p2: projF(FR, hx, topY, FR.ridge) };
   };
   const nearSlope = (clientX, clientY) => {
     if (RF.n === 0) return false;
@@ -2736,8 +2753,10 @@ function buildOpenings(host) {
   const roofTh = (RF.n === 0 ? 0 : RF.th) * RAD;
   const roofSpan = RF.n === 2 ? G.D / 2 : G.D;
   const ridge = H0 + roofSpan * Math.tan(roofTh);
+  const hipRl = Math.max(0, G.L / 2 - G.D / 2);
   const topZ = y => RF.n === 0 ? H0
     : RF.n === 1 ? H0 + (y + G.D / 2) * Math.tan(roofTh)
+    : RF.n === 3 ? H0
     : H0 + Math.max(0, G.D / 2 - Math.abs(y)) * Math.tan(roofTh);
 
   const FACES = ['S', 'N', 'E', 'W'];
@@ -2853,11 +2872,11 @@ function buildOpenings(host) {
     '114x118':{ w:1.14, h:1.18, label:'114 x 118 cm' }
   };
   const rwSize = () => RW_SIZES[RWIN.size] || RW_SIZES['78x140'];
-  const southSlant = () => (RF.n === 2 ? G.D / 2 : G.D) / Math.cos(roofTh);
+  const southSlant = () => ((RF.n === 2 || RF.n === 3) ? G.D / 2 : G.D) / Math.cos(roofTh);
   const southSlopeArea = () => RF.n === 0 ? G.L * G.D : southSlant() * G.L;
-  const rwArea = () => { const z = rwSize(); return (RWIN.s + (RF.n === 2 ? RWIN.n : 0)) * z.w * z.h; };
+  const rwArea = () => { const z = rwSize(); return (RWIN.s + ((RF.n === 2 || RF.n === 3) ? RWIN.n : 0) + (RF.n === 3 ? RWIN.e + RWIN.w : 0)) * z.w * z.h; };
   host.appendChild(section('Roof windows',
-    'Daylight and winter sun from above: south-slope glass earns its keep where the climate leans heating and overheats where it leans cooling; north glass gives soft diffuse light with little gain either way. They share the south slope with the collectors on the Roof tab — each glazed square metre is one less for collection.'));
+    'Daylight and winter sun from above: south-slope glass earns its keep where the climate leans heating and overheats where it leans cooling; north glass gives soft diffuse light with little gain either way. They share the south slope with the collectors on the Roof tab — each glazed square metre is one less for collection. Hip ends take east and west rows where they are widest.'));
   const cRwSize = selectCtl('Standard size', Object.keys(RW_SIZES).map(k => ({ value:k, label:RW_SIZES[k].label })), RWIN.size,
     v => { RWIN.size = v; refreshOpenings(); });
   const cRwS = rangeCtl(RF.n === 0 ? 'Skylights' : 'South slope windows', 0, 4, 1, RWIN.s,
@@ -2867,6 +2886,12 @@ function buildOpenings(host) {
     v => { RWIN.n = v; refreshOpenings(); }, v => fmt(v, 0));
   const rwNorthRow = controls([cRwN]);
   host.appendChild(rwNorthRow);
+  const cRwE = rangeCtl('East slope windows', 0, 4, 1, RWIN.e,
+    v => { RWIN.e = v; refreshOpenings(); }, v => fmt(v, 0));
+  const cRwW = rangeCtl('West slope windows', 0, 4, 1, RWIN.w,
+    v => { RWIN.w = v; refreshOpenings(); }, v => fmt(v, 0));
+  const rwHipRow = controls([cRwE, cRwW]);
+  host.appendChild(rwHipRow);
   const rwLine = el('div', { class:'hint' });
   host.appendChild(rwLine);
 
@@ -3018,10 +3043,12 @@ function buildOpenings(host) {
     else if (sc >= 50) { pillShade.className = 'pill empty'; pillShade.textContent = t(heating ? 'Some seasonal discrimination, but still costs real winter sun' : 'Leaves some of the June-noon sun on this window'); }
     else { pillShade.className = 'pill bad'; pillShade.textContent = t(heating ? 'Blocks winter sun almost as much as summer — too deep for this climate' : 'Leaves much of the June-noon sun on this window'); }
     rwNorthRow.style.display = RF.n === 2 ? '' : 'none';
+    rwHipRow.style.display = RF.n === 3 ? '' : 'none';
     {
       const z = rwSize(), slope = southSlopeArea();
-      const sG = RWIN.s * z.w * z.h, nG = (RF.n === 2 ? RWIN.n : 0) * z.w * z.h;
-      rwLine.textContent = t('Roof glazing') + ' ' + fmt(sG + nG, 1) + ' m\u00b2 (' +
+      const sG = RWIN.s * z.w * z.h, nG = ((RF.n === 2 || RF.n === 3) ? RWIN.n : 0) * z.w * z.h;
+      const eG = RF.n === 3 ? (RWIN.e + RWIN.w) * z.w * z.h : 0;
+      rwLine.textContent = t('Roof glazing') + ' ' + fmt(sG + nG + eG, 1) + ' m\u00b2 (' +
         fmt(slope > 0 ? 100 * sG / slope : 0, 0) + '% ' + t('of the south slope') + ') · ' +
         t('left for collectors') + ' ' + fmt(Math.max(0, slope - sG), 1) + ' m\u00b2';
     }
@@ -3086,12 +3113,24 @@ function buildOpenings(host) {
         poly([[-G.L/2,-G.D/2,H0],[G.L/2,-G.D/2,H0],[G.L/2,G.D/2,H0],[-G.L/2,G.D/2,H0]], 'rgba(20,23,26,.05)', CH.ink, 2);
       } else if (RF.n === 1) {
         poly([[-G.L/2,-G.D/2,H0],[G.L/2,-G.D/2,H0],[G.L/2,G.D/2,ridge],[-G.L/2,G.D/2,ridge]], 'rgba(20,23,26,.05)', CH.ink, 2);
-      } else {
+      } else if (RF.n === 2) {
         poly([[-G.L/2,frontY,H0],[G.L/2,frontY,H0],[G.L/2,0,ridge],[-G.L/2,0,ridge]], 'rgba(20,23,26,.05)', CH.ink, 2);
         const r0 = proj(-G.L/2, 0, ridge), r1 = proj(G.L/2, 0, ridge);
         stroke(ctx, CH.ink, 1.6); seg(ctx, r0[0], r0[1], r1[0], r1[1]);
+      } else {
+        // hip: trapezoid facing the camera's corner slope, triangle closing
+        // the side, ridge shortened exactly as on the Roof tab
+        if (camS === 1) {
+          poly([[-G.L/2,-G.D/2,H0],[G.L/2,-G.D/2,H0],[hipRl,0,ridge],[-hipRl,0,ridge]], 'rgba(20,23,26,.05)', CH.ink, 2);
+          poly([[-G.L/2,-G.D/2,H0],[-G.L/2,G.D/2,H0],[-hipRl,0,ridge]], 'rgba(20,23,26,.08)', CH.ink, 1.4);
+        } else {
+          poly([[G.L/2,G.D/2,H0],[-G.L/2,G.D/2,H0],[-hipRl,0,ridge],[hipRl,0,ridge]], 'rgba(20,23,26,.05)', CH.ink, 2);
+          poly([[G.L/2,-G.D/2,H0],[G.L/2,G.D/2,H0],[hipRl,0,ridge]], 'rgba(20,23,26,.08)', CH.ink, 1.4);
+        }
+        const q0 = proj(-hipRl, 0, ridge), q1 = proj(hipRl, 0, ridge);
+        stroke(ctx, CH.ink, 1.6); seg(ctx, q0[0], q0[1], q1[0], q1[1]);
       }
-      if (RF.n === 2) {
+      if (RF.n === 2 || RF.n === 3) {
         // the hidden upper contour: the eave of the far wall plus the far
         // gable's own rakes, solid black like every other edge so the wall
         // plate reads as one closed contour from either camera corner
@@ -3152,7 +3191,7 @@ function buildOpenings(host) {
           const hEff = Math.min(z.h, slant * 0.85);
           const { wEff, span } = rowSpans(count, G.L);
           const P = (uu, f) => slope === 'S'
-            ? [uu, -G.D / 2 + f * (RF.n === 2 ? G.D / 2 : G.D), H0 + f * H]
+            ? [uu, -G.D / 2 + f * ((RF.n === 2 || RF.n === 3) ? G.D / 2 : G.D), H0 + f * H]
             : [uu, G.D / 2 - f * G.D / 2, H0 + f * H];
           for (let i = 0; i < count; i++) {
             const u = -span / 2 + wEff / 2 + i * (wEff + 0.4);
@@ -3161,6 +3200,24 @@ function buildOpenings(host) {
               'rgba(37,99,235,.14)', '#2563EB', 1.4);
           }
         };
+        /* Hip ends: one low-centred row per triangle, where it is widest. */
+        const rowOnHip = (side, count) => {
+          const H = ridge - H0, run = G.D / 2, f0 = 0.35;
+          const halfW = run * (1 - f0);
+          const wMax = (2 * halfW * 0.8 - (count - 1) * 0.4) / count;
+          const wE = Math.min(z.w, Math.max(0.3, wMax));
+          const span = count * wE + (count - 1) * 0.4;
+          const sx = side === 'E' ? 1 : -1;
+          const rl = Math.max(0, G.L / 2 - G.D / 2);
+          const P = (v, f) => [sx * (G.L / 2 - f * run), v, H0 + f * H];
+          for (let i = 0; i < count; i++) {
+            const v = -span / 2 + wE / 2 + i * (wE + 0.4);
+            const fa = f0 - (hEffOf() / H) / 2, fb = f0 + (hEffOf() / H) / 2;
+            poly([P(v - wE / 2, fa), P(v + wE / 2, fa), P(v + wE / 2, fb), P(v - wE / 2, fb)],
+              'rgba(37,99,235,.14)', '#2563EB', 1.4);
+          }
+        };
+        const hEffOf = () => Math.min(z.h, (southSlant()) * 0.85);
         if (RF.n === 0) {
           if (RWIN.s > 0) {
             const hEff = Math.min(z.h, G.D * 0.7);
@@ -3174,7 +3231,9 @@ function buildOpenings(host) {
           }
         } else {
           if (RWIN.s > 0 && camS === 1) rowOnSlope('S', RWIN.s);
-          if (RF.n === 2 && RWIN.n > 0 && camS === -1) rowOnSlope('N', RWIN.n);
+          if ((RF.n === 2 || RF.n === 3) && RWIN.n > 0 && camS === -1) rowOnSlope('N', RWIN.n);
+          if (RF.n === 3 && RWIN.e > 0 && camS === -1) rowOnHip('E', RWIN.e);
+          if (RF.n === 3 && RWIN.w > 0 && camS === 1) rowOnHip('W', RWIN.w);
         }
       }
 
@@ -3234,7 +3293,8 @@ function buildOpenings(host) {
       if (RF.n === 0) rows.push(['Skylights', RWIN.s]);
       else {
         rows.push(['South slope roof windows', RWIN.s]);
-        if (RF.n === 2) rows.push(['North slope roof windows', RWIN.n]);
+        if (RF.n === 2 || RF.n === 3) rows.push(['North slope roof windows', RWIN.n]);
+        if (RF.n === 3) rows.push(['East slope roof windows', RWIN.e], ['West slope roof windows', RWIN.w]);
       }
       rows.push(['Roof glazing total (m\u00b2)', +rwArea().toFixed(1)]);
       return csvRows(rows);
@@ -3679,7 +3739,7 @@ function buildVentilation(host) {
     const cx = W / 2;
     const H0 = G.fl * G.fh;
     const roofTh = (RF.n === 0 ? 0 : RF.th) * RAD;
-    const roofSpan = RF.n === 2 ? G.D / 2 : G.D;
+    const roofSpan = (RF.n === 2 || RF.n === 3) ? G.D / 2 : G.D;
     const ridge = H0 + roofSpan * Math.tan(roofTh);
     const vegH = VEGETATION.length ? Math.max(...VEGETATION.map(v => v.height)) : 0;
     const wallH = WALLS.length ? Math.max(...WALLS.map(w => w.height)) : 0;
@@ -4113,7 +4173,7 @@ function buildVentilation(host) {
 
     /* ---- sun shadow of the whole volume on the garden ---- */
     const sun = sunPos(SH.doy, SH.h, lat, lon, tz);
-    const topZ = y => RF.n === 0 ? H0 : RF.n === 1 ? H0 + (y + G.D/2) * Math.tan(roofTh) : H0 + Math.max(0, G.D/2 - Math.abs(y)) * Math.tan(roofTh);
+    const topZ = y => RF.n === 0 ? H0 : RF.n === 1 ? H0 + (y + G.D/2) * Math.tan(roofTh) : RF.n === 3 ? H0 : H0 + Math.max(0, G.D/2 - Math.abs(y)) * Math.tan(roofTh);
     if (showShadow && sun.alt > 0.5) {
       const Lsh = shadowLenV(ridge, sun.alt);
       const saz = (sun.azi + 180) * RAD;
@@ -4176,12 +4236,23 @@ function buildVentilation(host) {
       poly([[-G.L/2,-G.D/2,H0], [G.L/2,-G.D/2,H0], [G.L/2,G.D/2,H0], [-G.L/2,G.D/2,H0]], 'rgba(20,23,26,.05)', CH.ink, 2);
     } else if (RF.n === 1) {
       poly([[-G.L/2,-G.D/2,H0], [G.L/2,-G.D/2,H0], [G.L/2,G.D/2,ridge], [-G.L/2,G.D/2,ridge]], 'rgba(20,23,26,.05)', CH.ink, 2);
-    } else {
+    } else if (RF.n === 2) {
       const drawRoofN = () => poly([[-G.L/2,G.D/2,H0], [G.L/2,G.D/2,H0], [G.L/2,0,ridge], [-G.L/2,0,ridge]], 'rgba(20,23,26,.04)', CH.ink, 1.6);
       const drawRoofS = () => poly([[-G.L/2,-G.D/2,H0], [G.L/2,-G.D/2,H0], [G.L/2,0,ridge], [-G.L/2,0,ridge]], 'rgba(20,23,26,.06)', CH.ink, 2);
       if (camS === 1) { drawRoofN(); drawRoofS(); } else { drawRoofS(); drawRoofN(); }
       const r0 = proj(-G.L/2, 0, ridge), r1 = proj(G.L/2, 0, ridge);
       stroke(ctx, CH.ink, 1.6); seg(ctx, r0[0], r0[1], r1[0], r1[1]);
+    } else {
+      // hip: both trapezoids plus both end triangles, far pair first so the
+      // near faces overlap them exactly as the gable slopes do
+      const rl = Math.max(0, G.L / 2 - G.D / 2);
+      const trapS = () => poly([[-G.L/2,-G.D/2,H0], [G.L/2,-G.D/2,H0], [rl,0,ridge], [-rl,0,ridge]], 'rgba(20,23,26,.06)', CH.ink, 2);
+      const trapN = () => poly([[-G.L/2,G.D/2,H0], [G.L/2,G.D/2,H0], [rl,0,ridge], [-rl,0,ridge]], 'rgba(20,23,26,.04)', CH.ink, 1.6);
+      const triE = () => poly([[G.L/2,-G.D/2,H0], [G.L/2,G.D/2,H0], [rl,0,ridge]], 'rgba(20,23,26,.05)', CH.ink, 1.2);
+      const triW = () => poly([[-G.L/2,-G.D/2,H0], [-G.L/2,G.D/2,H0], [-rl,0,ridge]], 'rgba(20,23,26,.08)', CH.ink, 1.4);
+      if (camS === 1) { trapN(); triE(); triW(); trapS(); } else { trapS(); triW(); triE(); trapN(); }
+      const q0 = proj(-rl, 0, ridge), q1 = proj(rl, 0, ridge);
+      stroke(ctx, CH.ink, 1.6); seg(ctx, q0[0], q0[1], q1[0], q1[1]);
     }
 
     /* ---- true windows from Windows & Shading, drawn on their own walls ---- */
@@ -4517,7 +4588,7 @@ function buildVentilation(host) {
     rows.push(['Summer cross-ventilation (' + monthSetName(MON3_EN) + ')', summerScore() + '/100']);
     rows.push(['Sun day', SH.key], ['Solar time (h)', +SH.h.toFixed(2)]);
     rows.push(['Sun altitude (°)', +sn.alt.toFixed(1)], ['Sun azimuth (°)', +sn.azi.toFixed(1)]);
-    rows.push(['Ridge shadow (m)', +shadowLenV(h0live() + ((RF.n === 0 ? 0 : RF.th) ? (RF.n === 2 ? G.D/2 : G.D) * Math.tan(RF.th * RAD) : 0), sn.alt).toFixed(1)]);
+    rows.push(['Ridge shadow (m)', +shadowLenV(h0live() + ((RF.n === 0 ? 0 : RF.th) ? ((RF.n === 2 || RF.n === 3) ? G.D/2 : G.D) * Math.tan(RF.th * RAD) : 0), sn.alt).toFixed(1)]);
     rows.push(['Sunspace', (typeof SUNSP !== 'undefined' && SUNSP && SUNSP.on) ? SUNSP.face + ' d=' + SUNSP.depth.toFixed(1) + 'm w=' + Math.round(SUNSP.widthFrac*100) + '%' : 'off']);
     VEGETATION.forEach(v => rows.push([vegKind(v), v.type + ' h=' + v.height + 'm trunk=' + trunkOf(v).toFixed(1) + 'm canopy=' + canopyOf(v).toFixed(1) + 'm ' + crownFormOf(v) + ' d=' + v.density + ' x=' + v.x + ' y=' + v.y + ' → ' + sideOf(v.x, v.y)]));
     WALLS.forEach(w => rows.push(['Wall', 'x=' + w.x + ' y=' + w.y + ' ' + w.along + ' h=' + w.height + 'm l=' + w.length + 'm → ' + sideOf(w.x, w.y)]));
@@ -5145,7 +5216,7 @@ function mountApp(site, clim, keepTab) {
   OPEN = { S: faceDefault(), N: faceDefault(), E: faceDefault(), W: faceDefault() };
   OPEN.S.wwr = 0.35;   // a defensible start, not a recommendation — the badge judges it live
   SUNSP = { on:false, face:'S', depth:2.2, widthFrac:0.6 };
-  RWIN = { size:'78x140', s:0, n:0 };
+  RWIN = { size:'78x140', s:0, n:0, e:0, w:0 };
   const app = $('#app');
   app.innerHTML = '';
   app.hidden = false;
