@@ -607,7 +607,7 @@ footer{border-top:1px solid var(--line); margin-top:26px; background:var(--wash)
 /* ------------------------------------------------------------ 0. IDENTITY -- */
 const APP = {
   name:        'Architecture Advisor',
-  version:     '1.45.0',
+  version:     '1.46.0',
   author:      'Nuno Dinis Cortiços',
   institution: 'Lisbon School of Architecture, Universidade de Lisboa',
   builtWith:   'Claude Opus 5 (Anthropic)',
@@ -3829,6 +3829,16 @@ function buildVentilation(host) {
     return Math.round(clamp(sum / windMonths.length, 0, 100));
   };
   const summerScore = () => Math.round((pairScore('S', 'N') + pairScore('E', 'W')) / 2);
+  /* Winter wind defense for the scoring system below: mean shelter across
+     the four facades — vegetation and walls, exposure and gust-aware
+     months all already inside winterScore. */
+  const winterPosture = () => Math.round((winterScore('S') + winterScore('N') + winterScore('E') + winterScore('W')) / 4);
+  /* The Olgyay verdict in plain English for the CSV audit trail; the page
+     shows the translated twin. Bands at 50 are this app's teaching cut. */
+  const olgyayVerdict = (w, s) => w >= 50 && s >= 50 ? 'Sheltered winter, breathing summer — the Olgyay balance'
+    : w >= 50 ? 'Sheltered but stuffy — open summer cross paths'
+    : s >= 50 ? 'Breathing summer, draughty winter — shelter the windward side'
+    : 'Exposed in winter, still in summer — rework both seasons';
 
   /* ---- isometric projection (same as Site tab) ---- */
   const ISO_C = Math.cos(30 * RAD), ISO_S = Math.sin(30 * RAD);
@@ -4238,6 +4248,35 @@ function buildVentilation(host) {
       selBox.appendChild(el('button', { class:'btn small', text:'Delete plant', onclick:() => { VEGETATION.splice(s.index, 1); selected = null; refresh(); toast('Plant removed'); } }));
       syncPlantEd();
     }
+  }
+
+  /* ---- ventilation scores: the student's two solutions, graded ----
+     Winter: blocking and deflecting the cold months' winds with planting
+     (and walls) as appropriate. Summer: catching the prevailing months'
+     wind through opposite pairs. One assembly, two seasons. */
+  host.appendChild(section('Ventilation scores — winter defense, summer breeze',
+    'Two 0–100 teaching indices over the selected months, then the Olgyay verdict on the pair.'));
+  const olgGrid = el('div', { class:'grid g2' });
+  const cardW = statCard('Winter wind defense', '\u2013', '/100', '');
+  const cardS = statCard('Summer cross-ventilation', '\u2013', '/100', '');
+  olgGrid.appendChild(cardW); olgGrid.appendChild(cardS);
+  host.appendChild(olgGrid);
+  const olgPill = el('span', { class:'pill ok' });
+  host.appendChild(el('div', { class:'limitrow' }, [olgPill]));
+  host.appendChild(hint('vent-scores',
+    'Olgyay\u2019s bargain (1963), Design with climate: exclude the winter wind, invite the summer breeze. Winter defense reads shelter planting, detached walls and exposure against each selected month\u2019s gusts — shelter multipliers after Olgyay, pp.37\u201340. Summer potential reads opposite-pair airflow against the month\u2019s wind. Bands at 50 are this app\u2019s teaching cut, not Olgyay\u2019s number.'));
+  const setStat = (card, v, sub) => {
+    card.querySelector('.v').innerHTML = fmt(v, 0) + ' <small>/100</small>';
+    const s = card.querySelector('.s');
+    if (s) s.textContent = t(sub);
+  };
+  function refreshScores() {
+    const w = winterPosture(), s = summerScore();
+    setStat(cardW, w, 'mean of S\u2013N\u2013E\u2013W shelter');
+    setStat(cardS, s, 'mean of pair paths');
+    const verdict = olgyayVerdict(w, s);
+    olgPill.className = 'pill ' + (w >= 50 && s >= 50 ? 'ok' : w >= 50 || s >= 50 ? 'empty' : 'bad');
+    olgPill.textContent = t(verdict);
   }
 
   /* ---- 3D canvas (wider: garden + shadows need room) ----
@@ -4693,6 +4732,9 @@ function buildVentilation(host) {
     VEGETATION.forEach(v => rows.push([vegKind(v), v.type + ' h=' + v.height + 'm trunk=' + trunkOf(v).toFixed(1) + 'm canopy=' + canopyOf(v).toFixed(1) + 'm ' + crownFormOf(v) + ' d=' + v.density + ' x=' + v.x + ' y=' + v.y + ' → ' + sideOf(v.x, v.y)]));
     WALLS.forEach(w => rows.push(['Wall', 'x=' + w.x + ' y=' + w.y + ' ' + w.along + ' h=' + w.height + 'm l=' + w.length + 'm → ' + sideOf(w.x, w.y)]));
     rows.push(['Köppen–Geiger', (C && C.k) ? C.k.code : '']);
+    rows.push(['Winter wind defense (0-100)', winterPosture()]);
+    rows.push(['Summer cross-ventilation (0-100)', summerScore()]);
+    rows.push(['Olgyay verdict', olgyayVerdict(winterPosture(), summerScore())]);
     rows.push(['Note', 'Openable area assumes 50% of geometric window; teaching index, not an energy model']);
     return csvHeader([['Site', (S.place || S.nuts || '') + ' ' + lat.toFixed(2) + ' ' + lon.toFixed(2)]]) + csvRows(rows);
   };
@@ -4927,6 +4969,7 @@ function buildVentilation(host) {
      readout and redraws through it. ---- */
   const refresh = () => {
     syncEditor();
+    refreshScores();
     syncWallEd();
     syncPlantEd();
     syncWindCtls();
