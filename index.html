@@ -607,7 +607,7 @@ footer{border-top:1px solid var(--line); margin-top:26px; background:var(--wash)
 /* ------------------------------------------------------------ 0. IDENTITY -- */
 const APP = {
   name:        'Architecture Advisor',
-  version:     '1.44.0',
+  version:     '1.45.0',
   author:      'Nuno Dinis Cortiços',
   institution: 'Lisbon School of Architecture, Universidade de Lisboa',
   builtWith:   'Claude Opus 5 (Anthropic)',
@@ -2874,9 +2874,72 @@ function buildOpenings(host) {
   const rwSize = () => RW_SIZES[RWIN.size] || RW_SIZES['78x140'];
   const southSlant = () => ((RF.n === 2 || RF.n === 3) ? G.D / 2 : G.D) / Math.cos(roofTh);
   const southSlopeArea = () => RF.n === 0 ? G.L * G.D : southSlant() * G.L;
-  const rwArea = () => { const z = rwSize(); return (RWIN.s + ((RF.n === 2 || RF.n === 3) ? RWIN.n : 0) + (RF.n === 3 ? RWIN.e + RWIN.w : 0)) * z.w * z.h; };
+  const rwArea = () => { const z = rwSize(); return (RWIN.s + (RF.n === 2 ? RWIN.n : 0)) * z.w * z.h; };
+  const rowSpans = (count, len) => {
+    const zw = rwSize().w;
+    const wMax = (len * 0.8 - (count - 1) * 0.4) / count;
+    const wEff = Math.min(zw, Math.max(0.3, wMax));
+    const span = count * wEff + (count - 1) * 0.4;
+    return { wEff, span };
+  };
+  const hEffOf = () => Math.min(rwSize().h, southSlant() * 0.85);
+  /** World quads of a slope's roof-window row: one source for draw, pick
+      and drag, so the dot always sits on drawn geometry. Row centres ride
+      per-slope fractions (0 eave, 1 ridge); flat rows slide laterally. */
+  function roofRowQuads(slope) {
+    const z = rwSize();
+    if (slope === 'F') {
+      if (RF.n !== 0 || RWIN.s <= 0) return [];
+      const hEff = Math.min(z.h, G.D * 0.7);
+      const { wEff, span } = rowSpans(RWIN.s, G.L);
+      const maxX = Math.max(0, (G.L - span) / 2);
+      const cx = clamp(RWIN.fX, -maxX, maxX);
+      const out = [];
+      for (let i = 0; i < RWIN.s; i++) {
+        const u = cx - span / 2 + wEff / 2 + i * (wEff + 0.4);
+        out.push([[u - wEff / 2, -hEff / 2, H0 + 0.03], [u + wEff / 2, -hEff / 2, H0 + 0.03],
+                  [u + wEff / 2, hEff / 2, H0 + 0.03], [u - wEff / 2, hEff / 2, H0 + 0.03]]);
+      }
+      return out;
+    }
+    const count = slope === 'S' ? RWIN.s : slope === 'N' ? RWIN.n : slope === 'E' ? RWIN.e : RWIN.w;
+    if (count <= 0) return [];
+    if (slope === 'N' && RF.n !== 2 && RF.n !== 3) return [];
+    if ((slope === 'E' || slope === 'W') && RF.n !== 3) return [];
+    const H = ridge - H0;
+    if (slope === 'E' || slope === 'W') {
+      const run = G.D / 2, f0 = slope === 'E' ? RWIN.eF : RWIN.wF;
+      const halfW = run * (1 - f0);
+      const wMax = (2 * halfW * 0.8 - (count - 1) * 0.4) / count;
+      const wE = Math.min(z.w, Math.max(0.3, wMax));
+      const span = count * wE + (count - 1) * 0.4;
+      const sx = slope === 'E' ? 1 : -1;
+      const P = (v, f) => [sx * (G.L / 2 - f * run), v, H0 + f * H];
+      const out = [];
+      for (let i = 0; i < count; i++) {
+        const v = -span / 2 + wE / 2 + i * (wE + 0.4);
+        const fa = f0 - (hEffOf() / H) / 2, fb = f0 + (hEffOf() / H) / 2;
+        out.push([P(v - wE / 2, fa), P(v + wE / 2, fa), P(v + wE / 2, fb), P(v - wE / 2, fb)]);
+      }
+      return out;
+    }
+    const slant = southSlant();
+    const hEff = Math.min(z.h, slant * 0.85);
+    const { wEff, span } = rowSpans(count, G.L);
+    const f0 = slope === 'S' ? RWIN.sF : RWIN.nF;
+    const P = (uu, f) => slope === 'S'
+      ? [uu, -G.D / 2 + f * ((RF.n === 2 || RF.n === 3) ? G.D / 2 : G.D), H0 + f * H]
+      : [uu, G.D / 2 - f * G.D / 2, H0 + f * H];
+    const out = [];
+    for (let i = 0; i < count; i++) {
+      const u = -span / 2 + wEff / 2 + i * (wEff + 0.4);
+      const fa = f0 - (hEff / H) / 2, fb = f0 + (hEff / H) / 2;
+      out.push([P(u - wEff / 2, fa), P(u + wEff / 2, fa), P(u + wEff / 2, fb), P(u - wEff / 2, fb)]);
+    }
+    return out;
+  }
   host.appendChild(section('Roof windows',
-    'Daylight and winter sun from above: south-slope glass earns its keep where the climate leans heating and overheats where it leans cooling; north glass gives soft diffuse light with little gain either way. They share the south slope with the collectors on the Roof tab — each glazed square metre is one less for collection. Hip ends take east and west rows where they are widest. Windows on the far slope draw dashed at their true positions.'));
+    'Daylight and winter sun from above: south-slope glass earns its keep where the climate leans heating and overheats where it leans cooling; north glass gives soft diffuse light with little gain either way. They share the south slope with the collectors on the Roof tab — each glazed square metre is one less for collection. Hip ends take east and west rows where they are widest. Windows on the far slope draw dashed at their true positions. Drag the row dot to slide it along its slope.'));
   const cRwSize = selectCtl('Standard size', Object.keys(RW_SIZES).map(k => ({ value:k, label:RW_SIZES[k].label })), RWIN.size,
     v => { RWIN.size = v; refreshOpenings(); });
   const cRwS = rangeCtl(RF.n === 0 ? 'Skylights' : 'South slope windows', 0, 4, 1, RWIN.s,
@@ -3147,21 +3210,24 @@ function buildOpenings(host) {
       /** Draws one facade's window and shading; `active` highlights the
           facade currently selected in the controls above. */
       function drawFace(f, active) {
-        if (!faceVisible()[f]) return;
+        /* Hidden faces draw dashed at true positions, like far roof slopes:
+           placed glazing never vanishes behind the volume. */
+        const hid = !faceVisible()[f];
+        const dashH = hid ? [5, 4] : null;
         const o = OPEN[f];
         const n = faceNormal[f];
         if (o.wwr > 0) {
           const rect = windowRect(f);
           const win = [facePoint(f, rect.u0, rect.v0), facePoint(f, rect.u1, rect.v0),
                        facePoint(f, rect.u1, rect.v1), facePoint(f, rect.u0, rect.v1)];
-          poly(win, active ? 'rgba(37,99,235,.16)' : 'rgba(37,99,235,.08)', active ? '#2563EB' : CH.ink2, active ? 1.8 : 1.2);
+          poly(win, hid ? 'rgba(37,99,235,.05)' : active ? 'rgba(37,99,235,.16)' : 'rgba(37,99,235,.08)', hid ? 'rgba(37,99,235,.65)' : active ? '#2563EB' : CH.ink2, hid ? 1.2 : active ? 1.8 : 1.2, dashH);
 
           if (o.ovD > 0) {
             ovPositions(o.ovN, rect).forEach(vTop => {
               const inA = facePoint(f, rect.u0, vTop), inB = facePoint(f, rect.u1, vTop);
               const outA = [inA[0] + n[0]*o.ovD, inA[1] + n[1]*o.ovD, inA[2]];
               const outB = [inB[0] + n[0]*o.ovD, inB[1] + n[1]*o.ovD, inB[2]];
-              poly([inA, inB, outB, outA], active ? 'rgba(217,119,6,.20)' : 'rgba(217,119,6,.10)', '#D97706', 1.3);
+              poly([inA, inB, outB, outA], hid ? 'rgba(217,119,6,.08)' : active ? 'rgba(217,119,6,.20)' : 'rgba(217,119,6,.10)', hid ? 'rgba(217,119,6,.55)' : '#D97706', hid ? 1.1 : 1.3, dashH);
             });
           }
           if (o.finN > 0 && o.finD > 0) {
@@ -3169,82 +3235,40 @@ function buildOpenings(host) {
               const inA = facePoint(f, uF, rect.v0), inB = facePoint(f, uF, rect.v1);
               const outA = [inA[0] + n[0]*o.finD, inA[1] + n[1]*o.finD, inA[2]];
               const outB = [inB[0] + n[0]*o.finD, inB[1] + n[1]*o.finD, inB[2]];
-              poly([inA, inB, outB, outA], active ? 'rgba(220,38,38,.18)' : 'rgba(220,38,38,.10)', '#DC2626', 1.3);
+              poly([inA, inB, outB, outA], hid ? 'rgba(220,38,38,.08)' : active ? 'rgba(220,38,38,.18)' : 'rgba(220,38,38,.10)', hid ? 'rgba(220,38,38,.55)' : '#DC2626', hid ? 1.1 : 1.3, dashH);
             });
           }
         }
       }
       FACES.forEach(f => drawFace(f, f === curFace));
 
-      /* Roof windows ride the slopes: one centred row per sun-facing slope,
-         flat skylights as level rectangles. Only slopes facing the camera. */
+      /* Roof windows ride the slopes: one row per slope, far rows dashed
+         at true positions so placed work never vanishes. Each facing row
+         carries a drag dot at its uphill-right corner. */
       {
-        const z = rwSize();
-        const rowSpans = (count, len) => {
-          const wMax = (len * 0.8 - (count - 1) * 0.4) / count;
-          const wEff = Math.min(z.w, Math.max(0.3, wMax));
-          const span = count * wEff + (count - 1) * 0.4;
-          return { wEff, span };
-        };
-        /* Far-slope rows draw dashed at their true projected positions:
-           the roof reads as one visible volume, so hiding them entirely
-           looks like lost work. */
-        const rowOnSlope = (slope, count, hidden) => {
-          const H = ridge - H0, slant = southSlant();
-          const hEff = Math.min(z.h, slant * 0.85);
-          const { wEff, span } = rowSpans(count, G.L);
-          const P = (uu, f) => slope === 'S'
-            ? [uu, -G.D / 2 + f * ((RF.n === 2 || RF.n === 3) ? G.D / 2 : G.D), H0 + f * H]
-            : [uu, G.D / 2 - f * G.D / 2, H0 + f * H];
-          for (let i = 0; i < count; i++) {
-            const u = -span / 2 + wEff / 2 + i * (wEff + 0.4);
-            const f0 = 0.5 - (hEff / H) / 2, f1 = 0.5 + (hEff / H) / 2;
-            if (hidden) poly([P(u - wEff / 2, f0), P(u + wEff / 2, f0), P(u + wEff / 2, f1), P(u - wEff / 2, f1)],
-              'rgba(37,99,235,.05)', 'rgba(37,99,235,.65)', 1.2, [5, 4]);
-            else poly([P(u - wEff / 2, f0), P(u + wEff / 2, f0), P(u + wEff / 2, f1), P(u - wEff / 2, f1)],
-              'rgba(37,99,235,.14)', '#2563EB', 1.4);
-          }
-        };
-        /* Hip ends: one low-centred row per triangle, where it is widest. */
-        const rowOnHip = (side, count, hiddenSide) => {
-          const H = ridge - H0, run = G.D / 2, f0 = 0.35;
-          const halfW = run * (1 - f0);
-          const wMax = (2 * halfW * 0.8 - (count - 1) * 0.4) / count;
-          const wE = Math.min(z.w, Math.max(0.3, wMax));
-          const span = count * wE + (count - 1) * 0.4;
-          const sx = side === 'E' ? 1 : -1;
-          const rl = Math.max(0, G.L / 2 - G.D / 2);
-          const P = (v, f) => [sx * (G.L / 2 - f * run), v, H0 + f * H];
-          for (let i = 0; i < count; i++) {
-            const v = -span / 2 + wE / 2 + i * (wE + 0.4);
-            const fa = f0 - (hEffOf() / H) / 2, fb = f0 + (hEffOf() / H) / 2;
-            const quad = [P(v - wE / 2, fa), P(v + wE / 2, fa), P(v + wE / 2, fb), P(v - wE / 2, fb)];
-            if (hiddenSide) poly(quad, 'rgba(37,99,235,.05)', 'rgba(37,99,235,.65)', 1.2, [5, 4]);
+        const vis = faceVisible();
+        const drawRow = (slope, hidden) => {
+          const qs = roofRowQuads(slope);
+          qs.forEach(quad => {
+            if (hidden) poly(quad, 'rgba(37,99,235,.05)', 'rgba(37,99,235,.65)', 1.2, [5, 4]);
             else poly(quad, 'rgba(37,99,235,.14)', '#2563EB', 1.4);
+          });
+          if (!hidden && qs.length) {
+            const hp = qs[qs.length - 1][2];
+            const sp = proj(hp[0], hp[1], hp[2]);
+            ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(sp[0], sp[1], 8, 0, 6.284); ctx.fill();
+            ctx.fillStyle = CH.ink; ctx.beginPath(); ctx.arc(sp[0], sp[1], 4.5, 0, 6.284); ctx.fill();
           }
         };
-        const hEffOf = () => Math.min(z.h, (southSlant()) * 0.85);
-        if (RF.n === 0) {
-          if (RWIN.s > 0) {
-            const hEff = Math.min(z.h, G.D * 0.7);
-            const { wEff, span } = rowSpans(RWIN.s, G.L);
-            for (let i = 0; i < RWIN.s; i++) {
-              const u = -span / 2 + wEff / 2 + i * (wEff + 0.4);
-              poly([[u - wEff / 2, -hEff / 2, H0 + 0.03], [u + wEff / 2, -hEff / 2, H0 + 0.03],
-                    [u + wEff / 2, hEff / 2, H0 + 0.03], [u - wEff / 2, hEff / 2, H0 + 0.03]],
-                'rgba(37,99,235,.14)', '#2563EB', 1.4);
-            }
-          }
-        } else {
-          const vis = faceVisible();
-          if (RWIN.s > 0) rowOnSlope('S', RWIN.s, !vis.S);
-          if ((RF.n === 2 || RF.n === 3) && RWIN.n > 0) rowOnSlope('N', RWIN.n, !vis.N);
-          if (RF.n === 3 && RWIN.e > 0) rowOnHip('E', RWIN.e, !vis.E);
-          if (RF.n === 3 && RWIN.w > 0) rowOnHip('W', RWIN.w, !vis.W);
+        if (RF.n === 0) drawRow('F', false);
+        else {
+          drawRow('S', !vis.S);
+          if (RF.n === 2 || RF.n === 3) drawRow('N', !vis.N);
+          if (RF.n === 3) { drawRow('E', !vis.E); drawRow('W', !vis.W); }
         }
       }
 
-      if (SUNSP.on && faceVisible()[SUNSP.face]) {
+            if (SUNSP.on) {
         const f = SUNSP.face, n = faceNormal[f];
         const w = faceWidth(f) * SUNSP.widthFrac, hgt = Math.min(H0, 3.0);
         const inA = facePoint(f, -w/2, 0), inB = facePoint(f, w/2, 0), inC = facePoint(f, w/2, hgt), inD = facePoint(f, -w/2, hgt);
@@ -3302,6 +3326,7 @@ function buildOpenings(host) {
         rows.push(['South slope roof windows', RWIN.s]);
         if (RF.n === 2 || RF.n === 3) rows.push(['North slope roof windows', RWIN.n]);
         if (RF.n === 3) rows.push(['East slope roof windows', RWIN.e], ['West slope roof windows', RWIN.w]);
+      rows.push(['Roof window rows (fraction)', 'S:' + RWIN.sF.toFixed(2) + ' N:' + RWIN.nF.toFixed(2) + ' E:' + RWIN.eF.toFixed(2) + ' W:' + RWIN.wF.toFixed(2) + ' flat:' + RWIN.fX.toFixed(1) + 'm']);
       }
       rows.push(['Roof glazing total (m\u00b2)', +rwArea().toFixed(1)]);
       return csvRows(rows);
@@ -3362,6 +3387,18 @@ function buildOpenings(host) {
     const rect = windowRect(curFace);
     return projCam(FR, ...facePoint(curFace, rect.u1, rect.v0));
   }
+  /** Drag dot of a roof row: uphill-right corner of its last window,
+      facing slopes only — hidden rows keep their dashed readout. */
+  function roofRowHandlePos(FR, slope) {
+    const qs = roofRowQuads(slope);
+    if (!qs.length) return null;
+    if (slope !== 'F') {
+      const need = slope === 'S' ? 'S' : slope === 'N' ? 'N' : slope === 'E' ? 'E' : 'W';
+      if (!faceVisible()[need]) return null;
+    }
+    const c = qs[qs.length - 1][2];
+    return projCam(FR, c[0], c[1], c[2]);
+  }
   function sunspaceHandlePos(FR) {
     if (!SUNSP.on || !faceVisible()[SUNSP.face]) return null;
     const f = SUNSP.face, n = faceNormal[f], w = faceWidth(f) * SUNSP.widthFrac;
@@ -3379,6 +3416,10 @@ function buildOpenings(host) {
     if (win && Math.hypot(px - win[0], py - win[1]) <= 22) return 'window';
     const sill = sillHandlePos(FR);
     if (sill && Math.hypot(px - sill[0], py - sill[1]) <= 22) return 'sill';
+    for (const sl of ['S', 'N', 'E', 'W', 'F']) {
+      const hp = roofRowHandlePos(FR, sl);
+      if (hp && Math.hypot(px - hp[0], py - hp[1]) <= 20) return 'rw' + sl;
+    }
     return null;
   };
   let drag = null;
@@ -3421,19 +3462,71 @@ function buildOpenings(host) {
     }
     refreshOpenings();
   };
+  /** Row-plane basis for dragging: world = O + u*U + f*F, shared by the
+      grab-offset snapshot and the move so rows never jump on grab. */
+  function rowBasis(slope) {
+    const H = ridge - H0;
+    if (slope === 'S') { const run = (RF.n === 2 || RF.n === 3) ? G.D / 2 : G.D; return { O:[0, -G.D / 2, H0], U:[1, 0, 0], V:[0, run, H] }; }
+    if (slope === 'N') return { O:[0, G.D / 2, H0], U:[1, 0, 0], V:[0, -G.D / 2, H] };
+    const sx = slope === 'E' ? 1 : -1, run = G.D / 2;
+    return { O:[sx * G.L / 2, 0, H0], U:[0, 1, 0], V:[-sx * run, 0, H] };
+  }
+  function invRowParam(slope, FR, px, py) {
+    if (slope === 'F') return { x: invAtZCam(FR, px, py, H0 + 0.03).x };
+    const B = rowBasis(slope);
+    const p0 = projCam(FR, B.O[0], B.O[1], B.O[2]);
+    const au = projCam(FR, B.O[0] + B.U[0], B.O[1] + B.U[1], B.O[2] + B.U[2]);
+    const av = projCam(FR, B.O[0] + B.V[0], B.O[1] + B.V[1], B.O[2] + B.V[2]);
+    const ux = au[0] - p0[0], uy = au[1] - p0[1], vx = av[0] - p0[0], vy = av[1] - p0[1];
+    const det = ux * vy - uy * vx;
+    if (Math.abs(det) < 1e-6) return null;
+    const dx = px - p0[0], dy = py - p0[1];
+    return { f: (ux * dy - uy * dx) / det };
+  }
+  function startRoofDrag(slope, clientX, clientY) {
+    if (!openPanel.W || !openPanel.H) return null;
+    const r = ocv.getBoundingClientRect();
+    const FR = openFrame(openPanel.W, openPanel.H);
+    const h = invRowParam(slope, FR, clientX - r.left, clientY - r.top);
+    if (!h) return null;
+    if (slope === 'F') return { kind:'rw', slope, dx: h.x - RWIN.fX };
+    const key = slope === 'S' ? 'sF' : slope === 'N' ? 'nF' : slope === 'E' ? 'eF' : 'wF';
+    return { kind:'rw', slope, key, df: h.f - RWIN[key] };
+  }
+  function doRoofDrag(d, clientX, clientY) {
+    const r = ocv.getBoundingClientRect();
+    const FR = openFrame(openPanel.W, openPanel.H);
+    const h = invRowParam(d.slope, FR, clientX - r.left, clientY - r.top);
+    if (!h) return;
+    if (d.slope === 'F') {
+      const { span } = rowSpans(RWIN.s, G.L);
+      const maxX = Math.max(0, (G.L - span) / 2);
+      RWIN.fX = clamp(h.x - d.dx, -maxX, maxX);
+    } else {
+      const H = ridge - H0, df = hEffOf() / Math.max(0.5, H);
+      RWIN[d.key] = clamp(h.f - d.df, 0.05 + df / 2, 0.95 - df / 2);
+    }
+    refreshOpenings();
+  }
   ocv.addEventListener('pointerdown', ev => {
     const kind = pick(ev.clientX, ev.clientY);
     if (!kind) return;
     ev.preventDefault();
-    drag = kind;
-    if (kind === 'window' || kind === 'sill') { syncFaceCtls(); }
+    if (kind === 'rwS' || kind === 'rwN' || kind === 'rwE' || kind === 'rwW' || kind === 'rwF') {
+      drag = startRoofDrag(kind.slice(2), ev.clientX, ev.clientY);
+      if (!drag) return;
+    } else {
+      drag = kind;
+      if (kind === 'window' || kind === 'sill') { syncFaceCtls(); }
+    }
     try { ocv.setPointerCapture(ev.pointerId); } catch (err) {}
     ocv.style.cursor = 'grabbing';
   });
   ocv.addEventListener('pointermove', ev => {
     if (!drag) { ocv.style.cursor = pick(ev.clientX, ev.clientY) ? 'grab' : 'default'; return; }
     ev.preventDefault();
-    doDrag(drag, ev.clientX, ev.clientY);
+    if (typeof drag === 'object') doRoofDrag(drag, ev.clientX, ev.clientY);
+    else doDrag(drag, ev.clientX, ev.clientY);
   });
   const endDrag = () => { drag = null; ocv.style.cursor = 'default'; };
 ocv.addEventListener('pointerup', endDrag);
@@ -5223,7 +5316,7 @@ function mountApp(site, clim, keepTab) {
   OPEN = { S: faceDefault(), N: faceDefault(), E: faceDefault(), W: faceDefault() };
   OPEN.S.wwr = 0.35;   // a defensible start, not a recommendation — the badge judges it live
   SUNSP = { on:false, face:'S', depth:2.2, widthFrac:0.6 };
-  RWIN = { size:'78x140', s:0, n:0, e:0, w:0 };
+  RWIN = { size:'78x140', s:0, n:0, e:0, w:0, sF:0.5, nF:0.5, eF:0.35, wF:0.35, fX:0 };
   const app = $('#app');
   app.innerHTML = '';
   app.hidden = false;
