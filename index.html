@@ -607,7 +607,7 @@ footer{border-top:1px solid var(--line); margin-top:26px; background:var(--wash)
 /* ------------------------------------------------------------ 0. IDENTITY -- */
 const APP = {
   name:        'Architecture Advisor',
-  version:     '1.46.0',
+  version:     '1.47.0',
   author:      'Nuno Dinis Cortiços',
   institution: 'Lisbon School of Architecture, Universidade de Lisboa',
   builtWith:   'Claude Opus 5 (Anthropic)',
@@ -2607,19 +2607,27 @@ function buildRoof(host) {
              'rgba(20,23,26,.08)', CH.ink, 1.4);
         const q0 = proj(-rl, 0, ridge), q1 = proj(rl, 0, ridge);
         stroke(ctx, CH.ink, 1.6); seg(ctx, q0[0], q0[1], q1[0], q1[1]);
+        // hidden upper contour, same convention: the north eave plus the
+        // east rake running down from the shortened ridge end
+        const hn0 = proj(-G.L/2, G.D/2, H0), hn1 = proj(G.L/2, G.D/2, H0);
+        stroke(ctx, CH.ink, 1.4); seg(ctx, hn0[0], hn0[1], hn1[0], hn1[1]);
+        const hre = proj(rl, 0, ridge), hne = proj(G.L/2, G.D/2, H0);
+        stroke(ctx, CH.ink, 1.4); seg(ctx, hre[0], hre[1], hne[0], hne[1]);
       }
       const ridgeMid = proj(0, (RF.n === 2 || RF.n === 3) ? 0 : G.D / 2, ridge);
       label(ctx, fmt(ridge, 1) + ' m', ridgeMid[0] + 7, ridgeMid[1] - 9, CH.ink2, FM(10), 'left', 'middle');
 
-      // the ideal-pitch fan: from the same eave point the pitch drag pivots
-      // on, out to the real roof's horizontal run — so each line runs
-      // alongside the actual slope, at the height that angle would reach
+      // the ideal-pitch fan: from the eave point out to the real roof's
+      // horizontal run — so each line runs alongside the actual slope, at
+      // the height that angle would reach. On a hip roof the fan moves to
+      // the middle of the bigger (south) side instead of the west corner.
       const span = (RF.n === 2 || RF.n === 3) ? G.D / 2 : G.D;
       const topY = -G.D / 2 + span;
-      const eave = proj(-G.L / 2, -G.D / 2, H0);
+      const fanX = RF.n === 3 ? 0 : -G.L / 2;
+      const eave = proj(fanX, -G.D / 2, H0);
       [{ a:idealW, tag:'winter' }, { a:idealS, tag:'summer' }, { a:idealB, tag:'year' }].forEach(gd => {
         const idealZ = H0 + span * Math.tan(gd.a * RAD);
-        const p1 = proj(-G.L / 2, topY, idealZ);
+        const p1 = proj(fanX, topY, idealZ);
         stroke(ctx, '#16A34A', 1.4, [5, 4]); seg(ctx, eave[0], eave[1], p1[0], p1[1]);
         ctx.fillStyle = '#16A34A';
         ctx.beginPath(); ctx.arc(p1[0], p1[1], 2.5, 0, 6.284); ctx.fill();
@@ -2671,8 +2679,9 @@ function buildRoof(host) {
   // before our own handlers ever see it — kill that native behaviour outright
   rcv.draggable = false;
   rcv.addEventListener('dragstart', ev => ev.preventDefault());
-  const invWest = (FR, px, py) => {
-    const p00 = projF(FR, -G.L / 2, 0, 0), p10 = projF(FR, -G.L / 2, 1, 0), p01 = projF(FR, -G.L / 2, 0, 1);
+  const invWest = (FR, px, py, xPlane) => {
+    const xp = xPlane !== undefined ? xPlane : -G.L / 2;
+    const p00 = projF(FR, xp, 0, 0), p10 = projF(FR, xp, 1, 0), p01 = projF(FR, xp, 0, 1);
     let dXdy = p10[0] - p00[0], dYdy = p10[1] - p00[1], dYdz = p01[1] - p00[1];
     if (Math.abs(dXdy) < 1e-6) dXdy = dXdy < 0 ? -1e-6 : 1e-6;
     if (Math.abs(dYdz) < 1e-6) dYdz = dYdz < 0 ? -1e-6 : 1e-6;
@@ -2700,7 +2709,8 @@ function buildRoof(host) {
   const doDrag = (clientX, clientY) => {
     const r = rcv.getBoundingClientRect();
     const FR = roofFrame(roofPanel.W, roofPanel.H);
-    const { y, z } = invWest(FR, clientX - r.left, clientY - r.top);
+    const xp = RF.n === 3 ? -Math.max(0, G.L / 2 - G.D / 2) : -G.L / 2;
+    const { y, z } = invWest(FR, clientX - r.left, clientY - r.top, xp);
     const run = y + G.D / 2, rise = z - FR.H0;
     RF.th = Math.round(clamp(Math.atan2(rise, Math.max(0.5, run)) / RAD, 10, 60));
     syncCtl(cP, RF.th, v => fmt(v, 0) + '°');
@@ -2713,7 +2723,7 @@ function buildRoof(host) {
     if (!nearSlope(ev.clientX, ev.clientY)) return;
     ev.preventDefault();
     rdrag = true;
-    rcv.setPointerCapture(ev.pointerId);
+    try { rcv.setPointerCapture(ev.pointerId); } catch (err) {}
     rcv.style.cursor = 'grabbing';
   });
   rcv.addEventListener('pointermove', ev => {
