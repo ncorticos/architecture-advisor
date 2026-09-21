@@ -607,7 +607,7 @@ footer{border-top:1px solid var(--line); margin-top:26px; background:var(--wash)
 /* ------------------------------------------------------------ 0. IDENTITY -- */
 const APP = {
   name:        'Architecture Advisor',
-  version:     '1.48.0',
+  version:     '1.49.0',
   author:      'Nuno Dinis Cortiços',
   institution: 'Lisbon School of Architecture, Universidade de Lisboa',
   builtWith:   'Claude Opus 5 (Anthropic)',
@@ -4265,25 +4265,13 @@ function buildVentilation(host) {
      (and walls) as appropriate. Summer: catching the prevailing months'
      wind through opposite pairs. One assembly, two seasons. */
   host.appendChild(section('Ventilation scores — winter defense, summer breeze',
-    'Two 0–100 teaching indices over the selected months, then the Olgyay verdict on the pair.'));
-  const olgGrid = el('div', { class:'grid g2' });
-  const cardW = statCard('Winter wind defense', '\u2013', '/100', '');
-  const cardS = statCard('Summer cross-ventilation', '\u2013', '/100', '');
-  olgGrid.appendChild(cardW); olgGrid.appendChild(cardS);
-  host.appendChild(olgGrid);
+    'The two 0–100 scores sit in the corner of the model — winter shelter, summer tunnel — with the Olgyay verdict on the pair below.'));
   const olgPill = el('span', { class:'pill ok' });
   host.appendChild(el('div', { class:'limitrow' }, [olgPill]));
   host.appendChild(hint('vent-scores',
     'Olgyay\u2019s bargain (1963), Design with climate: exclude the winter wind, invite the summer breeze. Winter defense reads shelter planting, detached walls and exposure against each selected month\u2019s gusts — shelter multipliers after Olgyay, pp.37\u201340. Summer potential reads opposite-pair airflow against the month\u2019s wind. Bands at 50 are this app\u2019s teaching cut, not Olgyay\u2019s number.'));
-  const setStat = (card, v, sub) => {
-    card.querySelector('.v').innerHTML = fmt(v, 0) + ' <small>/100</small>';
-    const s = card.querySelector('.s');
-    if (s) s.textContent = t(sub);
-  };
   function refreshScores() {
     const w = winterPosture(), s = summerScore();
-    setStat(cardW, w, 'mean of S\u2013N\u2013E\u2013W shelter');
-    setStat(cardS, s, 'mean of pair paths');
     const verdict = olgyayVerdict(w, s);
     olgPill.className = 'pill ' + (w >= 50 && s >= 50 ? 'ok' : w >= 50 || s >= 50 ? 'empty' : 'bad');
     olgPill.textContent = t(verdict);
@@ -5881,6 +5869,7 @@ Object.assign(PT, {
   "WWR fit /100": "Ajuste WWR /100",
   "Shading fit /100": "Ajuste do sombreamento /100",
   "Winter shelter /100": "Abrigo de inverno /100",
+  "The two {}–{} scores sit in the corner of the model — winter shelter, summer tunnel — with the Olgyay verdict on the pair below.": "As duas notas {}–{} estão no canto do modelo — abrigo de inverno, túnel de verão — com o veredicto de Olgyay sobre o par abaixo.",
   "Summer tunnel /100": "Túnel de verão /100",
   "Attached sunspace": "Espaço solar anexo",
   "A glazed buffer against one wall — direct gain’s bigger, slower sibling":
