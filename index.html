@@ -607,7 +607,7 @@ footer{border-top:1px solid var(--line); margin-top:26px; background:var(--wash)
 /* ------------------------------------------------------------ 0. IDENTITY -- */
 const APP = {
   name:        'Architecture Advisor',
-  version:     '1.47.0',
+  version:     '1.48.0',
   author:      'Nuno Dinis Cortiços',
   institution: 'Lisbon School of Architecture, Universidade de Lisboa',
   builtWith:   'Claude Opus 5 (Anthropic)',
@@ -2831,7 +2831,7 @@ function buildOpenings(host) {
 
   const cFace = segCtl('Facade', FACES.map(f => ({ value:f, label:faceName[f] })), curFace,
     v => { curFace = v; syncFaceCtls(); refreshOpenings(); });
-  const cWWR = rangeCtl('Window-to-wall ratio', 5, 80, 1, Math.round(OPEN[curFace].wwr * 100),
+  const cWWR = rangeCtl('Window-to-wall ratio', 0, 80, 1, Math.round(OPEN[curFace].wwr * 100),
     v => { OPEN[curFace].wwr = v / 100; refreshOpenings(); }, v => fmt(v, 0) + '%');
   const cSill = rangeCtl('Sill height', 0, 1.8, 0.05, OPEN[curFace].sillZ,
     v => { OPEN[curFace].sillZ = v; if (OPEN[curFace].headZ <= v + 0.3) { OPEN[curFace].headZ = v + 0.3; syncCtl(cHead, OPEN[curFace].headZ, w => fmt(w, 2) + ' m'); } refreshOpenings(); }, v => fmt(v, 2) + ' m');
@@ -4703,6 +4703,24 @@ function buildVentilation(host) {
     ctx.fillStyle = '#14171a'; ctx.font = 'bold 10px ui-monospace'; ctx.textAlign = 'left';
     ctx.fillText('Winter shelter S-'+ws.S+' N-'+ws.N+' E-'+ws.E+' W-'+ws.W, 8, 14);
     ctx.fillStyle = '#1D4ED8'; ctx.fillText('Summer ' + monthSetName() + ' S–N '+pairScore('S','N')+' · E–W '+pairScore('E','W')+' · mean '+ss+'/100', 8, 26);
+
+    /* ---- corner etiqueta: the Olgyay meta-evaluation on the model ----
+       Winter badge reads the vegetation-and-wall windbreak (blockage after
+       Olgyay pp.37-40, gust-weighted months); summer badge reads the wind
+       tunnel through the opposite window pairs. No usable openings on
+       either pair, no summer score — without windows it does not count. */
+    const ventColor = v => v === null ? CH.faint : v >= 80 ? '#16A34A' : v >= 50 ? '#D97706' : '#DC2626';
+    const ventBadge = (x, y, value, caption) => {
+      const col = ventColor(value);
+      ctx.fillStyle = '#fff';
+      ctx.fillRect(x, y, 84, 52);
+      stroke(ctx, col, 1.5); ctx.strokeRect(x, y, 84, 52);
+      label(ctx, value === null ? '–' : String(Math.round(value)), x + 42, y + 25, col, FM(24), 'center', 'middle');
+      label(ctx, t(caption), x + 42, y + 44, CH.muted, F(9), 'center', 'middle');
+    };
+    const noPairFlow = effectiveArea('S', 'N') <= 0 && effectiveArea('E', 'W') <= 0;
+    ventBadge(W - 92, 6, winterPosture(), 'Winter shelter /100');
+    ventBadge(W - 92, 64, noPairFlow ? null : summerScore(), 'Summer tunnel /100');
     ctx.fillStyle = '#7b838b'; ctx.font = '9px ui-sans-serif';
     ctx.textAlign = 'center';
     ctx.fillText(fmt(lat,2)+'° '+(lat<0?'S':'N')+' · '+fmt(Math.abs(lon),2)+'° '+(lon<0?'W':'E')+' · '+fmt(S.alt||0,0)+' m · ρ '+fmt(airDensity(),3)+' kg/m³ · eave '+fmt(eaveWind(),1)+' m/s · stack(5K) '+fmt(stackPa(5),1)+' Pa', W/2, H-18);
@@ -5001,6 +5019,11 @@ function buildVentilation(host) {
   cv.addEventListener('click', clickHandler);
   setDayV(SH.doy);
   refresh();
+  /* Cross-tab liveness: tab sections build once and are only hidden
+     afterwards, so returning from Windows & Shading (or anywhere else)
+     would leave the score cards behind the current model. activate()
+     re-runs this hook on every show. */
+  host._refresh = refresh;
   /* Monthly wind should never sit on placeholder values while the site has
      coordinates: derive on entry, once per mount — the button re-runs it. */
   deriveFromSite();
@@ -5407,6 +5430,13 @@ function mountApp(site, clim, keepTab) {
           sect.appendChild(el('div', { class:'warn',
             text:'This view could not be built: ' + err.message }));
         }
+      }
+      /* A reshown canvas redraws itself, but DOM readouts do not — give the
+         fresh tab a chance to re-sync them (Ventilation uses it for its
+         score cards and live line, so the etiqueta never lies). */
+      if (on && sect.dataset.built && typeof sect._refresh === 'function') {
+        try { sect._refresh(); }
+        catch (err) { console.error(err); }
       }
     });
     requestAnimationFrame(redrawVisiblePanels);
@@ -5850,6 +5880,8 @@ Object.assign(PT, {
   "Blocks winter sun almost as much as summer — too deep for this climate": "Bloqueia o sol de Inverno quase tanto como o de Verão — demasiado profundo para este clima",
   "WWR fit /100": "Ajuste WWR /100",
   "Shading fit /100": "Ajuste do sombreamento /100",
+  "Winter shelter /100": "Abrigo de inverno /100",
+  "Summer tunnel /100": "Túnel de verão /100",
   "Attached sunspace": "Espaço solar anexo",
   "A glazed buffer against one wall — direct gain’s bigger, slower sibling":
     "Um espaço-tampão envidraçado encostado a uma parede — o irmão maior e mais lento do ganho directo",
