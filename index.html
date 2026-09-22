@@ -607,7 +607,7 @@ footer{border-top:1px solid var(--line); margin-top:26px; background:var(--wash)
 /* ------------------------------------------------------------ 0. IDENTITY -- */
 const APP = {
   name:        'Architecture Advisor',
-  version:     '1.53.0',
+  version:     '1.54.0',
   author:      'Nuno Dinis Cortiços',
   institution: 'Lisbon School of Architecture, Universidade de Lisboa',
   builtWith:   'Claude Opus 5 (Anthropic)',
@@ -2540,7 +2540,7 @@ function buildRoof(host) {
 
   roofPanel = makePanel(host, {
     title: 'The roof in three dimensions',
-    note: 'Isometric view, matching the Site tab — the plan comes from there. Drag the black handle to re-pitch the roof; the green gauge at the east corner of the model shows each ideal pitch — drag until the slope runs parallel to the season ray. The lines behind the ridge are the hidden north eave and east rake, closed by the east eave.',
+    note: 'Isometric view, matching the Site tab — the plan comes from there. Drag the black handle to re-pitch the roof; the green gauge at the south-east corner of the model shows each ideal pitch — drag until the slope runs parallel to the season ray. The lines behind the ridge are the hidden north eave and east rake, closed by the east eave.',
     aspect: 1.7,
     render(ctx, W, H) {
       const FR = roofFrame(W, H);
@@ -2621,17 +2621,15 @@ function buildRoof(host) {
       const ridgeMid = proj(0, (RF.n === 2 || RF.n === 3) ? 0 : G.D / 2, ridge);
       label(ctx, fmt(ridge, 1) + ' m', ridgeMid[0] + 7, ridgeMid[1] - 9, CH.ink2, FM(10), 'left', 'middle');
 
-      // the ideal-pitch gauge grows out of the lower east corner itself —
-      // the north-east eave corner at eave height on hip and gable, the low
-      // south-east corner on a shed — so the three season rays stay connected
-      // to the model at every pitch while the ridge, its label and the drag
-      // handle stay legible. Drag until the slope runs parallel to the season
-      // ray — screen-parallel rays read exact in this projection, at whatever
-      // pitch the roof stands.
+      // the ideal-pitch gauge grows out of the south-east eave corner
+      // itself, at eave height on every roof type — so the three season rays
+      // stay connected to the model at every pitch while the ridge, its label
+      // and the drag handle stay legible. Drag until the slope runs parallel
+      // to the season ray — screen-parallel rays read exact in this
+      // projection, at whatever pitch the roof stands.
       const span = (RF.n === 2 || RF.n === 3) ? G.D / 2 : G.D;
       const topY = -G.D / 2 + span;
-      const gC = (RF.n === 1 || RF.n === 0) ? [G.L / 2, -G.D / 2, H0]
-        : [G.L / 2, G.D / 2, H0];
+      const gC = [G.L / 2, -G.D / 2, H0];
       const gO = proj(gC[0], gC[1], gC[2]);
       const gOx = gO[0], gOy = gO[1], gRl = 110;
       stroke(ctx, CH.line, 1.2); seg(ctx, gOx, gOy, gOx + 44, gOy);
@@ -5837,8 +5835,8 @@ Object.assign(PT, {
   "Between the seasonal ideals — decide by use": "Entre os ideais sazonais — decidir pelo uso",
   "Far from any solar ideal": "Longe de qualquer ideal solar",
   "The roof in three dimensions": "O telhado em três dimensões",
-  "Isometric view, matching the Site tab — the plan comes from there. Drag the black handle to re-pitch the roof; the green gauge at the east corner of the model shows each ideal pitch — drag until the slope runs parallel to the season ray. The lines behind the ridge are the hidden north eave and east rake, closed by the east eave.":
-    "Vista isométrica, como no separador Local — a planta vem de lá. Arraste o botão preto para mudar a inclinação do telhado; o calibre verde no canto leste do modelo mostra cada inclinação ideal — arraste até a vertente ficar paralela ao raio da estação. As linhas atrás da cumeeira são o beirado norte e a aresta este escondidos, fechados pelo beirado este.",
+  "Isometric view, matching the Site tab — the plan comes from there. Drag the black handle to re-pitch the roof; the green gauge at the south-east corner of the model shows each ideal pitch — drag until the slope runs parallel to the season ray. The lines behind the ridge are the hidden north eave and east rake, closed by the east eave.":
+    "Vista isométrica, como no separador Local — a planta vem de lá. Arraste o botão preto para mudar a inclinação do telhado; o calibre verde no canto sudeste do modelo mostra cada inclinação ideal — arraste até a vertente ficar paralela ao raio da estação. As linhas atrás da cumeeira são o beirado norte e a aresta este escondidos, fechados pelo beirado este.",
   "winter": "inverno",
   "summer": "verão",
   "year": "ano",
