@@ -607,7 +607,7 @@ footer{border-top:1px solid var(--line); margin-top:26px; background:var(--wash)
 /* ------------------------------------------------------------ 0. IDENTITY -- */
 const APP = {
   name:        'Architecture Advisor',
-  version:     '1.51.0',
+  version:     '1.52.0',
   author:      'Nuno Dinis Cortiços',
   institution: 'Lisbon School of Architecture, Universidade de Lisboa',
   builtWith:   'Claude Opus 5 (Anthropic)',
@@ -2621,20 +2621,21 @@ function buildRoof(host) {
       const ridgeMid = proj(0, (RF.n === 2 || RF.n === 3) ? 0 : G.D / 2, ridge);
       label(ctx, fmt(ridge, 1) + ' m', ridgeMid[0] + 7, ridgeMid[1] - 9, CH.ink2, FM(10), 'left', 'middle');
 
-      // the ideal-pitch gauge stands off the east corner, at eave height, so
-      // the ridge, its label and the drag handle stay legible while pitching
-      // by interaction. Same three season angles as before: drag until the
+      // the ideal-pitch gauge grows out of the east corner vertex itself —
+      // ridge end on hip and gable, high-edge end on a shed — so the three
+      // season rays stay connected to the model at every pitch while the
+      // ridge, its label and the drag handle stay legible. Drag until the
       // slope runs parallel to the season ray — screen-parallel rays read
-      // exact in this projection, at whatever pitch the roof stands. World
-      // anchored, so it tracks the model; east of every wall and rake, so it
-      // never collides at any pitch.
+      // exact in this projection, at whatever pitch the roof stands.
       const span = (RF.n === 2 || RF.n === 3) ? G.D / 2 : G.D;
       const topY = -G.D / 2 + span;
-      const gO = proj(G.L / 2 + 2.0, -G.D / 2, H0);
+      const gC = RF.n === 3 ? [Math.max(0, G.L / 2 - G.D / 2), 0, ridge]
+        : RF.n === 2 ? [G.L / 2, 0, ridge]
+        : RF.n === 1 ? [G.L / 2, G.D / 2, ridge]
+        : [G.L / 2, -G.D / 2, H0];
+      const gO = proj(gC[0], gC[1], gC[2]);
       const gOx = gO[0], gOy = gO[1], gRl = 110;
-      stroke(ctx, CH.line, 1.2); seg(ctx, gOx - 8, gOy, gOx + 44, gOy);
-      ctx.fillStyle = '#16A34A';
-      ctx.beginPath(); ctx.arc(gOx, gOy, 2.5, 0, 6.284); ctx.fill();
+      stroke(ctx, CH.line, 1.2); seg(ctx, gOx, gOy, gOx + 44, gOy);
       [{ a:idealW, tag:'winter' }, { a:idealS, tag:'summer' }, { a:idealB, tag:'year' }].forEach(gd => {
         const p1 = [gOx + gRl * Math.cos(gd.a * RAD), gOy - gRl * Math.sin(gd.a * RAD)];
         stroke(ctx, '#16A34A', 1.4, [5, 4]); seg(ctx, gOx, gOy, p1[0], p1[1]);
