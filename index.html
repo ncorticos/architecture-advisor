@@ -607,7 +607,7 @@ footer{border-top:1px solid var(--line); margin-top:26px; background:var(--wash)
 /* ------------------------------------------------------------ 0. IDENTITY -- */
 const APP = {
   name:        'Architecture Advisor',
-  version:     '1.57.0',
+  version:     '1.58.0',
   author:      'Nuno Dinis Cortiços',
   institution: 'Lisbon School of Architecture, Universidade de Lisboa',
   builtWith:   'Claude Opus 5 (Anthropic)',
@@ -2626,18 +2626,23 @@ function buildRoof(host) {
       // height in both cases. Each ray is that season's true cross-section —
       // same south-north run the pitch is built on, projected like the model —
       // so whenever the roof stands on an ideal, the slope runs exactly
-      // parallel to its ray. Drag until they agree.
+      // parallel to its ray. Drag until they agree — standing on one,
+      // that ray turns solid with a bigger dot and the readout names it.
       const span = (RF.n === 2 || RF.n === 3) ? G.D / 2 : G.D;
       const topY = -G.D / 2 + span;
       const fanSgn = RF.n === 3 ? 1 : -1;
       const gO = proj(fanSgn * G.L / 2, -G.D / 2, H0);
       const gOx = gO[0], gOy = gO[1];
+      let hitTag = null;
       [{ a:idealW, tag:'winter' }, { a:idealS, tag:'summer' }, { a:idealB, tag:'year' }].forEach(gd => {
         const idealZ = H0 + span * Math.tan(gd.a * RAD);
         const p1 = proj(fanSgn * G.L / 2, topY, idealZ);
-        stroke(ctx, '#16A34A', 1.4, [5, 4]); seg(ctx, gOx, gOy, p1[0], p1[1]);
+        const hit = RF.n !== 0 && Math.abs(RF.th - gd.a) < 0.6;
+        if (hit) hitTag = gd.tag;
+        if (hit) stroke(ctx, '#16A34A', 2.6); else stroke(ctx, '#16A34A', 1.4, [5, 4]);
+        seg(ctx, gOx, gOy, p1[0], p1[1]);
         ctx.fillStyle = '#16A34A';
-        ctx.beginPath(); ctx.arc(p1[0], p1[1], 2.5, 0, 6.284); ctx.fill();
+        ctx.beginPath(); ctx.arc(p1[0], p1[1], hit ? 4 : 2.5, 0, 6.284); ctx.fill();
         label(ctx, t(gd.tag) + ' ' + fmt(gd.a, 0) + '°', p1[0] - fanSgn * 5, p1[1], '#15803d', F(9), fanSgn > 0 ? 'right' : 'left', 'middle');
       });
 
@@ -2652,7 +2657,7 @@ function buildRoof(host) {
       // live readout
       const coll = RF.n === 3 ? (G.L + 2 * Math.max(0, G.L / 2 - G.D / 2)) / 2 * span / Math.cos(th) : span / Math.cos(th) * G.L;
       label(ctx, 'θ ' + fmt(RF.n === 0 ? 0 : RF.th, 0) + '° · ' + t('South collector') + ' ' + fmt(coll, 0) + ' m² · '
-        + t('ridge') + ' ' + fmt(ridge, 1) + ' m',
+        + t('ridge') + ' ' + fmt(ridge, 1) + ' m' + (hitTag ? ' · = ' + t(hitTag) + ' ideal' : ''),
         8, 12, CH.ink2, FM(11), 'left', 'middle');
     },
     csv: () => {
