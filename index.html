@@ -607,7 +607,7 @@ footer{border-top:1px solid var(--line); margin-top:26px; background:var(--wash)
 /* ------------------------------------------------------------ 0. IDENTITY -- */
 const APP = {
   name:        'Architecture Advisor',
-  version:     '1.49.0',
+  version:     '1.50.0',
   author:      'Nuno Dinis Cortiços',
   institution: 'Lisbon School of Architecture, Universidade de Lisboa',
   builtWith:   'Claude Opus 5 (Anthropic)',
@@ -2540,7 +2540,7 @@ function buildRoof(host) {
 
   roofPanel = makePanel(host, {
     title: 'The roof in three dimensions',
-    note: 'Isometric view, matching the Site tab — the plan comes from there. Drag the black handle to re-pitch the roof; the green ticks show how far to drag it for each ideal pitch. The lines behind the ridge are the hidden north eave and east rake.',
+    note: 'Isometric view, matching the Site tab — the plan comes from there. Drag the black handle to re-pitch the roof; the green gauge in the top corner shows each ideal pitch — drag until the slope runs parallel to the season ray. The lines behind the ridge are the hidden north eave and east rake, closed by the east eave.',
     aspect: 1.7,
     render(ctx, W, H) {
       const FR = roofFrame(W, H);
@@ -2613,22 +2613,28 @@ function buildRoof(host) {
         stroke(ctx, CH.ink, 1.4); seg(ctx, hn0[0], hn0[1], hn1[0], hn1[1]);
         const hre = proj(rl, 0, ridge), hne = proj(G.L/2, G.D/2, H0);
         stroke(ctx, CH.ink, 1.4); seg(ctx, hre[0], hre[1], hne[0], hne[1]);
+        // the east eave closes the base: south-east corner to north-east
+        // corner, the one wall-plate line the hip was missing
+        const hee0 = proj(G.L/2, -G.D/2, H0), hee1 = proj(G.L/2, G.D/2, H0);
+        stroke(ctx, CH.ink, 1.4); seg(ctx, hee0[0], hee0[1], hee1[0], hee1[1]);
       }
       const ridgeMid = proj(0, (RF.n === 2 || RF.n === 3) ? 0 : G.D / 2, ridge);
       label(ctx, fmt(ridge, 1) + ' m', ridgeMid[0] + 7, ridgeMid[1] - 9, CH.ink2, FM(10), 'left', 'middle');
 
-      // the ideal-pitch fan: from the eave point out to the real roof's
-      // horizontal run — so each line runs alongside the actual slope, at
-      // the height that angle would reach. On a hip roof the fan moves to
-      // the middle of the bigger (south) side instead of the west corner.
+      // the ideal-pitch gauge sits in the top corner, off the model, so the
+      // ridge, its label and the drag handle stay legible while pitching by
+      // interaction. Same three season angles as before: drag until the slope
+      // runs parallel to the season's ray — screen-parallel rays read exact
+      // in this projection, at whatever pitch the roof stands.
       const span = (RF.n === 2 || RF.n === 3) ? G.D / 2 : G.D;
       const topY = -G.D / 2 + span;
-      const fanX = RF.n === 3 ? 0 : -G.L / 2;
-      const eave = proj(fanX, -G.D / 2, H0);
+      const gOx = W - 170, gOy = 190, gRl = 110;
+      stroke(ctx, CH.line, 1.2); seg(ctx, gOx - 8, gOy, gOx + 44, gOy);
+      ctx.fillStyle = '#16A34A';
+      ctx.beginPath(); ctx.arc(gOx, gOy, 2.5, 0, 6.284); ctx.fill();
       [{ a:idealW, tag:'winter' }, { a:idealS, tag:'summer' }, { a:idealB, tag:'year' }].forEach(gd => {
-        const idealZ = H0 + span * Math.tan(gd.a * RAD);
-        const p1 = proj(fanX, topY, idealZ);
-        stroke(ctx, '#16A34A', 1.4, [5, 4]); seg(ctx, eave[0], eave[1], p1[0], p1[1]);
+        const p1 = [gOx + gRl * Math.cos(gd.a * RAD), gOy - gRl * Math.sin(gd.a * RAD)];
+        stroke(ctx, '#16A34A', 1.4, [5, 4]); seg(ctx, gOx, gOy, p1[0], p1[1]);
         ctx.fillStyle = '#16A34A';
         ctx.beginPath(); ctx.arc(p1[0], p1[1], 2.5, 0, 6.284); ctx.fill();
         label(ctx, t(gd.tag) + ' ' + fmt(gd.a, 0) + '°', p1[0] + 5, p1[1], '#15803d', F(9), 'left', 'middle');
@@ -5828,8 +5834,8 @@ Object.assign(PT, {
   "Between the seasonal ideals — decide by use": "Entre os ideais sazonais — decidir pelo uso",
   "Far from any solar ideal": "Longe de qualquer ideal solar",
   "The roof in three dimensions": "O telhado em três dimensões",
-  "Isometric view, matching the Site tab — the plan comes from there. Drag the black handle to re-pitch the roof; the green ticks show how far to drag it for each ideal pitch.":
-    "Vista isométrica, como no separador Local — a planta vem de lá. Arraste o botão preto para mudar a inclinação do telhado; as marcas verdes mostram quanto arrastar até cada inclinação ideal.",
+  "Isometric view, matching the Site tab — the plan comes from there. Drag the black handle to re-pitch the roof; the green gauge in the top corner shows each ideal pitch — drag until the slope runs parallel to the season ray. The lines behind the ridge are the hidden north eave and east rake, closed by the east eave.":
+    "Vista isométrica, como no separador Local — a planta vem de lá. Arraste o botão preto para mudar a inclinação do telhado; o calibre verde no canto superior mostra cada inclinação ideal — arraste até a vertente ficar paralela ao raio da estação. As linhas atrás da cumeeira são o beirado norte e a aresta este escondidos, fechados pelo beirado este.",
   "winter": "inverno",
   "summer": "verão",
   "year": "ano",
