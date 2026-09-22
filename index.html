@@ -607,7 +607,7 @@ footer{border-top:1px solid var(--line); margin-top:26px; background:var(--wash)
 /* ------------------------------------------------------------ 0. IDENTITY -- */
 const APP = {
   name:        'Architecture Advisor',
-  version:     '1.54.0',
+  version:     '1.55.0',
   author:      'Nuno Dinis Cortiços',
   institution: 'Lisbon School of Architecture, Universidade de Lisboa',
   builtWith:   'Claude Opus 5 (Anthropic)',
@@ -2632,13 +2632,13 @@ function buildRoof(host) {
       const gC = [G.L / 2, -G.D / 2, H0];
       const gO = proj(gC[0], gC[1], gC[2]);
       const gOx = gO[0], gOy = gO[1], gRl = 110;
-      stroke(ctx, CH.line, 1.2); seg(ctx, gOx, gOy, gOx + 44, gOy);
+      stroke(ctx, CH.line, 1.2); seg(ctx, gOx - 44, gOy, gOx, gOy);
       [{ a:idealW, tag:'winter' }, { a:idealS, tag:'summer' }, { a:idealB, tag:'year' }].forEach(gd => {
-        const p1 = [gOx + gRl * Math.cos(gd.a * RAD), gOy - gRl * Math.sin(gd.a * RAD)];
+        const p1 = [gOx - gRl * Math.cos(gd.a * RAD), gOy - gRl * Math.sin(gd.a * RAD)];
         stroke(ctx, '#16A34A', 1.4, [5, 4]); seg(ctx, gOx, gOy, p1[0], p1[1]);
         ctx.fillStyle = '#16A34A';
         ctx.beginPath(); ctx.arc(p1[0], p1[1], 2.5, 0, 6.284); ctx.fill();
-        label(ctx, t(gd.tag) + ' ' + fmt(gd.a, 0) + '°', p1[0] + 5, p1[1], '#15803d', F(9), 'left', 'middle');
+        label(ctx, t(gd.tag) + ' ' + fmt(gd.a, 0) + '°', p1[0] - 5, p1[1], '#15803d', F(9), 'right', 'middle');
       });
 
       // the pitch handle: the one point on the model that drags — a white
