@@ -607,7 +607,7 @@ footer{border-top:1px solid var(--line); margin-top:26px; background:var(--wash)
 /* ------------------------------------------------------------ 0. IDENTITY -- */
 const APP = {
   name:        'Architecture Advisor',
-  version:     '1.55.0',
+  version:     '1.56.0',
   author:      'Nuno Dinis Cortiços',
   institution: 'Lisbon School of Architecture, Universidade de Lisboa',
   builtWith:   'Claude Opus 5 (Anthropic)',
@@ -2622,19 +2622,18 @@ function buildRoof(host) {
       label(ctx, fmt(ridge, 1) + ' m', ridgeMid[0] + 7, ridgeMid[1] - 9, CH.ink2, FM(10), 'left', 'middle');
 
       // the ideal-pitch gauge grows out of the south-east eave corner
-      // itself, at eave height on every roof type — so the three season rays
-      // stay connected to the model at every pitch while the ridge, its label
-      // and the drag handle stay legible. Drag until the slope runs parallel
-      // to the season ray — screen-parallel rays read exact in this
-      // projection, at whatever pitch the roof stands.
+      // itself, at eave height on every roof type. Each ray is that season's
+      // true cross-section — same south-north run the pitch is built on,
+      // projected like the model — so whenever the roof stands on an ideal,
+      // the slope runs exactly parallel to its ray. Drag until they agree.
       const span = (RF.n === 2 || RF.n === 3) ? G.D / 2 : G.D;
       const topY = -G.D / 2 + span;
       const gC = [G.L / 2, -G.D / 2, H0];
       const gO = proj(gC[0], gC[1], gC[2]);
-      const gOx = gO[0], gOy = gO[1], gRl = 110;
-      stroke(ctx, CH.line, 1.2); seg(ctx, gOx - 44, gOy, gOx, gOy);
+      const gOx = gO[0], gOy = gO[1];
       [{ a:idealW, tag:'winter' }, { a:idealS, tag:'summer' }, { a:idealB, tag:'year' }].forEach(gd => {
-        const p1 = [gOx - gRl * Math.cos(gd.a * RAD), gOy - gRl * Math.sin(gd.a * RAD)];
+        const idealZ = H0 + span * Math.tan(gd.a * RAD);
+        const p1 = proj(G.L / 2, topY, idealZ);
         stroke(ctx, '#16A34A', 1.4, [5, 4]); seg(ctx, gOx, gOy, p1[0], p1[1]);
         ctx.fillStyle = '#16A34A';
         ctx.beginPath(); ctx.arc(p1[0], p1[1], 2.5, 0, 6.284); ctx.fill();
