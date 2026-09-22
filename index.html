@@ -607,7 +607,7 @@ footer{border-top:1px solid var(--line); margin-top:26px; background:var(--wash)
 /* ------------------------------------------------------------ 0. IDENTITY -- */
 const APP = {
   name:        'Architecture Advisor',
-  version:     '1.52.0',
+  version:     '1.53.0',
   author:      'Nuno Dinis Cortiços',
   institution: 'Lisbon School of Architecture, Universidade de Lisboa',
   builtWith:   'Claude Opus 5 (Anthropic)',
@@ -2621,18 +2621,17 @@ function buildRoof(host) {
       const ridgeMid = proj(0, (RF.n === 2 || RF.n === 3) ? 0 : G.D / 2, ridge);
       label(ctx, fmt(ridge, 1) + ' m', ridgeMid[0] + 7, ridgeMid[1] - 9, CH.ink2, FM(10), 'left', 'middle');
 
-      // the ideal-pitch gauge grows out of the east corner vertex itself —
-      // ridge end on hip and gable, high-edge end on a shed — so the three
-      // season rays stay connected to the model at every pitch while the
-      // ridge, its label and the drag handle stay legible. Drag until the
-      // slope runs parallel to the season ray — screen-parallel rays read
-      // exact in this projection, at whatever pitch the roof stands.
+      // the ideal-pitch gauge grows out of the lower east corner itself —
+      // the north-east eave corner at eave height on hip and gable, the low
+      // south-east corner on a shed — so the three season rays stay connected
+      // to the model at every pitch while the ridge, its label and the drag
+      // handle stay legible. Drag until the slope runs parallel to the season
+      // ray — screen-parallel rays read exact in this projection, at whatever
+      // pitch the roof stands.
       const span = (RF.n === 2 || RF.n === 3) ? G.D / 2 : G.D;
       const topY = -G.D / 2 + span;
-      const gC = RF.n === 3 ? [Math.max(0, G.L / 2 - G.D / 2), 0, ridge]
-        : RF.n === 2 ? [G.L / 2, 0, ridge]
-        : RF.n === 1 ? [G.L / 2, G.D / 2, ridge]
-        : [G.L / 2, -G.D / 2, H0];
+      const gC = (RF.n === 1 || RF.n === 0) ? [G.L / 2, -G.D / 2, H0]
+        : [G.L / 2, G.D / 2, H0];
       const gO = proj(gC[0], gC[1], gC[2]);
       const gOx = gO[0], gOy = gO[1], gRl = 110;
       stroke(ctx, CH.line, 1.2); seg(ctx, gOx, gOy, gOx + 44, gOy);
