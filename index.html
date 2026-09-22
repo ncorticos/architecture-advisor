@@ -607,7 +607,7 @@ footer{border-top:1px solid var(--line); margin-top:26px; background:var(--wash)
 /* ------------------------------------------------------------ 0. IDENTITY -- */
 const APP = {
   name:        'Architecture Advisor',
-  version:     '1.59.0',
+  version:     '1.60.0',
   author:      'Nuno Dinis Cortiços',
   institution: 'Lisbon School of Architecture, Universidade de Lisboa',
   builtWith:   'Claude Opus 5 (Anthropic)',
@@ -2639,18 +2639,6 @@ function buildRoof(host) {
         const p1 = proj(fanSgn * G.L / 2, topY, idealZ);
         const hit = RF.n !== 0 && Math.abs(RF.th - gd.a) < 0.6;
         if (hit) hitTag = gd.tag;
-        if (hit && RF.n === 3) {
-          // standing on this ideal: paint the SE hip rafter itself, corner to
-          // ridge end, and tag it beside the edge — the match reads on the roof
-          const hr0 = proj(G.L / 2, -G.D / 2, H0), hr1 = proj(Math.max(0, G.L / 2 - G.D / 2), 0, ridge);
-          stroke(ctx, '#16A34A', 2.6); seg(ctx, hr0[0], hr0[1], hr1[0], hr1[1]);
-          const mx = (hr0[0] + hr1[0]) / 2, my = (hr0[1] + hr1[1]) / 2;
-          let nx = -(hr1[1] - hr0[1]), ny = hr1[0] - hr0[0];
-          const nl = Math.hypot(nx, ny) || 1; nx /= nl; ny /= nl;
-          if (nx < 0) { nx = -nx; ny = -ny; }
-          label(ctx, t(gd.tag) + ' ' + fmt(gd.a, 0) + '°', mx + nx * 16, my + ny * 16, '#15803d', F(9), 'left', 'middle');
-          return;
-        }
         if (hit) stroke(ctx, '#16A34A', 2.6); else stroke(ctx, '#16A34A', 1.4, [5, 4]);
         seg(ctx, gOx, gOy, p1[0], p1[1]);
         ctx.fillStyle = '#16A34A';
