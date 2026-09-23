@@ -455,13 +455,15 @@ footer{border-top:1px solid var(--line); margin-top:26px; background:var(--wash)
           measured data and it has no authority to invent them. Take them from the IPMA <i>normais climatológicas</i>
           for the nearest station, from another national service, or from a gridded product such as WorldClim, and
           name the source so the export carries it. Pick an IPMA station below and press
-          Fill boxes — the twelve pairs and the station coordinates are entered for you.</p>
+          Fill boxes — the twelve pairs and the station coordinates are entered for you. Where no station fits the site, press Blend nearest — inverse-distance over the embedded stations — or Fetch web normals — reanalysis for these coordinates.</p>
         <div id="normGrid"></div>
         <div class="fld" style="margin-top:12px;max-width:520px">
           <label for="inpSource" data-t="fldSource">Where the normals come from</label>
           <div style="display:flex;gap:8px">
             <input type="text" id="inpSource" list="srcList" placeholder="IPMA, Lisboa/Gago Coutinho, 1981–2010" autocomplete="off" style="flex:1">
             <button type="button" class="btn" id="btnSrcFill" data-t="srcFill">Fill boxes</button>
+            <button type="button" class="btn" id="btnSrcBlend" data-t="srcBlend">Blend nearest</button>
+            <button type="button" class="btn" id="btnSrcWeb" data-t="srcWeb">Fetch web normals</button>
           </div>
           <datalist id="srcList">
             <option value="IPMA, Lisboa/Gago Coutinho, 1981–2010"></option>
@@ -496,7 +498,7 @@ footer{border-top:1px solid var(--line); margin-top:26px; background:var(--wash)
             <option value="IPMA, Santa Cruz das Flores, 1981–2010"></option>
             <option value="WorldClim v2.1, 1970–2000"></option>
           </datalist>
-          <span class="sub" data-t="fldSourceSub">Written into every CSV and PNG this application exports. Pick an IPMA station and press Fill boxes — fichas at ipma.pt/oclima/normais.clima — or name your own source.</span>
+          <span class="sub" data-t="fldSourceSub">Written into every CSV and PNG this application exports. Pick an IPMA station and press Fill boxes — fichas at ipma.pt/oclima/normais.clima — or name your own source. Blends and web fetches name themselves.</span>
           <span class="fieldstatus" id="srcStatus"></span>
         </div>
       </div>
@@ -607,7 +609,7 @@ footer{border-top:1px solid var(--line); margin-top:26px; background:var(--wash)
 /* ------------------------------------------------------------ 0. IDENTITY -- */
 const APP = {
   name:        'Architecture Advisor',
-  version:     '1.60.0',
+  version:     '1.61.0',
   author:      'Nuno Dinis Cortiços',
   institution: 'Lisbon School of Architecture, Universidade de Lisboa',
   builtWith:   'Claude Opus 5 (Anthropic)',
@@ -5354,6 +5356,112 @@ function initSetup() {
   if (btnFill) btnFill.addEventListener('click', () => {
     if (fillFromSource(true)) toast('Station normals filled in — check the boxes');
   });
+
+  /* --- no station here: blend the embedded neighbours, or fetch the web ---
+     A site is not its station: most places the student will build have no
+     IPMA ficha. Two honest fallbacks, both labelled into the export. Blend
+     takes up to three embedded stations in the same region (mainland,
+     Madeira, Azores never mix) around the entered coordinates and weights
+     them by inverse square distance — the same 1981–2010 normals, no new
+     data invented. Fetch asks Open-Meteo for ERA5-style daily reanalysis,
+     1991–2020, at these exact coordinates and means it into monthly normals
+     (daily mean preferred, (max+min)/2 fallback) — provisional by definition.
+     Both fill only the twelve boxes; coordinates and altitude stay the
+     building's, and the status line says what happened. */
+  const havKm = (la1, lo1, la2, lo2) => {
+    const r = 6371, dLa = (la2 - la1) * RAD, dLo = (lo2 - lo1) * RAD;
+    const a = Math.sin(dLa / 2) * Math.sin(dLa / 2)
+      + Math.cos(la1 * RAD) * Math.cos(la2 * RAD) * Math.sin(dLo / 2) * Math.sin(dLo / 2);
+    return 2 * r * Math.asin(Math.min(1, Math.sqrt(a)));
+  };
+  const shortName = key => (key.split(', ')[1] || key);
+  function blendNearest(showMsg) {
+    const la = parseFloat(lat.value), lo = parseFloat(lon.value);
+    if (!isFinite(la) || !isFinite(lo)) { if (showMsg) toast('Enter the site coordinates first'); return false; }
+    const pool = Object.entries(IPMA_DATA)
+      .filter(([, v]) => lo > -10.5 ? v.lon > -10.5 : lo < -20 ? v.lon < -20 : (v.lon <= -10.5 && v.lon >= -20))
+      .map(([k, v]) => ({ name: shortName(k), d: havKm(la, lo, v.lat, v.lon), t: v.t, p: v.p }))
+      .sort((a, b) => a.d - b.d).slice(0, 3);
+    /* Nearby means nearby: beyond 300 km no blend is honest — every built
+       place in Portugal keeps an embedded station well inside that radius
+       (the remotest, Santa Maria, sits ~95 km from Ponta Delgada). */
+    if (!pool.length || pool[0].d > 300) {
+      if (showMsg && srcStatus) srcStatus.textContent = t('No embedded stations in this region — type the twelve pairs by hand');
+      return false;
+    }
+    const ws = pool.map(e => e.d < 1e-6 ? 1e12 : 1 / (e.d * e.d));
+    const wSum = ws.reduce((a, b) => a + b, 0);
+    for (let m = 0; m < 12; m++) {
+      inputs.t[m].value = (pool.reduce((a, e, i) => a + ws[i] * e.t[m], 0) / wSum).toFixed(1);
+      inputs.p[m].value = (pool.reduce((a, e, i) => a + ws[i] * e.p[m], 0) / wSum).toFixed(1);
+    }
+    const who = pool.map(e => e.name + ' ' + Math.round(e.d) + ' km').join(' · ');
+    srcInp.value = t('Blend of %%STATIONS%% — IDW, IPMA 1981–2010').replace('%%STATIONS%%', who);
+    if (srcStatus) srcStatus.textContent = t('No IPMA station at these coordinates — temperature and precipitation blended from %%STATIONS%% (inverse-distance over embedded IPMA 1981–2010 normals). Correct the altitude to the building.').replace('%%STATIONS%%', who);
+    refresh();
+    return true;
+  }
+  const btnBlend = $('#btnSrcBlend');
+  if (btnBlend) btnBlend.addEventListener('click', () => {
+    if (blendNearest(true)) toast('Blended normals filled in — check the boxes');
+  });
+  const btnWeb = $('#btnSrcWeb');
+  async function fetchWebNormals() {
+    const la = parseFloat(lat.value), lo = parseFloat(lon.value);
+    if (!isFinite(la) || !isFinite(lo)) { toast('Enter the site coordinates first'); return; }
+    btnWeb.disabled = true;
+    if (srcStatus) srcStatus.textContent = t('Sampling Open-Meteo 1991–2020…');
+    try {
+      const ctrl = {};
+      try { if (typeof AbortSignal !== 'undefined' && AbortSignal.timeout) ctrl.signal = AbortSignal.timeout(60000); } catch (e) {}
+      const base = 'https://archive-api.open-meteo.com/v1/archive?latitude=' + la.toFixed(3)
+        + '&longitude=' + lo.toFixed(3) + '&timezone=auto';
+      const getDaily = async vars => (await (await fetch(base + '&start_date=1991-01-01&end_date=2020-12-31&daily=' + vars, ctrl)).json()).daily;
+      let d = await getDaily('temperature_2m_mean,precipitation_sum');
+      let tm = d && d.temperature_2m_mean, pr = d && d.precipitation_sum, tt = d && d.time;
+      if (!Array.isArray(tm) || !Array.isArray(pr) || !Array.isArray(tt) || tt.length < 3000) {
+        d = await getDaily('temperature_2m_max,temperature_2m_min,precipitation_sum');
+        const mx = d && d.temperature_2m_max, mn = d && d.temperature_2m_min;
+        pr = d && d.precipitation_sum; tt = d && d.time;
+        if (!Array.isArray(mx) || !Array.isArray(mn) || !Array.isArray(pr) || !Array.isArray(tt) || tt.length < 3000) throw new Error('webvars');
+        tm = mx.map((v, i) => (typeof v === 'number' && typeof mn[i] === 'number') ? (v + mn[i]) / 2 : null);
+      }
+      const tS = Array.from({ length: 12 }, () => [0, 0]);
+      const pY = {};
+      for (let i = 0; i < tt.length; i++) {
+        const ds = String(tt[i]), m = +ds.slice(5, 7) - 1, y = +ds.slice(0, 4);
+        if (!(m >= 0 && m < 12) || !isFinite(y)) continue;
+        const tv = tm[i];
+        if (typeof tv === 'number' && isFinite(tv)) { tS[m][0] += tv; tS[m][1]++; }
+        const pv = pr[i];
+        if (typeof pv === 'number' && isFinite(pv)) {
+          const k = y * 12 + m;
+          if (!pY[k]) pY[k] = [0, 0];
+          pY[k][0] += pv; pY[k][1]++;
+        }
+      }
+      const T = [], P = [];
+      for (let m = 0; m < 12; m++) {
+        if (!tS[m][1]) throw new Error('webmonths');
+        T.push(tS[m][0] / tS[m][1]);
+        const yrs = Object.keys(pY).filter(k => (k % 12) === m && pY[k][1] >= 20).map(k => pY[k][0]);
+        if (!yrs.length) throw new Error('webmonths');
+        P.push(yrs.reduce((a, b) => a + b, 0) / yrs.length);
+      }
+      T.forEach((v, i) => { inputs.t[i].value = v.toFixed(1); });
+      P.forEach((v, i) => { inputs.p[i].value = v.toFixed(1); });
+      const at = la.toFixed(2) + ', ' + lo.toFixed(2);
+      srcInp.value = t('Open-Meteo 1991–2020 at %%COORDS%% (provisional, reanalysis)').replace('%%COORDS%%', at);
+      if (srcStatus) srcStatus.textContent = t('No IPMA station here — T/P are 1991–2020 reanalysis means for these exact coordinates (Open-Meteo), not IPMA observations. Treat as provisional; correct the altitude.').replace('%%COORDS%%', at);
+      refresh();
+      toast('Web normals filled in — check the boxes');
+    } catch (e) {
+      if (srcStatus) srcStatus.textContent = t('Web normals unavailable (network or service) — boxes untouched; blend or type by hand');
+    } finally {
+      btnWeb.disabled = false;
+    }
+  }
+  if (btnWeb) btnWeb.addEventListener('click', () => { fetchWebNormals(); });
   srcInp.addEventListener('change', () => fillFromSource(true));
 
   go.addEventListener('click', () => {
@@ -5532,10 +5640,12 @@ Object.assign(STATIC_PT, {
   opRenovation: 'Grande intervenção',
   fldOpSub: 'Um edifício novo ainda pode escolher a sua orientação e a sua forma; uma reabilitação tem de tomar ambas como as encontra.',
   normTitle: 'Normais mensais',
-  normBody: 'Köppen–Geiger é calculado, não consultado, pelo que precisa das doze temperaturas médias mensais e dos doze totais mensais de precipitação. Esta aplicação não traz nenhuns: as normais são dados medidos e ela não tem autoridade para os inventar. Tome-os das <i>normais climatológicas</i> do IPMA para a estação mais próxima, de outro serviço nacional, ou de um produto em grelha como o WorldClim, e identifique a fonte para que a exportação a leve consigo. Escolha abaixo uma estação do IPMA e carregue em Preencher caixas — os doze pares e as coordenadas da estação são introduzidos por si.',
+  normBody: 'Köppen–Geiger é calculado, não consultado, pelo que precisa das doze temperaturas médias mensais e dos doze totais mensais de precipitação. Esta aplicação não traz nenhuns: as normais são dados medidos e ela não tem autoridade para os inventar. Tome-os das <i>normais climatológicas</i> do IPMA para a estação mais próxima, de outro serviço nacional, ou de um produto em grelha como o WorldClim, e identifique a fonte para que a exportação a leve consigo. Escolha abaixo uma estação do IPMA e carregue em Preencher caixas — os doze pares e as coordenadas da estação são introduzidos por si. Onde nenhuma estação servir o local, carregue em Misturar próximas — distância inversa sobre as estações incorporadas — ou em Buscar na web — reanálise para estas coordenadas.',
   srcFill: 'Preencher caixas',
+  srcBlend: 'Misturar próximas',
+  srcWeb: 'Buscar na web',
   fldSource: 'De onde vêm as normais',
-  fldSourceSub: 'Escrita em cada CSV e cada PNG que esta aplicação exporta. Escolha uma estação do IPMA e carregue em Preencher caixas — fichas em ipma.pt/oclima/normais.clima — ou indique a sua própria fonte.',
+  fldSourceSub: 'Escrita em cada CSV e cada PNG que esta aplicação exporta. Escolha uma estação do IPMA e carregue em Preencher caixas — fichas em ipma.pt/oclima/normais.clima — ou indique a sua própria fonte. As misturas e as leituras web identificam-se sozinhas.',
   btnGo: 'Percorrer o projecto',
   ex1h: 'Fundada na literatura de projecto',
   ex1p: 'Olgyay, Lechner, DeKay e Brown, Hyde, Ching e Shapiro, Brophy e Lewis. Cada orientação nomeia o livro de onde vem, e onde os livros divergem a aplicação di-lo em vez de os reduzir a uma média.',
@@ -5570,6 +5680,13 @@ Object.assign(PT, {
   "entered the mean; a DEM is not the building": "introduzida a média; um MDT não é o edifício",
   "the other service did not respond": "o outro serviço não respondeu",
   "Fill boxes": "Preencher caixas",
+  "Blend of %%STATIONS%% \u2014 IDW, IPMA 1981\u20132010": "Mistura de %%STATIONS%% \u2014 IDW, IPMA 1981\u20132010",
+  "No IPMA station at these coordinates \u2014 temperature and precipitation blended from %%STATIONS%% (inverse-distance over embedded IPMA 1981\u20132010 normals). Correct the altitude to the building.": "Sem esta\u00e7\u00e3o do IPMA nestas coordenadas \u2014 temperatura e precipita\u00e7\u00e3o misturadas de %%STATIONS%% (dist\u00e2ncia inversa sobre as normais IPMA 1981\u20132010 incorporadas). Corrija a altitude para o edif\u00edcio.",
+  "No embedded stations in this region \u2014 type the twelve pairs by hand": "Sem esta\u00e7\u00f5es incorporadas nesta regi\u00e3o \u2014 introduza os doze pares \u00e0 m\u00e3o",
+  "Sampling Open-Meteo 1991\u20132020\u2026": "A ler Open-Meteo 1991\u20132020\u2026",
+  "Open-Meteo 1991\u20132020 at %%COORDS%% (provisional, reanalysis)": "Open-Meteo 1991\u20132020 em %%COORDS%% (provis\u00f3rio, rean\u00e1lise)",
+  "No IPMA station here \u2014 T/P are 1991\u20132020 reanalysis means for these exact coordinates (Open-Meteo), not IPMA observations. Treat as provisional; correct the altitude.": "Sem esta\u00e7\u00e3o do IPMA aqui \u2014 T/P s\u00e3o m\u00e9dias de rean\u00e1lise 1991\u20132020 para estas coordenadas exatas (Open-Meteo), n\u00e3o observa\u00e7\u00f5es do IPMA. Tratar como provis\u00f3rio; corrija a altitude.",
+  "Web normals unavailable (network or service) \u2014 boxes untouched; blend or type by hand": "Normais da web indispon\u00edveis (rede ou servi\u00e7o) \u2014 caixas intactas; misture ou introduza \u00e0 m\u00e3o",
   "Station normals filled in — check the boxes": "Normais da estação preenchidas — verifique as caixas",
   "station values filled — correct the altitude to the building":
     "valores da estação preenchidos — corrija a altitude para o edifício",
