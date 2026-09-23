@@ -609,7 +609,7 @@ footer{border-top:1px solid var(--line); margin-top:26px; background:var(--wash)
 /* ------------------------------------------------------------ 0. IDENTITY -- */
 const APP = {
   name:        'Architecture Advisor',
-  version:     '1.61.0',
+  version:     '1.62.0',
   author:      'Nuno Dinis Cortiços',
   institution: 'Lisbon School of Architecture, Universidade de Lisboa',
   builtWith:   'Claude Opus 5 (Anthropic)',
@@ -5298,6 +5298,8 @@ function initSetup() {
      so a first-hand look at how much they disagree is itself the lesson —
      a single source is never presented as ground truth. ------------------ */
   const btnAltLookup = $('#btnAltLookup'), altStatus = $('#altStatus');
+  let altDirty = false;
+  alt.addEventListener('input', () => { altDirty = true; });
   async function lookupAltitude() {
     const la = +lat.value, lo = +lon.value;
     if (!isFinite(la) || !isFinite(lo)) { toast('Enter latitude and longitude first'); return; }
@@ -5316,7 +5318,15 @@ function initSetup() {
       return;
     }
     const vals = [va, vb].filter(v => v !== null);
-    alt.value = Math.round(vals.reduce((s, v) => s + v, 0) / vals.length);
+    const mean = Math.round(vals.reduce((s, v) => s + v, 0) / vals.length);
+    const cur = alt.value.trim() === '' ? null : +alt.value;
+    if (altDirty && cur !== null && cur !== mean
+        && !confirm(t('Replace the entered {} m with the looked-up {} m?').replace('{}', cur).replace('{}', mean))) {
+      altStatus.textContent = t('Kept the entered altitude (lookup said {} m)').replace('{}', mean);
+      return;
+    }
+    alt.value = mean;
+    altDirty = false;
     if (va !== null && vb !== null) {
       altStatus.textContent = 'Open-Meteo ' + fmt(va, 0) + ' m · Open-Elevation ' + fmt(vb, 0) + ' m · '
         + t('difference') + ' ' + fmt(Math.abs(va - vb), 0) + ' m — ' + t('entered the mean; a DEM is not the building');
@@ -5680,6 +5690,8 @@ Object.assign(PT, {
   "entered the mean; a DEM is not the building": "introduzida a média; um MDT não é o edifício",
   "the other service did not respond": "o outro serviço não respondeu",
   "Fill boxes": "Preencher caixas",
+  "Replace the entered {} m with the looked-up {} m?": "Substituir a altitude introduzida ({} m) pela consultada ({} m)?",
+  "Kept the entered altitude (lookup said {} m)": "Altitude introduzida mantida (a consulta dizia {} m)",
   "Blend of %%STATIONS%% \u2014 IDW, IPMA 1981\u20132010": "Mistura de %%STATIONS%% \u2014 IDW, IPMA 1981\u20132010",
   "No IPMA station at these coordinates \u2014 temperature and precipitation blended from %%STATIONS%% (inverse-distance over embedded IPMA 1981\u20132010 normals). Correct the altitude to the building.": "Sem esta\u00e7\u00e3o do IPMA nestas coordenadas \u2014 temperatura e precipita\u00e7\u00e3o misturadas de %%STATIONS%% (dist\u00e2ncia inversa sobre as normais IPMA 1981\u20132010 incorporadas). Corrija a altitude para o edif\u00edcio.",
   "No embedded stations in this region \u2014 type the twelve pairs by hand": "Sem esta\u00e7\u00f5es incorporadas nesta regi\u00e3o \u2014 introduza os doze pares \u00e0 m\u00e3o",
