@@ -609,7 +609,7 @@ footer{border-top:1px solid var(--line); margin-top:26px; background:var(--wash)
 /* ------------------------------------------------------------ 0. IDENTITY -- */
 const APP = {
   name:        'Architecture Advisor',
-  version:     '1.62.0',
+  version:     '1.63.0',
   author:      'Nuno Dinis Cortiços',
   institution: 'Lisbon School of Architecture, Universidade de Lisboa',
   builtWith:   'Claude Opus 5 (Anthropic)',
@@ -3992,12 +3992,12 @@ function buildVentilation(host) {
       const lons = pts.map(p => (lon + p[1]).toFixed(4)).join(',');
       const meteo = fetchT('https://api.open-meteo.com/v1/elevation?latitude=' + lats + '&longitude=' + lons)
         .then(r => r.json()).then(d => d.elevation);
-      const locs = encodeURIComponent(pts.map(p => (lat + p[0]).toFixed(4) + ',' + (lon + p[1]).toFixed(4)).join('|'));
-      const elev = fetchT('https://api.open-elevation.com/api/v1/lookup?locations=' + locs)
-        .then(r => r.json()).then(d => d.results.map(o => o.elevation));
-      const [a, b] = await Promise.allSettled([meteo, elev]);
+      /* open-elevation is retired (host dead) and OpenTopoData sends no CORS
+         headers, so relief reads the open-meteo grid alone — the single-grid
+         path below already handles exactly that. */
+      const [a] = await Promise.allSettled([meteo]);
       const grids = [];
-      [a, b].forEach(r => {
+      [a].forEach(r => {
         if (r.status === 'fulfilled' && Array.isArray(r.value)) {
           const v = r.value.filter(v => typeof v === 'number' && isFinite(v));
           if (v.length >= 5) grids.push(v);
@@ -5292,24 +5292,52 @@ function initSetup() {
   lat.addEventListener('input', refresh);
   srcInp.addEventListener('input', refresh);
 
-  /* --- altitude lookup: the one network call this application ever makes,
-     and only when the student presses the button. Two independent public
-     elevation services (different DEM sources) are queried and both shown,
-     so a first-hand look at how much they disagree is itself the lesson —
-     a single source is never presented as ground truth. ------------------ */
+  /* --- altitude lookup: only when the student presses the button. Two
+     independent public DEMs are queried and both shown, so a first-hand look
+     at how much they disagree is itself the lesson — a single source is never
+     presented as ground truth. Open-Meteo's elevation API (Copernicus DEM)
+     answers JSON; Mapzen Terrarium tiles (SRTM) are decoded in-browser at
+     zoom 12 (~30 m over Portugal): elev = R·256 + G + B/256 − 32768.
+     OpenTopoData would be the nicer source (EU-DEM 25 m covers Portugal) but
+     its public API sends no CORS headers, so no browser can call it;
+     open-elevation is retired (host dead). ------------------------------- */
   const btnAltLookup = $('#btnAltLookup'), altStatus = $('#altStatus');
   let altDirty = false;
   alt.addEventListener('input', () => { altDirty = true; });
+  /* Terrarium tile decode at zoom 12 (~30 m over Portugal): slippy-map tile
+     from lon/lat, nearest pixel, Terrarium formula. Throws on void/range. */
+  const tileElev = async (la, lo, signal) => {
+    if (Math.abs(la) > 84) throw new Error('tile-lat');
+    const z = 12, n = 2 ** z;
+    const x = Math.floor((lo + 180) / 360 * n);
+    const lr = la * RAD;
+    const yn = (1 - Math.log(Math.tan(lr) + 1 / Math.cos(lr)) / Math.PI) / 2 * n;
+    const y = Math.floor(yn);
+    const fx = Math.min(255, Math.max(0, Math.round(((lo + 180) / 360 * n - x) * 256)));
+    const fy = Math.min(255, Math.max(0, Math.round((yn - y) * 256)));
+    const r = await fetch('https://s3.amazonaws.com/elevation-tiles-prod/terrarium/' + z + '/' + x + '/' + y + '.png',
+      signal ? { signal } : {});
+    const bmp = await createImageBitmap(await r.blob());
+    const c = document.createElement('canvas');
+    c.width = 256; c.height = 256;
+    const g = c.getContext('2d');
+    g.drawImage(bmp, 0, 0);
+    const d = g.getImageData(fx, fy, 1, 1).data;
+    const e = d[0] * 256 + d[1] + d[2] / 256 - 32768;
+    if (!isFinite(e) || e < -50 || e > 8800) throw new Error('tile-range');
+    return e;
+  };
   async function lookupAltitude() {
     const la = +lat.value, lo = +lon.value;
     if (!isFinite(la) || !isFinite(lo)) { toast('Enter latitude and longitude first'); return; }
     btnAltLookup.disabled = true;
     altStatus.textContent = t('Looking up elevation…');
-    const meteo = fetch('https://api.open-meteo.com/v1/elevation?latitude=' + la + '&longitude=' + lo)
+    const sig = {};
+    try { if (typeof AbortSignal !== 'undefined' && AbortSignal.timeout) sig.signal = AbortSignal.timeout(25000); } catch (e) {}
+    const meteo = fetch('https://api.open-meteo.com/v1/elevation?latitude=' + la + '&longitude=' + lo, sig)
       .then(r => r.json()).then(d => d.elevation[0]);
-    const elev = fetch('https://api.open-elevation.com/api/v1/lookup?locations=' + la + ',' + lo)
-      .then(r => r.json()).then(d => d.results[0].elevation);
-    const [a, b] = await Promise.allSettled([meteo, elev]);
+    const terra = tileElev(la, lo, sig.signal);
+    const [a, b] = await Promise.allSettled([meteo, terra]);
     btnAltLookup.disabled = false;
     const va = a.status === 'fulfilled' && isFinite(a.value) ? a.value : null;
     const vb = b.status === 'fulfilled' && isFinite(b.value) ? b.value : null;
@@ -5328,10 +5356,10 @@ function initSetup() {
     alt.value = mean;
     altDirty = false;
     if (va !== null && vb !== null) {
-      altStatus.textContent = 'Open-Meteo ' + fmt(va, 0) + ' m · Open-Elevation ' + fmt(vb, 0) + ' m · '
+      altStatus.textContent = 'Open-Meteo ' + fmt(va, 0) + ' m · Terrarium ' + fmt(vb, 0) + ' m · '
         + t('difference') + ' ' + fmt(Math.abs(va - vb), 0) + ' m — ' + t('entered the mean; a DEM is not the building');
     } else {
-      altStatus.textContent = (va !== null ? 'Open-Meteo' : 'Open-Elevation') + ' ' + fmt(vals[0], 0) + ' m · '
+      altStatus.textContent = (va !== null ? 'Open-Meteo' : 'Terrarium') + ' ' + fmt(vals[0], 0) + ' m · '
         + t('the other service did not respond');
     }
   }
