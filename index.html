@@ -609,7 +609,7 @@ footer{border-top:1px solid var(--line); margin-top:26px; background:var(--wash)
 /* ------------------------------------------------------------ 0. IDENTITY -- */
 const APP = {
   name:        'Architecture Advisor',
-  version:     '1.65.0',
+  version:     '1.66.0',
   author:      'Nuno Dinis Cortiços',
   institution: 'Lisbon School of Architecture, Universidade de Lisboa',
   builtWith:   'Claude Opus 5 (Anthropic)',
@@ -2636,6 +2636,28 @@ function buildRoof(host) {
   const lean = Hm > Cm ? 'this site leans heating — favour the winter figure'
              : Cm > Hm ? 'this site leans cooling — favour the summer figure'
              : 'heating and cooling balance here — hold the middle figure';
+  /* The site's own target pitch: the two seasonal ideals weighted by that
+     same month count — a heating-led site sits nearer the winter figure, a
+     cooling-led one nearer the summer figure, a balanced one on the
+     latitude itself. */
+  const wHeat = Hm + Cm > 0 ? Hm / (Hm + Cm) : 0.5;
+  const target = idealS + (idealW - idealS) * wHeat;
+  /** 0–100 fit of the pitch to that target: 100 on it, 0 at 30° off — the
+      whole gap between the two seasonal ideals. A teaching index, like the
+      Site tab's Olgyay fit. Null for a flat roof: it has no pitch to judge,
+      its collectors take their own frame. */
+  const roofFit = () => RF.n === 0 ? null : Math.round(clamp(100 - Math.abs(RF.th - target) * (100 / 30), 0, 100));
+  /* The season that matters here and its noon sun altitude on the equator
+     side: winter for a heating-led site, summer for a cooling-led one, the
+     equinox when they balance. */
+  const season = Hm > Cm ? { key:'Winter', dec:-23.44 } : Cm > Hm ? { key:'Summer', dec:23.44 } : { key:'Equinox', dec:0 };
+  const seasonAlt = Math.min(90, 90 - latN + season.dec);
+  /** Share of that season's noon beam the south slope meets squarely, in
+      percent — the cosine of the incidence angle, sin(altitude + pitch), the
+      physics behind the Galloway–Lechner rule. A flat roof reads as a
+      horizontal collector. */
+  const roofCatch = () => Math.round(100 * clamp(Math.sin((seasonAlt + (RF.n === 0 ? 0 : RF.th)) * RAD), 0, 1));
+  const seasonName = () => LANG === 'pt' ? { Winter:'Inverno', Summer:'Verão', Equinox:'equinócio' }[season.key] : season.key;
   host.appendChild(section('Pitched roof — catch the low sun',
     'South slope as a solar collector; the same geometry explains deep winter glass'));
   host.appendChild(hint('ori-roof',
@@ -2655,11 +2677,16 @@ function buildRoof(host) {
   ]));
   host.appendChild(controls([cN, cP]));
   host.appendChild(el('div', { class:'limitrow' }, [pillRoof]));
+  host.appendChild(hint('roof-score',
+    'The two corner boxes read the pitch the way Galloway and Lechner set the ideals. <b>Solar pitch fit</b> measures your pitch against this site’s own target, <b>%1°</b>: the winter figure (%2°) and the summer figure (%3°) weighted by the Climate balance of %4 heating months (mean below 18 °C) to %5 cooling months (above 22 °C). It gives 100 on the target and 0 at 30° off, the whole gap between the seasonal ideals. <b>%6 sun</b> is the share of that season’s noon beam the south slope meets squarely — the cosine of the incidence angle, so a flat roof reads what a horizontal collector would. It changes slowly near the ideal: 10° off costs under 2 %. The 80/50 and 95/85 colour bands are this application’s teaching cuts, not numbers from the sources. A flat roof has no pitch to judge: its collectors take their own frame.',
+    [fmt(target, 0), fmt(idealW, 0), fmt(idealS, 0), Hm, Cm, seasonName()]));
+  /* The pill and the corner box read the same score, so the page never
+     gives two verdicts on one pitch. */
   function refreshRoof() {
     if (RF.n === 0) { pillRoof.className = 'pill empty'; pillRoof.textContent = t('Flat — frame the collectors, insulate for summer'); return; }
-    const d = Math.abs(RF.th - idealB);
-    if (d <= 5) { pillRoof.className = 'pill ok'; pillRoof.textContent = t('Near the year-round solar ideal'); }
-    else if (d <= 12) { pillRoof.className = 'pill empty'; pillRoof.textContent = t('Between the seasonal ideals — decide by use'); }
+    const sc = roofFit();
+    if (sc >= 80) { pillRoof.className = 'pill ok'; pillRoof.textContent = t('Near this site’s solar pitch'); }
+    else if (sc >= 50) { pillRoof.className = 'pill empty'; pillRoof.textContent = t('Between the seasonal ideals — decide by use'); }
     else { pillRoof.className = 'pill bad'; pillRoof.textContent = t('Far from any solar ideal'); }
   }
   /* The same fixed south-west isometric camera as the Site tab — this view
@@ -2811,8 +2838,23 @@ function buildRoof(host) {
       // live readout
       const coll = RF.n === 3 ? (G.L + 2 * Math.max(0, G.L / 2 - G.D / 2)) / 2 * span / Math.cos(th) : span / Math.cos(th) * G.L;
       label(ctx, 'θ ' + fmt(RF.n === 0 ? 0 : RF.th, 0) + '° · ' + t('South collector') + ' ' + fmt(coll, 0) + ' m² · '
-        + t('ridge') + ' ' + fmt(ridge, 1) + ' m' + (hitTag ? ' · = ' + t(hitTag) + ' ideal' : ''),
+        + t('ridge') + ' ' + fmt(ridge, 1) + ' m' + (hitTag ? ' · = ' + t(hitTag) + ' ideal' : '')
+        + ' · ' + t('site target') + ' ' + fmt(target, 0) + '°',
         8, 12, CH.ink2, FM(11), 'left', 'middle');
+
+      // corner boxes — the same convention as Site, Windows & Shading and
+      // Ventilation: the pitch's fit to this site's target, and the sun its
+      // south slope catches in the season that matters here
+      const badge = (y, value, col, caption) => {
+        ctx.fillStyle = '#fff';
+        ctx.fillRect(W - 92, y, 84, 52);
+        stroke(ctx, col, 1.5); ctx.strokeRect(W - 92, y, 84, 52);
+        label(ctx, value === null ? '–' : String(value), W - 50, y + 25, col, FM(24), 'center', 'middle');
+        label(ctx, caption, W - 50, y + 44, CH.muted, F(9), 'center', 'middle');
+      };
+      const fitV = roofFit(), catchV = roofCatch();
+      badge(6, fitV, fitV === null ? CH.faint : fitV >= 80 ? '#16A34A' : fitV >= 50 ? '#D97706' : '#DC2626', t('Solar pitch fit /100'));
+      badge(64, catchV, catchV >= 95 ? '#16A34A' : catchV >= 85 ? '#D97706' : '#DC2626', t(season.key + ' sun %'));
     },
     csv: () => {
       const sp = (RF.n === 2 || RF.n === 3) ? G.D / 2 : G.D;
@@ -2823,6 +2865,10 @@ function buildRoof(host) {
       ['Winter solar ideal (°)', +idealW.toFixed(0)],
       ['Summer solar ideal (°)', +idealS.toFixed(0)],
       ['Year-round solar ideal (°)', idealB],
+      ['Heating / cooling months', Hm + ' / ' + Cm],
+      ['Site target pitch (°)', +target.toFixed(1)],
+      ['Solar pitch fit (0–100)', roofFit() === null ? 'flat — n/a' : roofFit()],
+      [season.key + ' noon sun on the south slope (%)', roofCatch()],
       ['South collector area (m²)', RF.n === 3 ? +(((G.L + 2 * Math.max(0, G.L / 2 - G.D / 2)) / 2 * sp / Math.cos(thE * RAD))).toFixed(1) : +((sp / Math.cos(thE * RAD)) * G.L).toFixed(1)],
       ['Ridge height (m)', +rg.toFixed(1)],
       ['Köppen–Geiger', STATE.clim.k.code]]);
@@ -6634,6 +6680,12 @@ Object.assign(PT, {
   "the latitude itself": "a própria latitude",
   "at your pitch — live below": "à sua inclinação — em directo abaixo",
   "Near the year-round solar ideal": "Perto do ideal solar anual",
+  "Near this site’s solar pitch": "Perto da inclinação solar deste local",
+  "Solar pitch fit /100": "Inclinação solar /100",
+  "Winter sun %": "Sol de Inverno %",
+  "Summer sun %": "Sol de Verão %",
+  "Equinox sun %": "Sol do equinócio %",
+  "site target": "alvo do local",
   "Between the seasonal ideals — decide by use": "Entre os ideais sazonais — decidir pelo uso",
   "Far from any solar ideal": "Longe de qualquer ideal solar",
   "The roof in three dimensions": "O telhado em três dimensões",
@@ -6770,6 +6822,8 @@ Object.assign(PT_HINT, {
     'A nota é um índice didáctico, não uma previsão energética: 60 % orientação — nota máxima sobre a normal verde, zero a 90° de desvio — mais 40 % forma — proximidade do alongamento 1:X, com desconto para plantas quadradas, diagonais e norte–sul. Duas plantas podem partilhar a nota e comportar-se de modo diferente; leia-a com as pastilhas.',
   'ori-height':
     'As duas caixas extrudem a planta — pisos acima do solo vezes uma altura de piso editável. O sol abaixo é comandado, não decorativo: escolha 21 de Dezembro, 20 de Março ou 21 de Junho, arraste a hora solar — ou carregue em reproduzir — e a sombra segue a trajectória, longa e para norte na manhã de Dezembro, curta e contida no meio-dia de Junho. A sombra do meio-dia de Dezembro continua a ser o caso condicionante para afastamentos. A altura não move a nota de ajuste, que só conhece orientação e forma da planta.',
+  'roof-score':
+    'As duas caixas do canto lêem a inclinação tal como Galloway e Lechner fixam os ideais. <b>Inclinação solar</b> mede a sua inclinação contra o alvo próprio deste local, <b>%1°</b>: o valor de Inverno (%2°) e o de Verão (%3°) ponderados pelo balanço do Clima, %4 meses de aquecimento (média abaixo de 18 °C) para %5 de arrefecimento (acima de 22 °C). Dá 100 sobre o alvo e 0 a 30° dele, a distância inteira entre os ideais sazonais. <b>Sol de %6</b> é a fracção do feixe do meio-dia dessa estação que a vertente sul recebe de frente — o cosseno do ângulo de incidência, pelo que um telhado plano lê o que leria um colector horizontal. Muda devagar junto ao ideal: 10° de desvio custam menos de 2 %. As faixas de cor 80/50 e 95/85 são cortes didácticos desta aplicação, não números das fontes. Um telhado plano não tem inclinação a julgar: os seus colectores pedem estrutura própria.',
   'ori-roof':
     'Uma superfície a sul recolhe o máximo quando o raio do meio-dia lhe chega quase perpendicular: <b>Inverno = latitude + 15°, Verão = latitude − 15°, anual = latitude</b> (Galloway; Lechner) — aqui <b>%1° / %2° / %3°</b>. %4. Os telhados tradicionais portugueses de telha ficam muito mais baixos, pelo que os colectores pedem em geral a sua própria estrutura — a tensão é a lição.',
   'ori-ff':
