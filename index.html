@@ -609,7 +609,7 @@ footer{border-top:1px solid var(--line); margin-top:26px; background:var(--wash)
 /* ------------------------------------------------------------ 0. IDENTITY -- */
 const APP = {
   name:        'Architecture Advisor',
-  version:     '1.64.0',
+  version:     '1.65.0',
   author:      'Nuno Dinis Cortiços',
   institution: 'Lisbon School of Architecture, Universidade de Lisboa',
   builtWith:   'Claude Opus 5 (Anthropic)',
@@ -1374,6 +1374,155 @@ const NUTS_LIST = (() => {
   for (const c in CONCELHOS) CONCELHOS[c].forEach(n => s.add(n));
   return Array.from(s).sort((a, b) => a.localeCompare(b, 'pt'));
 })();
+
+/**
+ * The regional forest programme that governs each region's forest land —
+ * the PROF, one per region, all of 11 February 2019 and amended by Portaria
+ * n.º 18/2022. The islands have their own instruments; the Azores list below
+ * names its regional source directly.
+ */
+const PROF_REF = {
+  EDM:  'PROF Entre Douro e Minho (Portaria n.º 58/2019)',
+  TMAD: 'PROF Trás-os-Montes e Alto Douro (Portaria n.º 57/2019)',
+  CL:   'PROF Centro Litoral (Portaria n.º 56/2019)',
+  CI:   'PROF Centro Interior (Portaria n.º 55/2019)',
+  LVT:  'PROF Lisboa e Vale do Tejo (Portaria n.º 52/2019)',
+  ALT:  'PROF Alentejo (Portaria n.º 54/2019)',
+  ALG:  'PROF Algarve (Portaria n.º 53/2019)',
+  RAM:  'PROF-RAM (Resolução n.º 600/2015 do Conselho do Governo Regional)'
+};
+
+/**
+ * What grows there: the native planting offered on Ventilation, per NUTS III.
+ * Each region cites only sources about that region — its PROF and the
+ * protected areas and Natura 2000 sites that lie inside it, named with the
+ * municipalities they cover — and every species listed was found in the
+ * flora those sources describe for that place. Nothing is borrowed from a
+ * neighbouring region to fill a gap, so some palettes are short. Keys point
+ * into the species table in buildVentilation.
+ */
+const PLANTING = {
+  'Minho-Lima': { prof:'EDM',
+    src:'Parque Nacional da Peneda-Gerês — Arcos de Valdevez, Melgaço, Ponte da Barca (ICNF)',
+    trees:['oak', 'negral', 'vidoeiro', 'castanheiro', 'azevinho', 'teixo', 'bravo'],
+    bushes:['tojo', 'urze', 'carqueja', 'esteva'] },
+  'Cávado': { prof:'EDM',
+    src:'Parque Natural do Litoral Norte — Esposende (ICNF) · Parque Nacional da Peneda-Gerês — Terras de Bouro (ICNF)',
+    trees:['bravo', 'pine', 'oak', 'cork', 'loureiro', 'amieiro', 'azevinho', 'teixo'],
+    bushes:['pilriteiro', 'tojo', 'urze', 'carqueja'] },
+  'Ave': { prof:'EDM',
+    src:'Parque Natural do Alvão and Sítio Alvão/Marão PTCON0003 — Mondim de Basto (ICNF)',
+    trees:['oak', 'negral', 'castanheiro', 'vidoeiro', 'cork', 'azevinho'],
+    bushes:['urze', 'giesta', 'tojo', 'carqueja'] },
+  'Grande Porto': { prof:'EDM',
+    src:'Parque das Serras do Porto, Paisagem Protegida Regional — Valongo, Gondomar, Paredes',
+    trees:['oak', 'cork', 'amieiro', 'freixo', 'medronheiro'],
+    bushes:['tojo', 'urze', 'giesta', 'murta', 'pilriteiro'] },
+  'Tâmega': { prof:'EDM',
+    src:'Sítio Alvão/Marão PTCON0003 — Amarante, Baião (ICNF) · Serra da Aboboreira',
+    trees:['bravo', 'oak', 'castanheiro', 'negral', 'vidoeiro', 'cork'],
+    bushes:['tojo', 'urze', 'giesta'] },
+  'Entre Douro e Vouga': { prof:'EDM',
+    src:'Sítio Serras da Freita e Arada PTCON0047 — Arouca, Vale de Cambra (ICNF)',
+    trees:['bravo', 'oak', 'negral', 'medronheiro', 'azevinho'],
+    bushes:['urze', 'giesta'] },
+  'Alto Trás-os-Montes': { prof:'TMAD',
+    src:'Parque Natural de Montesinho — Bragança, Vinhais (ICNF) · Parque Natural do Douro Internacional — Miranda do Douro, Mogadouro (ICNF)',
+    trees:['negral', 'azinheira', 'castanheiro', 'cork', 'zimbro', 'lodao', 'freixo'],
+    bushes:['giesta', 'urze', 'esteva', 'cornalheira'] },
+  'Douro': { prof:'TMAD',
+    src:'Parque Natural do Alvão — Vila Real (ICNF) · Parque Natural do Douro Internacional — Freixo de Espada à Cinta (ICNF)',
+    trees:['negral', 'oak', 'vidoeiro', 'cork', 'azinheira', 'zimbro', 'lodao'],
+    bushes:['urze', 'giesta', 'tojo', 'carqueja', 'cornalheira'] },
+  'Baixo Vouga': { prof:'CL',
+    src:'Reserva Natural das Dunas de São Jacinto — Aveiro (ICNF) · Sítio Dunas de Mira, Gândara e Gafanhas PTCON0055 — Ílhavo, Vagos (ICNF)',
+    trees:['bravo', 'poplar', 'amieiro', 'faia', 'medronheiro', 'loureiro'],
+    bushes:['camarinha', 'tojo', 'urze', 'esteva', 'pilriteiro'] },
+  'Baixo Mondego': { prof:'CL',
+    src:'Mata Nacional do Buçaco — Mealhada · Reserva Natural do Paul de Arzila — Coimbra, Condeixa-a-Nova, Montemor-o-Velho (ICNF) · Sítio Dunas de Mira PTCON0055 — Mira (ICNF)',
+    trees:['bucaco', 'oak', 'cerquinho', 'cork', 'loureiro', 'medronheiro', 'aderno', 'azereiro', 'bravo'],
+    bushes:['camarinha', 'tojo', 'urze', 'esteva'] },
+  'Pinhal Litoral': { prof:'CL',
+    src:'Mata Nacional de Leiria — Marinha Grande (ICNF) · Parque Natural das Serras de Aire e Candeeiros — Porto de Mós (ICNF)',
+    trees:['bravo', 'pine', 'poplar', 'cork', 'cerquinho', 'azinheira', 'olive'],
+    bushes:['kermes', 'alecrim', 'buxo'] },
+  'Pinhal Interior Norte': { prof:'CL',
+    src:'Sítio Serra da Lousã PTCON0060 — Lousã, Góis, Castanheira de Pera (ICNF) · Paisagem Protegida da Serra do Açor, Mata da Margaraça — Arganil (ICNF)',
+    trees:['azereiro', 'azevinho', 'oak', 'negral', 'castanheiro', 'medronheiro', 'loureiro'],
+    bushes:['urze', 'tojo'] },
+  'Dão-Lafões': { prof:'CL',
+    src:'Sítio Serra de Montemuro PTCON0025 — Castro Daire (ICNF) · Sítio Serras da Freita e Arada PTCON0047 — São Pedro do Sul (ICNF)',
+    trees:['bravo', 'oak', 'castanheiro', 'amieiro', 'freixo', 'medronheiro', 'azevinho'],
+    bushes:['tojo', 'urze', 'giesta'] },
+  'Serra da Estrela': { prof:'CI',
+    src:'Parque Natural da Serra da Estrela — Seia, Gouveia (ICNF) · Sítio Serra da Estrela PTCON0014 (ICNF)',
+    trees:['negral', 'vidoeiro', 'teixo', 'azevinho', 'silvestre'],
+    bushes:['zimbrorast', 'piorno', 'caldoneira'] },
+  'Beira Interior Norte': { prof:'CI',
+    src:'Reserva Natural da Serra da Malcata — Sabugal (ICNF) · Parque Natural da Serra da Estrela — Guarda, Manteigas (ICNF)',
+    trees:['negral', 'azinheira', 'medronheiro', 'cork', 'freixo', 'amieiro', 'vidoeiro'],
+    bushes:['giesta', 'esteva', 'urze'] },
+  'Beira Interior Sul': { prof:'CI',
+    src:'Parque Natural do Tejo Internacional — Castelo Branco, Idanha-a-Nova, Vila Velha de Ródão (ICNF)',
+    trees:['azinheira', 'cork', 'medronheiro', 'olive', 'freixo', 'amieiro'],
+    bushes:['esteva', 'kermes', 'retama', 'urze'] },
+  'Cova da Beira': { prof:'CI',
+    src:'Sítio Serra da Gardunha — Fundão (ICNF) · Parque Natural da Serra da Estrela — Covilhã (ICNF)',
+    trees:['castanheiro', 'oak', 'negral', 'medronheiro', 'vidoeiro', 'teixo'],
+    bushes:['urze', 'esteva', 'piorno'] },
+  'Pinhal Interior Sul': { prof:'CI',
+    src:'Serra do Muradal — Município de Oleiros · Património natural — Sertã',
+    trees:['bravo', 'azereiro', 'cork', 'cerquinho', 'medronheiro', 'azinheira'],
+    bushes:['esteva', 'urze', 'folhado', 'pilriteiro'] },
+  'Oeste': { prof:'LVT',
+    src:'Paisagem Protegida da Serra de Montejunto — Cadaval, Alenquer (ICNF) · Parque Natural das Serras de Aire e Candeeiros — Alcobaça (ICNF)',
+    trees:['cerquinho', 'cork', 'castanheiro', 'loureiro', 'medronheiro', 'azinheira', 'pine', 'bravo'],
+    bushes:['kermes', 'alecrim', 'buxo'] },
+  'Grande Lisboa': { prof:'LVT',
+    src:'Parque Natural de Sintra-Cascais (ICNF) · Tapada Nacional de Mafra · Reserva Natural do Estuário do Tejo — Vila Franca de Xira (ICNF)',
+    trees:['pine', 'bravo', 'cork', 'cerquinho', 'medronheiro', 'olive', 'negral', 'zimbro'],
+    bushes:['mastic', 'folhado', 'kermes', 'murta', 'urze', 'pilriteiro', 'sabina'] },
+  'Península de Setúbal': { prof:'LVT',
+    src:'Parque Natural da Arrábida — Setúbal, Palmela, Sesimbra (ICNF) · Reserva Natural do Estuário do Tejo — Alcochete (ICNF) · Zonas protegidas de Palmela',
+    trees:['pine', 'bravo', 'cork', 'cerquinho', 'medronheiro', 'olive', 'aderno', 'azinheira'],
+    bushes:['kermes', 'mastic', 'murta', 'folhado'] },
+  'Médio Tejo': { prof:'LVT',
+    src:'Parque Natural das Serras de Aire e Candeeiros — Alcanena, Ourém, Torres Novas (ICNF) · Reserva Natural do Paul do Boquilobo — Torres Novas (ICNF)',
+    trees:['cerquinho', 'azinheira', 'olive', 'freixo', 'poplar'],
+    bushes:['kermes', 'alecrim', 'buxo'] },
+  'Lezíria do Tejo': { prof:'LVT',
+    src:'Reserva Natural do Estuário do Tejo — Benavente (ICNF) · Reserva Natural do Paul do Boquilobo — Golegã (ICNF) · Parque Natural das Serras de Aire e Candeeiros — Santarém, Rio Maior (ICNF)',
+    trees:['cork', 'bravo', 'freixo', 'poplar', 'cerquinho', 'azinheira'],
+    bushes:['kermes', 'alecrim'] },
+  'Alto Alentejo': { prof:'ALT',
+    src:'Parque Natural da Serra de São Mamede — Portalegre, Marvão, Castelo de Vide, Arronches (ICNF)',
+    trees:['negral', 'castanheiro', 'cork', 'azinheira', 'freixo', 'amieiro', 'olive', 'medronheiro'],
+    bushes:['giesta', 'esteva', 'carqueja', 'urze', 'rosmaninho'] },
+  'Alentejo Central': { prof:'ALT',
+    src:'Sítio Monfurado PTCON0031 — Montemor-o-Novo, Évora (ICNF) · Sítio Cabrela PTCON0033 — Montemor-o-Novo (ICNF) · Viveiro Municipal de Espécies Autóctones — Montemor-o-Novo',
+    trees:['cork', 'azinheira', 'cerquinho', 'negral', 'freixo', 'medronheiro'],
+    bushes:['esteva', 'rosmaninho', 'alfazema', 'giesta', 'pilriteiro'] },
+  'Baixo Alentejo': { prof:'ALT',
+    src:'Parque Natural do Vale do Guadiana — Mértola, Serpa (ICNF) · Sítio Moura/Barrancos PTCON0053 (ICNF)',
+    trees:['azinheira', 'freixo', 'poplar', 'medronheiro'],
+    bushes:['esteva', 'rosmaninho', 'murta', 'loendro'] },
+  'Alentejo Litoral': { prof:'ALT',
+    src:'Parque Natural do Sudoeste Alentejano e Costa Vicentina — Sines, Odemira (ICNF) · Reserva Natural das Lagoas de Santo André e da Sancha — Sines, Santiago do Cacém (ICNF)',
+    trees:['cork', 'cerquinho', 'medronheiro'],
+    bushes:['urze', 'folhado', 'sabina', 'camarinha'] },
+  'Algarve': { prof:'ALG',
+    src:'Flora e Vegetação do Barrocal Algarvio (CCDR Algarve) · Sítio Monchique PTCON0037 (ICNF) · Serra do Caldeirão, PRGP (DGT) · Parque Natural do Sudoeste Alentejano e Costa Vicentina — Aljezur (ICNF)',
+    trees:['carob', 'azinheira', 'cork', 'olive', 'cerquinho', 'medronheiro', 'castanheiro', 'alepo', 'pine'],
+    bushes:['alecrim', 'kermes', 'murta', 'palmito', 'adelfeira', 'sabina'] },
+  'RA da Madeira': { prof:'RAM',
+    src:'Laurissilva da Madeira and Parque Natural da Madeira (IFCN) · Núcleo dos Dragoeiros das Neves (IFCN)',
+    trees:['til', 'vinhatico', 'louroM', 'barbusano', 'paubrancoM', 'faia', 'folhadoM', 'dragoeiro'],
+    bushes:['urzeM', 'uveira', 'piornoM', 'massaroco'] },
+  'RA dos Açores': { prof:null,
+    src:'Espécies endémicas — Governo dos Açores (azores.gov.pt)',
+    trees:['cedromato', 'louroA', 'faia', 'paubrancoA', 'azevinhoA', 'sanguinhoA'],
+    bushes:['urzeA', 'uvaserra', 'folhadoA'] }
+};
 
 /* ============================================ 5. THE SITE ENGINE ==
    A site here is a position, an altitude and a year of monthly normals.
@@ -3652,36 +3801,103 @@ function buildVentilation(host) {
     const i = arr.indexOf(selected.ref);
     return i < 0 ? null : { kind:selected.kind, index:i, obj:arr[i] };
   };
-  /* Native and naturalised species: trees for summer shade, low maquis and
-     garrigue bushes to shelter the wall base against the wind. Heights are
-     mature garden values a student can then tune per plant. */
+  /* Native species, drawn from the region's own flora (PLANTING, keyed by
+     the site's NUTS III): trees for summer shade, maquis, heath and garrigue
+     bushes to shelter the wall base against the wind. Heights are mature
+     values a student can then tune per plant. Each entry carries its habit
+     (form), foliage and bark colours, and the bloom or fruit it wears; `like`
+     borrows the drawing of a close relative and overrides what differs. */
   const SPECIES = {
-    pine:{ h:15, d:0.7, tr:8, spr:0.64, limbs:1, tw:1.3, kind:'tree', c:'#22c55e' },
-    cypress:{ h:12, d:0.7, tr:2, spr:0.15, limbs:1, tw:1, kind:'tree', c:'#22c55e' },
-    oak:{ h:11, d:0.6, tr:3, spr:0.45, limbs:3, tw:1.2, kind:'tree', c:'#3E8E41' },
-    olive:{ h:8, d:0.55, tr:2, spr:0.55, limbs:5, fork:0.15, tw:1.2, kind:'tree', c:'#8FA08A' },
-    eucalyptus:{ h:18, d:0.45, tr:5, spr:0.31, limbs:5, tw:1.8, kind:'tree', c:'#6E9A76' },
-    poplar:{ h:18, d:0.5, tr:9, spr:0.29, limbs:1, tw:1, kind:'tree', c:'#65A30D' },
-    cork:{ h:12, d:0.6, tr:5, spr:0.55, limbs:3, tw:1.3, kind:'tree', c:'#1C5630' },
-    carob:{ h:10, d:0.65, tr:3, spr:0.62, limbs:3, tw:1.2, kind:'tree', c:'#14522B' },
-    medronheiro:{ h:5, d:0.6, tr:1.5, spr:0.6, limbs:3, tw:1, kind:'tree', c:'#2E7D46', fl:'#C03028', flN:5, fl2:'#F2EFE4', fl2N:4 },
-    mastic:{ h:3, d:0.7, tr:0, spr:0.6, limbs:1, tw:1, kind:'bush', c:'#0F5C30', fl:'#A02828', flN:8, flR:1.8, flIn:1 },
-    kermes:{ h:1.2, d:0.7, tr:0, spr:0.67, limbs:1, tw:1, kind:'bush', c:'#1E6B38', wide:1.25, fl:'#C8A24A', flN:4 },
-    esteva:{ h:1.5, d:0.7, tr:0, spr:0.8, limbs:1, tw:1, kind:'bush', c:'#2A7A3D', fl:'#FAFAF5', flN:6, flR:2.6 },
-    giesta:{ h:2, d:0.6, tr:0, spr:0.6, limbs:1, tw:1, kind:'bush', c:'#16A34A' },
-    murta:{ h:3.5, d:0.7, tr:1.2, spr:0.7, limbs:5, fork:0.2, tw:1, kind:'tree', c:'#2E8B46', fl:'#2B2B45', flN:8, flR:2.4, fl2:'#F2EFE4', fl2N:3 },
-    alecrim:{ h:1.0, d:0.75, tr:0, spr:0.7, limbs:1, tw:1, kind:'bush', c:'#3E7A4C', tuft:1, fl:'#A9BEE8', flN:5 },
-    alfazema:{ h:0.6, d:0.75, tr:0, spr:0.83, limbs:1, tw:1, kind:'bush', c:'#7A8B6F', spikes:1 }
+    /* trees */
+    pine:{ pt:'pinheiro-manso', en:'stone pine', sci:'Pinus pinea', kind:'tree', form:'umbrella', h:15, d:0.7, tr:8, spr:0.64, tw:1.3, lean:0.05, c:'#3F6B3B', bark:'#7B4A2E' },
+    bravo:{ pt:'pinheiro-bravo', en:'maritime pine', sci:'Pinus pinaster', kind:'tree', form:'tiered', h:20, d:0.55, tr:10, spr:0.36, tw:1.2, lean:0.02, c:'#2F5A35', bark:'#6E3B24' },
+    silvestre:{ pt:'pinheiro-silvestre', en:'Scots pine', sci:'Pinus sylvestris', kind:'tree', form:'tiered', flat:1, h:18, d:0.55, tr:9, spr:0.42, tw:1.1, c:'#4B6F5C', bark:'#6B4A3A', barkTop:'#C9773F' },
+    alepo:{ pt:'pinheiro-de-alepo', en:'Aleppo pine', sci:'Pinus halepensis', kind:'tree', form:'tiered', airy:1, h:14, d:0.45, tr:6, spr:0.5, tw:1.1, lean:0.1, c:'#6E9658', bark:'#8A8177' },
+    bucaco:{ pt:'cedro-do-buçaco', en:'Bussaco cedar', sci:'Cupressus lusitanica', kind:'tree', form:'cone', p:1, h:20, d:0.7, tr:2, spr:0.26, tw:1.2, c:'#46705E', bark:'#6A4B3A' },
+    oak:{ pt:'carvalho-alvarinho', en:'pedunculate oak', sci:'Quercus robur', kind:'tree', form:'pyramid', h:11, d:0.6, tr:3, spr:0.45, tw:1.2, c:'#3E8E41', bark:'#5E5048' },
+    negral:{ pt:'carvalho-negral', en:'Pyrenean oak', sci:'Quercus pyrenaica', kind:'tree', form:'oval', h:14, d:0.55, tr:4, spr:0.42, tw:1.1, c:'#6D8A55', bark:'#5C544C', silver:'#C3CFB2' },
+    cerquinho:{ pt:'carvalho-cerquinho', en:'Portuguese oak', sci:'Quercus faginea', kind:'tree', form:'ball', h:12, d:0.6, tr:3, spr:0.5, tw:1.2, c:'#6A8A5C', bark:'#6B635A', silver:'#BCCAAE' },
+    azinheira:{ pt:'azinheira', en:'holm oak', sci:'Quercus rotundifolia', kind:'tree', form:'dome', h:10, d:0.75, tr:2.5, spr:0.72, tw:1.4, c:'#4A664A', bark:'#4E4944', silver:'#B4BFAC' },
+    cork:{ pt:'sobreiro', en:'cork oak', sci:'Quercus suber', kind:'tree', form:'dome', h:12, d:0.6, tr:5, spr:0.55, tw:1.4, c:'#2C5A36', bark:'#A4532C', barkTop:'#6E655B' },
+    castanheiro:{ pt:'castanheiro', en:'sweet chestnut', sci:'Castanea sativa', kind:'tree', form:'dome', h:18, d:0.65, tr:4, spr:0.55, tw:1.7, c:'#4E8A3A', bark:'#5A4A3C', fl:'#E6DB8A', flN:12, flR:1.8 },
+    vidoeiro:{ pt:'vidoeiro', en:'birch', sci:'Betula celtiberica', kind:'tree', form:'oval', airy:1, birch:1, h:14, d:0.35, tr:4, spr:0.3, tw:0.8, c:'#8BB257', bark:'#ECE8DF' },
+    amieiro:{ pt:'amieiro', en:'alder', sci:'Alnus glutinosa', kind:'tree', form:'oval', h:16, d:0.6, tr:3, spr:0.3, tw:1, c:'#2F5E3A', bark:'#5A534C' },
+    freixo:{ pt:'freixo', en:'narrow-leaved ash', sci:'Fraxinus angustifolia', kind:'tree', form:'oval', airy:1, h:16, d:0.45, tr:5, spr:0.42, tw:1, c:'#7FA650', bark:'#8C877E' },
+    poplar:{ pt:'choupo-negro', en:'black poplar', sci:'Populus nigra', kind:'tree', form:'column', h:18, d:0.5, tr:9, spr:0.29, tw:1, c:'#6E9E3A', bark:'#8F8A80' },
+    azevinho:{ pt:'azevinho', en:'holly', sci:'Ilex aquifolium', kind:'tree', form:'cone', p:0.85, glossy:1, h:8, d:0.8, tr:1, spr:0.36, tw:1, c:'#1F4A2B', bark:'#8E8A80', fl:'#C8202A', flN:12, flR:1.8 },
+    loureiro:{ pt:'loureiro', en:'bay laurel', sci:'Laurus nobilis', kind:'tree', form:'oval', glossy:1, limbs:3, fork:0.1, h:9, d:0.75, tr:1.5, spr:0.36, tw:0.9, c:'#355E36', bark:'#5C5A50' },
+    azereiro:{ pt:'azereiro', en:'Portugal laurel', sci:'Prunus lusitanica', kind:'tree', form:'ball', glossy:1, h:8, d:0.75, tr:1.5, spr:0.55, tw:1, c:'#1E4A2A', bark:'#4E4A44', fl:'#F4F1E4', flN:8, flR:2 },
+    medronheiro:{ pt:'medronheiro', en:'strawberry tree', sci:'Arbutus unedo', kind:'tree', form:'ball', limbs:3, h:5, d:0.6, tr:1.5, spr:0.6, tw:1, c:'#2E7D46', bark:'#8A3E28', fl:'#C03028', flN:6, fl2:'#F2EFE4', fl2N:5 },
+    murta:{ pt:'murta', en:'myrtle', sci:'Myrtus communis', kind:'tree', form:'ball', limbs:5, fork:0.2, h:3.5, d:0.7, tr:1.2, spr:0.7, tw:1, c:'#2E8B46', bark:'#6A5A48', fl:'#2B2B45', flN:9, flR:2.4, fl2:'#F2EFE4', fl2N:3 },
+    olive:{ pt:'zambujeiro', en:'wild olive', sci:'Olea europaea var. sylvestris', kind:'tree', form:'vase', limbs:5, fork:0.15, h:8, d:0.55, tr:2, spr:0.55, tw:1.2, lean:0.04, c:'#8FA08A', bark:'#8A847A', silver:'#DDE4D8' },
+    carob:{ pt:'alfarrobeira', en:'carob', sci:'Ceratonia siliqua', kind:'tree', form:'dome', glossy:1, h:10, d:0.65, tr:3, spr:0.62, tw:1.3, c:'#1F5530', bark:'#6A5E54', fl:'#5A3A22', flN:7, flR:1.6 },
+    lodao:{ pt:'lódão-bastardo', en:'nettle tree', sci:'Celtis australis', kind:'tree', form:'ball', h:15, d:0.55, tr:3.5, spr:0.5, tw:1.2, c:'#6E9B4E', bark:'#8E8C86' },
+    teixo:{ pt:'teixo', en:'yew', sci:'Taxus baccata', kind:'tree', form:'cone', p:0.75, h:10, d:0.8, tr:1.5, spr:0.42, tw:1.3, c:'#24452E', bark:'#8A4A36', fl:'#D0302A', flN:7, flR:1.6 },
+    zimbro:{ pt:'zimbro', en:'prickly juniper', sci:'Juniperus oxycedrus', kind:'tree', form:'cone', p:0.9, rough:1, h:5, d:0.6, tr:0.6, spr:0.4, tw:0.9, c:'#6B8062', bark:'#6A5A4C', fl:'#9A4A2A', flN:7, flR:1.5 },
+    aderno:{ pt:'aderno', en:'mock privet', sci:'Phillyrea latifolia', kind:'tree', form:'ball', h:7, d:0.75, tr:1.2, spr:0.55, tw:1, c:'#2E4E34', bark:'#5E5A52' },
+    faia:{ pt:'faia-da-terra', en:'firetree', sci:'Morella faya', kind:'tree', form:'ball', h:7, d:0.7, tr:1.2, spr:0.55, tw:1, c:'#3F5F3A', bark:'#6A625A', fl:'#3A2E2A', flN:7, flR:1.6 },
+    til:{ pt:'til', en:'til', sci:'Ocotea foetens', kind:'tree', form:'dome', glossy:1, h:20, d:0.8, tr:4, spr:0.5, tw:1.6, c:'#274F30', bark:'#4E4A44' },
+    vinhatico:{ pt:'vinhático', en:'vinhático', sci:'Persea indica', kind:'tree', form:'ball', h:18, d:0.7, tr:5, spr:0.45, tw:1.3, c:'#3F7A3A', bark:'#5E5048', fl:'#B0412E', flN:9, flR:2 },
+    louroM:{ like:'loureiro', en:'Madeira laurel', sci:'Laurus novocanariensis', h:12, tr:2 },
+    barbusano:{ pt:'barbusano', en:'barbusano', sci:'Apollonias barbujana', kind:'tree', form:'ball', glossy:1, h:14, d:0.8, tr:2.5, spr:0.5, tw:1.2, c:'#2B5634', bark:'#54504A' },
+    paubrancoM:{ pt:'pau-branco', en:'Madeira white-wood', sci:'Picconia excelsa', kind:'tree', form:'ball', glossy:1, h:12, d:0.75, tr:2.5, spr:0.45, tw:1.1, c:'#355F3A', bark:'#A9A398' },
+    folhadoM:{ pt:'folhado', en:'lily-of-the-valley tree', sci:'Clethra arborea', kind:'tree', form:'oval', h:8, d:0.65, tr:1.5, spr:0.4, tw:1, c:'#3E7040', bark:'#6A5E54', fl:'#F4F1E4', flN:12, flR:2 },
+    dragoeiro:{ pt:'dragoeiro', en:'dragon tree', sci:'Dracaena draco', kind:'tree', form:'dragon', h:10, d:0.75, tr:3.5, spr:0.75, tw:2, c:'#5E7F5A', bark:'#9A9488' },
+    cedromato:{ pt:'cedro-do-mato', en:'Azores juniper', sci:'Juniperus brevifolia', kind:'tree', form:'cone', p:0.8, rough:1, h:6, d:0.8, tr:0.8, spr:0.38, tw:1, c:'#3F6650', bark:'#6A4B3A' },
+    louroA:{ like:'loureiro', pt:'louro', en:'Azores laurel', sci:'Laurus azorica', h:10 },
+    paubrancoA:{ like:'paubrancoM', en:'Azores white-wood', sci:'Picconia azorica', h:8, tr:1.5 },
+    azevinhoA:{ like:'azevinho', en:'Azores holly', sci:'Ilex perado subsp. azorica', form:'ball', h:6, spr:0.45 },
+    sanguinhoA:{ pt:'sanguinho', en:'Azores buckthorn', sci:'Frangula azorica', kind:'tree', form:'oval', airy:1, h:6, d:0.5, tr:1.2, spr:0.45, tw:0.9, c:'#5E8A45', bark:'#6A5E54', fl:'#2A2230', flN:6, flR:1.6 },
+    /* bushes */
+    mastic:{ pt:'aroeira', en:'mastic', sci:'Pistacia lentiscus', kind:'bush', form:'globe', h:3, d:0.7, tr:0, spr:0.6, c:'#0F5C30', fl:'#A02828', flN:8, flR:1.8, flIn:1 },
+    kermes:{ pt:'carrasco', en:'kermes oak', sci:'Quercus coccifera', kind:'bush', form:'mound', wide:1.25, rough:1, h:1.2, d:0.7, tr:0, spr:0.67, c:'#1E6B38', fl:'#C8A24A', flN:5 },
+    esteva:{ pt:'esteva', en:'gum rockrose', sci:'Cistus ladanifer', kind:'bush', form:'mound', h:1.5, d:0.7, tr:0, spr:0.8, c:'#2A7A3D', fl:'#FAFAF5', flN:7, flR:2.6, blotch:'#6A1E2A' },
+    giesta:{ pt:'giesta', en:'broom', sci:'Cytisus spp.', kind:'bush', form:'fountain', h:2, d:0.6, tr:0, spr:0.6, c:'#3E7A2C', fl:'#F5C518' },
+    alecrim:{ pt:'alecrim', en:'rosemary', sci:'Salvia rosmarinus', kind:'bush', form:'mound', tuft:1, heath:1, h:1.0, d:0.75, tr:0, spr:0.7, c:'#3E7A4C', fl:'#A9BEE8', flN:8 },
+    alfazema:{ pt:'alfazema', en:'lavender', sci:'Lavandula spp.', kind:'bush', form:'mound', spikes:'lav', h:0.6, d:0.75, tr:0, spr:0.83, c:'#7A8B6F' },
+    rosmaninho:{ pt:'rosmaninho', en:'French lavender', sci:'Lavandula pedunculata', kind:'bush', form:'mound', spikes:'ear', h:0.6, d:0.75, tr:0, spr:0.8, c:'#6F8466' },
+    tojo:{ pt:'tojo', en:'gorse', sci:'Ulex spp.', kind:'bush', form:'mound', spiny:1, h:1.5, d:0.8, tr:0, spr:0.7, c:'#2E4F2A', fl:'#F2C21B', flN:16, flR:1.7 },
+    urze:{ pt:'urze', en:'heath', sci:'Erica arborea, E. australis', kind:'bush', form:'mound', heath:1, tuft:1, h:1.8, d:0.75, tr:0, spr:0.5, c:'#4E6B3E', fl:'#D48BB5', flN:18, flR:1.3, fl2:'#F2EEE8', fl2N:8 },
+    carqueja:{ pt:'carqueja', en:'carqueja', sci:'Pterospartum tridentatum', kind:'bush', form:'mound', mat:1, h:0.5, d:0.75, tr:0, spr:1, c:'#5E7F3A', fl:'#F2C21B', flN:14, flR:1.5 },
+    camarinha:{ pt:'camarinha', en:'Portuguese crowberry', sci:'Corema album', kind:'bush', form:'mound', heath:1, h:0.8, d:0.8, tr:0, spr:0.9, c:'#4F6E3E', fl:'#F4F2EA', flN:12, flR:2 },
+    sabina:{ pt:'sabina-das-praias', en:'Phoenician juniper', sci:'Juniperus turbinata', kind:'bush', form:'mound', rough:1, wide:1.1, h:2.5, d:0.85, tr:0, spr:0.6, c:'#3E5E42', fl:'#8A3A22', flN:7, flR:1.6 },
+    folhado:{ pt:'folhado', en:'laurustinus', sci:'Viburnum tinus', kind:'bush', form:'mound', glossy:1, stems:4, h:3, d:0.8, tr:0, spr:0.5, c:'#2A5234', fl:'#F6EEF0', flN:9, flR:2.8, fl2:'#E2B7C4', fl2N:5 },
+    palmito:{ pt:'palmeira-anã', en:'dwarf fan palm', sci:'Chamaerops humilis', kind:'bush', form:'fan', h:1.5, d:0.8, tr:0, spr:0.6, c:'#5B7F52' },
+    pilriteiro:{ pt:'pilriteiro', en:'hawthorn', sci:'Crataegus monogyna', kind:'bush', form:'mound', stems:4, h:4, d:0.6, tr:0, spr:0.5, c:'#4C7A3A', fl:'#B5222A', flN:12, flR:1.6, fl2:'#F4F1E6', fl2N:6 },
+    zimbrorast:{ pt:'zimbro-rasteiro', en:'dwarf juniper', sci:'Juniperus communis subsp. alpina', kind:'bush', form:'mound', mat:1, rough:1, h:0.5, d:0.85, tr:0, spr:1.3, c:'#4E6A55', fl:'#2E3A5A', flN:7, flR:1.4 },
+    piorno:{ pt:'piorno-serrano', en:'mountain broom', sci:'Cytisus oromediterraneus', kind:'bush', form:'fountain', h:1.5, d:0.7, tr:0, spr:0.6, c:'#4E7A36', fl:'#F5C518' },
+    caldoneira:{ pt:'caldoneira', en:'caldoneira', sci:'Echinospartum ibericum', kind:'bush', form:'mound', mat:1, spiny:1, h:0.5, d:0.85, tr:0, spr:1.1, c:'#6E8A4A', fl:'#F2C21B', flN:14, flR:1.6 },
+    adelfeira:{ pt:'adelfeira', en:'rhododendron', sci:'Rhododendron ponticum subsp. baeticum', kind:'bush', form:'mound', glossy:1, stems:4, h:3.5, d:0.8, tr:0, spr:0.55, c:'#2A5234', fl:'#B77AC2', flN:11, flR:3 },
+    retama:{ pt:'piorno-amarelo', en:'retama', sci:'Retama sphaerocarpa', kind:'bush', form:'fountain', h:2.5, d:0.5, tr:0, spr:0.6, c:'#8C9C78', fl:'#F2D43A' },
+    cornalheira:{ pt:'cornalheira', en:'terebinth', sci:'Pistacia terebinthus', kind:'bush', form:'mound', stems:4, h:4, d:0.6, tr:0, spr:0.55, c:'#4E7A3E', fl:'#B8454A', flN:11, flR:1.6 },
+    buxo:{ pt:'buxo', en:'box', sci:'Buxus sempervirens', kind:'bush', form:'mound', heath:1, h:2, d:0.9, tr:0, spr:0.5, c:'#2E5A32' },
+    loendro:{ pt:'loendro', en:'oleander', sci:'Nerium oleander', kind:'bush', form:'mound', stems:5, h:3, d:0.75, tr:0, spr:0.55, c:'#4E7550', fl:'#E27AA0', flN:12, flR:2.6 },
+    urzeM:{ like:'urze', en:'Madeira heath', sci:'Erica platycodon subsp. maderincola', h:3, fl:'#F2EEE8', fl2:null },
+    uveira:{ pt:'uveira-da-serra', en:'Madeira blueberry', sci:'Vaccinium padifolium', kind:'bush', form:'mound', stems:3, h:2, d:0.75, tr:0, spr:0.55, c:'#4E7A3E', fl:'#2E2A4A', flN:9, flR:1.8, fl2:'#B8454A', fl2N:5 },
+    piornoM:{ like:'piorno', pt:'piorno', en:'Madeira broom', sci:'Genista tenera', h:1.8 },
+    massaroco:{ pt:'massaroco', en:'pride of Madeira', sci:'Echium candicans', kind:'bush', form:'mound', spikes:'echium', h:1.5, d:0.7, tr:0, spr:0.7, c:'#8A9C84' },
+    urzeA:{ like:'urze', en:'Azores heath', sci:'Erica azorica', h:2.5, fl:'#EBD3DC', fl2:null },
+    uvaserra:{ like:'uveira', pt:'uva-da-serra', en:'Azores blueberry', sci:'Vaccinium cylindraceum' },
+    folhadoA:{ like:'folhado', en:'Azores laurustinus', sci:'Viburnum treleasei' }
   };
-  const specOf = sp => SPECIES[sp] || { h:6, d:0.6, tr:3.6, spr:0.5, limbs:1, tw:1, kind:'tree', c:'#a855f6' };
-  const limbsOf = v => specOf(v.type).limbs || 1;
-  const trunkWOf = v => (1.5 + Math.min(3, v.height / 10)) * (specOf(v.type).tw || 1);
+  const SPEC_FALLBACK = { pt:'?', en:'?', sci:'', kind:'tree', form:'ball', h:6, d:0.6, tr:3.6, spr:0.5, tw:1, c:'#a855f6' };
+  const SPEC_MERGED = {};
+  const specOf = sp => {
+    if (SPEC_MERGED[sp]) return SPEC_MERGED[sp];
+    const raw = SPECIES[sp];
+    if (!raw) return SPEC_FALLBACK;
+    return (SPEC_MERGED[sp] = raw.like ? Object.assign({}, specOf(raw.like), raw) : raw);
+  };
+  /** The name a student reads: Portuguese in Portuguese, the common English
+      name otherwise; the scientific name rides in every tooltip. */
+  const nameOf = sp => { const q = specOf(sp); return (LANG === 'pt' ? q.pt : q.en) || sp; };
   const spreadOf = v => { const s = specOf(v.type).spr; return s != null ? s : 0.5; };
-  /* Crown habit per species: cypress rises as a cone, poplar as a column,
-     bushes sit as mounds, everything else balls into a round crown. */
-  const CROWN_FORM = { cypress:'cone', poplar:'column', pine:'umbrella', giesta:'fountain', oak:'pyramid', olive:'vase', cork:'dome', carob:'dome', mastic:'globe' };
-  const crownFormOf = v => CROWN_FORM[v.type] || (specOf(v.type).kind === 'bush' ? 'mound' : 'ball');
-  const FORM_NAME = { ball:'round crown', column:'columnar crown', cone:'conical crown', mound:'mound', umbrella:'umbrella crown', fountain:'flowering fountain', dome:'broad dome', vase:'open vase', globe:'fruiting globe', pyramid:'tiered pyramid' };
+  const crownFormOf = v => specOf(v.type).form || (specOf(v.type).kind === 'bush' ? 'mound' : 'ball');
+  const FORM_NAME = { ball:'round crown', oval:'oval crown', column:'columnar crown', cone:'conical crown', mound:'mound', umbrella:'umbrella crown', tiered:'tiered pine crown', fountain:'flowering fountain', dome:'broad dome', vase:'open vase', globe:'fruiting globe', pyramid:'tiered pyramid', fan:'fan-palm clump', dragon:'dragon-tree umbrella' };
+  /* The site's own palette: its NUTS III flora, or Grande Lisboa's when the
+     region is unknown (a place typed by hand outside the table). */
+  const floraKey = PLANTING[S.nuts] ? S.nuts : 'Grande Lisboa';
+  const FLORA = PLANTING[floraKey];
   /** Scale a hex colour toward white (>1) or black (<1) for crown shading. */
   const shade = (hex, f) => {
     const h = hex.replace('#', '');
@@ -3709,7 +3925,7 @@ function buildVentilation(host) {
       const rx = Math.max(3, rxW * s * (sp.tuft ? 0.72 : 1) * (sp.wide || 1));
       return { form, trunkH:0, canopyM:D, cz:D * 0.55, rx, ry:rx * 0.62 * (sp.tuft ? 1.2 : 1) };
     }
-    if (form === 'fountain') {
+    if (form === 'fountain' || form === 'fan') {
       const rx = Math.max(3, D * 0.5 * s);
       return { form, trunkH:0, canopyM:D, cz:v.height * 0.55, rx, ry:Math.max(6, v.height * 0.42 * s) };
     }
@@ -3731,9 +3947,13 @@ function buildVentilation(host) {
       const rx = Math.max(2, rxW * 0.55 * s);
       return { form, trunkH, canopyM:D, cz:trunkH + D * 0.5, rx, ry:clamp(D * 0.45 * s, rx * 1.2, rx * 3) };
     }
-    if (form === 'dome') {
+    if (form === 'dome' || form === 'dragon') {
       const rx = Math.max(2.5, rxW * s);
       return { form, trunkH, canopyM:D, cz:trunkH + D * 0.5, rx, ry:rx * 0.55 };
+    }
+    if (form === 'tiered' || form === 'oval') {
+      const rx = Math.max(2.5, rxW * s);
+      return { form, trunkH, canopyM:D, cz:trunkH + D * 0.5, rx, ry:Math.max(rx * 0.6, D * 0.5 * s) };
     }
     if (form === 'vase') {
       const rx = Math.max(2.5, rxW * s);
@@ -3745,6 +3965,590 @@ function buildVentilation(host) {
     }
     const rx = Math.max(2.5, rxW * s);
     return { form, trunkH, canopyM:D, cz:trunkH + D * 0.45, rx, ry:clamp(D * 0.42 * s, rx * 0.5, rx * 0.95) };
+  };
+
+  /* ---- the planting renderer ----
+     A plant is drawn the way it grows: a tapered bole, limbs forking out of
+     it, and a crown of overlapping foliage clumps laid out by the species'
+     habit. Clumps behind the trunk go down first and darker, then the bole
+     and limbs, then the lit clumps in front — so branches read through the
+     gaps a low density leaves, and density thins the crown the same way it
+     throttles the wind. Each plant keeps its own seed: its crown holds its
+     shape between redraws and while it is dragged. ---- */
+  const rngOf = seed => {
+    let a = seed >>> 0;
+    return () => {
+      a = (a + 0x6D2B79F5) | 0;
+      let q = Math.imul(a ^ (a >>> 15), 1 | a);
+      q = (q + Math.imul(q ^ (q >>> 7), 61 | q)) ^ q;
+      return ((q ^ (q >>> 14)) >>> 0) / 4294967296;
+    };
+  };
+  const seedOf = v => {
+    if (v.seed == null) {
+      let h = 2166136261;
+      for (const ch of String(v.type)) h = Math.imul(h ^ ch.charCodeAt(0), 16777619);
+      v.seed = (h ^ Math.imul(Math.round(v.x * 10), 73856093) ^ Math.imul(Math.round(v.y * 10), 19349663)) >>> 0;
+    }
+    return v.seed;
+  };
+  /** Where each plant was last drawn, in canvas pixels: picking and the
+      selection ring follow the drawing, not a nominal ellipse. */
+  const drawnBox = new WeakMap();
+
+  /** A plant's skeleton in world metres, relative to its foot: the bole (to
+      trunkTop, leaning by lx/ly), limbs as quadratic a–c–b with a width at
+      each end, and the foliage clumps with their own light. */
+  const habitOf = (v, rnd) => {
+    const q = specOf(v.type), form = crownFormOf(v);
+    const onGround = form === 'mound' || form === 'globe' || form === 'fountain' || form === 'fan';
+    const H = Math.max(0.3, v.height);
+    const T = onGround ? 0 : Math.min(trunkOf(v), H - 0.3);
+    const D = Math.max(0.3, H - T);
+    const R = Math.max(0.25, canopyOf(v) * spreadOf(v));
+    const dens = clamp(v.density != null ? v.density : 0.6, 0.15, 1);
+    const wBase = (0.1 + 0.028 * H) * (q.tw || 1);
+    const la = rnd() * 6.283, lean = (q.lean || 0) * H;
+    const lx = Math.cos(la) * lean, ly = Math.sin(la) * lean;
+    const hb = { form, H, T, D, R, dens, wBase, lx, ly, trunkTop:T, limbs:[], clumps:[] };
+    const sz = (0.8 + 0.32 * dens) * (q.airy ? 0.82 : 1);
+    const nOf = base => Math.max(3, Math.round(base * (0.5 + 0.65 * dens) * (q.airy ? 0.7 : 1)));
+    const C = (x, y, z, r, rz, lum, ros) => hb.clumps.push({ x, y, z, r, rz:rz != null ? rz : r, lum:lum || 1, ros:!!ros });
+    const L = (a, b, w0, w1, lift, c) => hb.limbs.push({ a, b, w0, w1,
+      c:c || [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2, (a[2] + b[2]) / 2 + (lift || 0)] });
+    const onAxis = z => { const k = z / Math.max(0.01, hb.trunkTop); return [lx * k, ly * k, z]; };
+
+    if (form === 'umbrella') {
+      /* Stone pine: the bole forks into a candelabra of rising limbs that
+         open under a flat, lumpy parasol — never a disc on a stick. */
+      const thick = Math.min(D * 0.55, R * 0.6), zu = H - thick;
+      const top = [lx, ly, T];
+      const nl = 3 + Math.round(rnd() * 2);
+      for (let i = 0; i < nl; i++) {
+        const a = la + i * 6.283 / nl + (rnd() - 0.5) * 0.7;
+        const r1 = R * (0.35 + 0.2 * rnd()), r2 = R * (0.65 + 0.2 * rnd());
+        const mid = [lx + Math.cos(a) * r1, ly + Math.sin(a) * r1, zu + (H - zu) * 0.15];
+        L(top, mid, wBase * 0.55, wBase * 0.28, (zu - T) * 0.35);
+        const a2 = a + (rnd() - 0.5) * 0.8;
+        L(mid, [lx + Math.cos(a2) * r2, ly + Math.sin(a2) * r2, zu + (H - zu) * 0.3], wBase * 0.26, wBase * 0.1, (H - zu) * 0.1);
+      }
+      /* one continuous layer: flat on top with a slight crown, flat
+         underneath, the clumps packed at random depths within it */
+      hb.under = { z:zu + thick * 0.5, rx:R * 1.05, ry:R * 0.52 + thick * 0.3 };
+      const n = nOf(40);
+      for (let i = 0; i < n; i++) {
+        const a = rnd() * 6.283, u = Math.sqrt(rnd()), rho = R * (0.04 + 0.86 * u);
+        const r = R * (0.21 + 0.08 * rnd()) * sz, rz = r * 0.62;
+        const topZ = H - thick * 0.3 * u * u;
+        const z = clamp(topZ - rz * (1 + 1.6 * rnd()), zu + rz, H - rz);
+        C(lx + Math.cos(a) * rho, ly + Math.sin(a) * rho, z, r, rz, (1.08 - 0.18 * u) * (0.84 + 0.2 * (z - zu) / thick));
+      }
+    } else if (form === 'tiered') {
+      /* Maritime, Scots and Aleppo pines: the leader runs almost to the tip
+         and flat tufts stand out on short branches in loose whorls, widest
+         low in the crown and open between. Scots pine keeps a flatter top. */
+      hb.trunkTop = H - D * 0.08;
+      const nLev = clamp(Math.round(D / 1.3), 4, 9);
+      for (let k = 0; k < nLev; k++) {
+        const f = k / (nLev - 1);
+        const z = T + D * (0.12 + 0.72 * f) + (rnd() - 0.5) * D * 0.06;
+        const taper = q.flat ? 1 - 0.3 * f : 1 - 0.62 * f;
+        const per = f < 0.5 ? 3 : 2 + (rnd() < 0.4 ? 1 : 0);
+        const a0 = rnd() * 6.283;
+        for (let j = 0; j < per; j++) {
+          if (rnd() > 0.6 + 0.4 * dens) continue;
+          const a = a0 + j * 6.283 / per + (rnd() - 0.5) * 0.9, reach = R * taper * (0.4 + 0.5 * rnd());
+          const r = R * (0.3 - 0.07 * f) * sz * (0.85 + 0.3 * rnd()), rz = r * 0.58;
+          const from = onAxis(z - r * 0.5);
+          const tip = [from[0] + Math.cos(a) * reach, from[1] + Math.sin(a) * reach, z];
+          L(from, tip, wBase * (0.32 - 0.16 * f), wBase * 0.08, r * 0.25);
+          C(tip[0], tip[1], tip[2], r, rz, 0.9 + 0.22 * f);
+          /* the tuft is a cluster of needle brushes, not one pad */
+          const nSat = q.airy ? 1 : 2;
+          for (let m = 0; m < nSat; m++) {
+            const b = rnd() * 6.283, rs = r * (0.55 + 0.25 * rnd());
+            C(tip[0] + Math.cos(b) * r * 0.75, tip[1] + Math.sin(b) * r * 0.75, tip[2] + (rnd() - 0.4) * rz, rs, rs * 0.6, 0.88 + 0.25 * f);
+          }
+        }
+      }
+      const rt = R * (q.flat ? 0.45 : 0.3) * sz;
+      C(lx, ly, H - rt * 0.45, rt, rt * 0.55, 1.12);
+    } else if (form === 'cone') {
+      /* Cypresses, holly, yew, junipers: foliage close to the ground, whorls
+         narrowing to the apex by the species' profile p. */
+      const z0 = Math.max(0.15, T * 0.3);
+      hb.trunkTop = z0 + (H - z0) * 0.12;          // the leader hides inside the foliage
+      const p = q.p || 0.9;
+      hb.underCone = { z0, p };
+      const nLev = clamp(Math.round((H - z0) / Math.max(0.4, R * 0.5)), 4, 16);
+      for (let k = 0; k < nLev; k++) {
+        const f = (k + 0.5) / nLev, z = z0 + (H - z0) * f;
+        const rr = R * Math.pow(1 - f, p) + 0.1;
+        const r = Math.max(0.18, rr * 0.6, (H - z0) / nLev * 0.62) * sz;   // whorls overlap to the tip
+        const ax = onAxis(Math.min(z, hb.trunkTop));
+        C(ax[0], ax[1], z, r, r * 0.95, 0.82 + 0.3 * f);
+        const ring = rr > 0.8 ? 4 : rr > 0.4 ? 3 : 0;
+        const a0 = rnd() * 6.283;
+        for (let j = 0; j < ring; j++) {
+          if (rnd() > 0.55 + 0.5 * dens) continue;
+          const a = a0 + j * 6.283 / ring + (rnd() - 0.5) * 0.5;
+          const rj = r * (0.75 + 0.2 * rnd()) * (q.rough ? 0.85 + 0.3 * rnd() : 1);
+          C(ax[0] + Math.cos(a) * rr * 0.55, ax[1] + Math.sin(a) * rr * 0.55, z - r * 0.2, rj, rj * 0.85, 0.82 + 0.25 * f);
+        }
+      }
+    } else if (form === 'column') {
+      /* Black poplar: a narrow column of ascending branches, widest a
+         little above the middle. */
+      hb.trunkTop = T + D * 0.8;
+      const nLev = clamp(Math.round(D / Math.max(0.5, R * 0.8)), 4, 12);
+      for (let k = 0; k < nLev; k++) {
+        const f = (k + 0.5) / nLev, z = T + D * f;
+        const rr = R * (0.45 + 0.55 * Math.sin(Math.PI * Math.min(1, f * 1.1)));
+        const ax = onAxis(Math.min(z, hb.trunkTop));
+        for (let j = 0; j < 2; j++) {
+          const a = rnd() * 6.283, r = rr * 0.62 * sz;
+          C(ax[0] + Math.cos(a) * rr * 0.35, ax[1] + Math.sin(a) * rr * 0.35, z, r, r * 1.3, 0.85 + 0.3 * f);
+        }
+      }
+    } else if (form === 'pyramid') {
+      /* The young oak after its photo: one leader to the tip, three tiers
+         of clumps narrowing upward, widest at the lower third. */
+      hb.trunkTop = H * 0.96;
+      [[0.22, 1.0, 5], [0.55, 0.8, 4], [0.82, 0.55, 3]].forEach(([f, w, n]) => {
+        const z = T + D * f, a0 = rnd() * 6.283, ring = R * w * 0.62;
+        const ax = onAxis(z);
+        for (let j = 0; j < n; j++) {
+          if (rnd() > 0.6 + 0.5 * dens) continue;
+          const a = a0 + j * 6.283 / n + (rnd() - 0.5) * 0.4;
+          const tip = [ax[0] + Math.cos(a) * ring, ax[1] + Math.sin(a) * ring, z + (rnd() - 0.5) * D * 0.05];
+          L(onAxis(z - D * 0.06), tip, wBase * 0.3 * w, wBase * 0.08, D * 0.03);
+          const r = R * w * 0.42 * sz;
+          C(tip[0], tip[1], tip[2], r, r * 0.62, 0.88 + 0.2 * f);
+        }
+        const rc = R * w * 0.45 * sz;
+        C(ax[0], ax[1], z + D * 0.04, rc, rc * 0.6, 0.95 + 0.2 * f);
+      });
+      const rt = R * 0.28 * sz;
+      C(lx, ly, H - rt * 0.6, rt, rt * 0.75, 1.15);
+    } else if (form === 'vase') {
+      /* Olive: stems forked from near the ground climb out into an open cup
+         of silvery clumps, lighter in the middle. */
+      const fz = Math.max(0.2, T * (q.fork != null ? q.fork : 0.5));
+      hb.trunkTop = fz;
+      hb.boleW = 1.5;                             // the olive's squat, gnarled foot
+      const nl = q.limbs || 4;
+      for (let i = 0; i < nl; i++) {
+        const a = la + i * 6.283 / nl + (rnd() - 0.5) * 0.5;
+        const reach = R * (0.45 + 0.2 * rnd());
+        const from = [lx * 0.3 + Math.cos(a) * wBase * 0.5, ly * 0.3 + Math.sin(a) * wBase * 0.5, fz];
+        const tip = [lx + Math.cos(a) * reach, ly + Math.sin(a) * reach, T + D * (0.3 + 0.15 * rnd())];
+        /* bowed outward low, then climbing: the vase */
+        const bow = [lx + Math.cos(a) * reach * 0.55, ly + Math.sin(a) * reach * 0.55, fz + (tip[2] - fz) * 0.35];
+        L(from, tip, wBase * 0.95, wBase * 0.35, 0, bow);
+        const b2 = a + (rnd() - 0.5) * 0.8, out2 = reach + R * 0.3;
+        const tip2 = [lx + Math.cos(b2) * out2, ly + Math.sin(b2) * out2, tip[2] + D * 0.25];
+        L(tip, tip2, wBase * 0.22, wBase * 0.08, D * 0.05);
+        const k = 4 + (rnd() < dens ? 1 : 0);
+        for (let j = 0; j < k; j++) {
+          const r = R * (0.26 + 0.07 * rnd()) * sz;
+          const b = a + (rnd() - 0.5) * 1.1, out = reach * (0.8 + 0.6 * rnd());
+          C(lx + Math.cos(b) * out, ly + Math.sin(b) * out, clamp(tip[2] + D * (0.15 + 0.4 * rnd()), T, H - r * 0.6), r, r * 0.7, 0.92 + 0.18 * rnd());
+        }
+      }
+      hb.under = { z:T + D * 0.62, rx:R * 0.9, ry:R * 0.4 + D * 0.18 };
+      for (let j = 0; j < 3; j++) {                // a thinner top across the cup
+        const b = rnd() * 6.283, r = R * 0.22 * sz;
+        C(lx + Math.cos(b) * R * 0.25, ly + Math.sin(b) * R * 0.25, H - r * 0.7, r, r * 0.6, 1.05);
+      }
+    } else if (form === 'dragon') {
+      /* Dragon tree: a thick bole branching two by two into a candelabra,
+         every tip a rosette of sword leaves, together an umbrella. */
+      const grow = (from, a, len, dz, w, depth) => {
+        const tip = [from[0] + Math.cos(a) * len, from[1] + Math.sin(a) * len, from[2] + dz];
+        L(from, tip, w, w * 0.75, dz * 0.15);
+        if (!depth) { C(tip[0], tip[1], tip[2], R * 0.22, R * 0.16, 0.95, true); return; }
+        for (let j = 0; j < 2; j++) grow(tip, a + (j ? 1 : -1) * (0.45 + 0.35 * rnd()), len * 0.9, dz * 0.85, w * 0.7, depth - 1);
+      };
+      const n0 = 3 + (rnd() < 0.5 ? 1 : 0);
+      for (let i = 0; i < n0; i++) grow([lx, ly, T], la + i * 6.283 / n0, R * 0.32, D * 0.28, wBase * 0.55, 2);
+    } else if (form === 'globe') {
+      /* Nursery aroeira: a dense ball touching the soil all round. */
+      const zc = R * 0.85, n = nOf(22);
+      hb.under = { z:zc, rx:R * 0.95, ry:R * 0.9 };
+      for (let i = 0; i < n; i++) {
+        const a = rnd() * 6.283, b = Math.asin(-0.5 + 1.5 * rnd());
+        const r = R * (0.34 + 0.1 * rnd()) * sz;
+        C(Math.cos(a) * Math.cos(b) * R * 0.62, Math.sin(a) * Math.cos(b) * R * 0.62,
+          Math.max(r * 0.6, zc + Math.sin(b) * R * 0.55), r, r * 0.9, 0.8 + 0.3 * (Math.sin(b) + 1) / 2);
+      }
+    } else if (form === 'mound') {
+      /* Bushes sit ON their spot: a half-dome of clumps, upright for heath
+         and rosemary, a low mat for creeping junipers and cushions, wider
+         for kermes; tall shrubs show a few stems under the mass. */
+      const RX = R * (q.tuft ? 0.75 : 1) * (q.wide || 1), RZ = H;
+      const n = Math.min(36, nOf(14 + RX * 8));
+      const base = Math.min(RX, RZ) * (q.mat ? 0.55 : 0.42) * sz;
+      hb.under = q.mat ? { z:RZ * 0.4, rx:RX * 0.95, ry:RX * 0.42 + RZ * 0.3 } : { z:RZ * 0.45, rx:RX * 0.92, ry:RX * 0.4 + RZ * 0.42 };
+      for (let i = 0; i < n; i++) {
+        const a = rnd() * 6.283, rho = RX * 0.72 * Math.sqrt(rnd());
+        const r = base * (0.8 + 0.4 * rnd());
+        const rz = q.mat ? r * 0.45 : (q.tuft || q.heath) ? r * 1.35 : r * 0.85;
+        const k = rho / (RX * 0.95), top = RZ * Math.sqrt(Math.max(0, 1 - k * k));
+        const z = clamp(top - rz * 0.9, rz * 0.55, Math.max(rz * 0.55, RZ - rz * 0.9));
+        C(Math.cos(a) * rho, Math.sin(a) * rho, z, r, rz, 0.82 + 0.3 * z / RZ);
+      }
+      for (let i = 0; i < (q.stems || 0); i++) {
+        const a = rnd() * 6.283, rr = RX * 0.45 * rnd();
+        L([Math.cos(a) * 0.05, Math.sin(a) * 0.05, 0], [Math.cos(a) * rr, Math.sin(a) * rr, RZ * (0.45 + 0.2 * rnd())], wBase * 0.35, wBase * 0.12, 0);
+      }
+    } else if (form === 'dome' || form === 'ball' || form === 'oval') {
+      /* Broad domes (cork, holm oak, carob, chestnut, til) sit wide and low
+         on their limbs; round crowns and upright ovals fill the canopy
+         depth. The clumps lie on the crown's ellipsoid, fine enough to read
+         as foliage, the lower ones in shade. */
+      const dome = form === 'dome', oval = form === 'oval';
+      const RZ = dome ? Math.min(D, R * 1.25) / 2 : oval ? D / 2 : Math.min(D, R * 2.1) / 2;
+      const zc = H - RZ;
+      const low = q.fork != null;
+      const fz = Math.max(0.2, T * (low ? q.fork : 1));
+      hb.trunkTop = low ? fz : dome ? T : Math.min(zc, T + D * 0.2);
+      const nl = q.limbs || (dome ? 4 : 3);
+      const from0 = low ? [lx * 0.3, ly * 0.3, fz] : [lx, ly, T];
+      for (let i = 0; i < nl; i++) {
+        const a = la + i * 6.283 / nl + (rnd() - 0.5) * 0.6;
+        const reach = R * (dome ? 0.5 : 0.35) * (0.8 + 0.4 * rnd());
+        const tip = [lx + Math.cos(a) * reach, ly + Math.sin(a) * reach, zc + RZ * (dome ? -0.1 : 0.05)];
+        L(from0, tip, wBase * (low ? 0.4 : 0.55), wBase * 0.18, (tip[2] - from0[2]) * 0.25);
+        if (dome) {
+          const b = a + (rnd() - 0.5) * 0.7, out = R * (0.78 + 0.1 * rnd());
+          L(tip, [lx + Math.cos(b) * out, ly + Math.sin(b) * out, zc + RZ * 0.05], wBase * 0.18, wBase * 0.06, RZ * 0.1);
+        }
+      }
+      const n = nOf(dome ? 36 : oval ? 28 : 30);
+      const rB = dome ? R * 0.27 : oval ? R * 0.5 : Math.min(R, RZ) * 0.4;
+      for (let i = 0; i < n; i++) {
+        const a = rnd() * 6.283, b = Math.asin(clamp((dome ? -0.3 : -0.6) + (dome ? 1.3 : 1.6) * rnd(), -1, 1));
+        const r = rB * (0.8 + 0.4 * rnd()) * sz * (q.airy ? 0.85 : 1);
+        const rz = oval ? r * 1.2 : dome ? r * 0.8 : r * 0.92;
+        const reach = Math.max(0, R - r * 0.5);
+        const z = clamp(zc + Math.sin(b) * (RZ - rz * 0.5), dome ? zc - RZ * 0.4 : T + rz * 0.4, H - rz * 0.8);
+        C(lx + Math.cos(a) * Math.cos(b) * reach, ly + Math.sin(a) * Math.cos(b) * reach, z, r, rz, 0.8 + 0.32 * (Math.sin(b) + 1) / 2);
+      }
+      hb.under = { z:zc + RZ * 0.1, rx:R * (dome ? 1 : 0.85), ry:dome ? R * 0.45 + RZ * 0.55 : RZ * 0.85 };
+      for (let j = 0; j < 3; j++) {                // fill the heart of the crown
+        const a = rnd() * 6.283, r = rB * 1.1 * sz;
+        C(lx + Math.cos(a) * R * 0.3, ly + Math.sin(a) * R * 0.3, zc + RZ * 0.15, r, r * (oval ? 1.2 : 0.85), 0.88);
+      }
+    }
+    return hb;
+  };
+
+  /** Paint one plant: contact shadow, back clumps, bole and limbs, front
+      clumps, bloom and fruit, then its name and, when selected, the ring. */
+  const paintPlant = (ctx, v, proj, camS, s, isSel) => {
+    const q = specOf(v.type), rnd = rngOf(seedOf(v));
+    const hb = habitOf(v, rnd), form = hb.form;
+    const P = (x, y, z) => proj(v.x + x, v.y + y, z);
+    const depth = (x, y, z) => 0.61 * camS * (x + y) - 0.5 * z;
+    const col = q.c, bark = q.bark || '#6B4A32';
+    const alpha = 0.7 + 0.3 * hb.dens;
+    const box = { x0:Infinity, y0:Infinity, x1:-Infinity, y1:-Infinity };
+    const grow = (x, y, rx, ry) => {
+      box.x0 = Math.min(box.x0, x - rx); box.x1 = Math.max(box.x1, x + rx);
+      box.y0 = Math.min(box.y0, y - ry); box.y1 = Math.max(box.y1, y + ry);
+    };
+    const foot = P(0, 0, 0);
+    grow(foot[0], foot[1], 2, 2);
+
+    /* ground contact: a bush sits on its spot, a tree stands over it */
+    ctx.fillStyle = 'rgba(20,23,26,.16)';
+    ctx.beginPath();
+    if (hb.T > 0) ctx.ellipse(foot[0], foot[1], Math.max(3, hb.wBase * s * 1.8), Math.max(1.5, hb.wBase * s * 0.8), 0, 0, 6.283);
+    else ctx.ellipse(foot[0], foot[1], Math.max(3, hb.R * s * 1.05), Math.max(1.5, hb.R * s * 0.42), 0, 0, 6.283);
+    ctx.fill();
+
+    /** A tapered, side-lit limb or bole in screen space: light from the
+        upper left, as on every crown. */
+    const taper = (a, c, b, w0, w1, colr) => {
+      const nrm = (p, r) => { const dx = r[0] - p[0], dy = r[1] - p[1], l = Math.hypot(dx, dy) || 1; return [-dy / l, dx / l]; };
+      const na = nrm(a, c), nb = nrm(c, b), nc = nrm(a, b), wm = (w0 + w1) / 4;
+      ctx.beginPath();
+      ctx.moveTo(a[0] + na[0] * w0 / 2, a[1] + na[1] * w0 / 2);
+      ctx.quadraticCurveTo(c[0] + nc[0] * wm, c[1] + nc[1] * wm, b[0] + nb[0] * w1 / 2, b[1] + nb[1] * w1 / 2);
+      ctx.lineTo(b[0] - nb[0] * w1 / 2, b[1] - nb[1] * w1 / 2);
+      ctx.quadraticCurveTo(c[0] - nc[0] * wm, c[1] - nc[1] * wm, a[0] - na[0] * w0 / 2, a[1] - na[1] * w0 / 2);
+      ctx.closePath();
+      const lit = nc[0] < 0 ? 1 : -1;
+      const g = ctx.createLinearGradient(c[0] + lit * nc[0] * wm * 2, c[1] + lit * nc[1] * wm * 2, c[0] - lit * nc[0] * wm * 2, c[1] - lit * nc[1] * wm * 2);
+      g.addColorStop(0, shade(colr, 1.3)); g.addColorStop(0.45, colr); g.addColorStop(1, shade(colr, 0.62));
+      ctx.fillStyle = g; ctx.fill();
+      stroke(ctx, 'rgba(20,23,26,.4)', 0.6); ctx.stroke();
+    };
+
+    /** One foliage clump: a scalloped cloud, lit from the upper left, its
+        leaf texture set by the species — spines, heath needles, rough
+        juniper scale, glossy laurel light or silvery undersides. */
+    const blob = (c, lumK) => {
+      const { p, rx, ry } = c, lum = c.lum * lumK;
+      const n = clamp(Math.round((rx + ry) / 4.5), 6, 14);
+      const ph = rnd() * 6.283, jag = q.rough || q.spiny ? 0.26 : 0.15;
+      const pts = [];
+      for (let i = 0; i < n; i++) {
+        const t2 = ph + i * 6.283 / n, k = 1 - jag + jag * rnd();
+        pts.push([p[0] + Math.cos(t2) * rx * k, p[1] + Math.sin(t2) * ry * k]);
+      }
+      ctx.beginPath();
+      ctx.moveTo(pts[0][0], pts[0][1]);
+      for (let i = 0; i < n; i++) {
+        const A = pts[i], B = pts[(i + 1) % n];
+        const mx = (A[0] + B[0]) / 2, my = (A[1] + B[1]) / 2;
+        ctx.quadraticCurveTo(mx + (mx - p[0]) * 0.3, my + (my - p[1]) * 0.3, B[0], B[1]);
+      }
+      ctx.closePath();
+      const rr = Math.max(rx, ry);
+      const g = ctx.createRadialGradient(p[0] - rx * 0.38, p[1] - ry * 0.45, Math.max(0.5, rr * 0.08), p[0], p[1], rr * 1.15);
+      g.addColorStop(0, shade(col, 1.42 * lum)); g.addColorStop(0.5, shade(col, lum)); g.addColorStop(1, shade(col, 0.6 * lum));
+      const a0 = alpha * (q.airy ? 0.85 : 1) * (c.am || 1);
+      ctx.save();
+      ctx.globalAlpha = a0;
+      ctx.fillStyle = g; ctx.fill();
+      ctx.restore();
+      stroke(ctx, 'rgba(20,23,26,' + (0.1 + 0.12 * a0).toFixed(2) + ')', 0.6); ctx.stroke();
+      grow(p[0], p[1], rx, ry);
+      if (rx < 4) return;
+      const m = Math.min(8, Math.round(rx / 3.5));
+      ctx.save();
+      ctx.globalAlpha = a0 * 0.55;
+      if (q.spiny) {
+        stroke(ctx, shade(col, 0.45), 0.7);
+        for (let j = 0; j < m * 2; j++) {
+          const t2 = rnd() * 6.283, r2 = 0.2 + 0.7 * rnd(), x = p[0] + Math.cos(t2) * rx * r2, y = p[1] + Math.sin(t2) * ry * r2;
+          seg(ctx, x, y, x + Math.cos(t2) * 2.2, y + Math.sin(t2) * 2.2);
+        }
+      } else if (q.heath) {
+        stroke(ctx, shade(col, 0.5), 0.6);
+        for (let j = 0; j < m * 2; j++) {
+          const x = p[0] + (rnd() - 0.5) * rx * 1.4, y = p[1] + (rnd() - 0.3) * ry * 1.2;
+          seg(ctx, x, y, x + (rnd() - 0.5) * 1.5, y - 3);
+        }
+      } else {
+        /* leaf masses in shade on the lower right */
+        ctx.globalAlpha = a0 * 0.32;
+        ctx.fillStyle = shade(col, 0.42 * lum);
+        for (let j = 0; j < m; j++) {
+          const t2 = -0.2 + rnd() * 1.9, r2 = 0.3 + 0.55 * rnd();
+          ctx.beginPath(); ctx.ellipse(p[0] + Math.cos(t2) * rx * r2, p[1] + Math.sin(t2) * ry * r2, Math.max(1, rx * (q.rough ? 0.1 : 0.15)), Math.max(0.8, ry * (q.rough ? 0.08 : 0.11)), rnd() * 3.14, 0, 6.283); ctx.fill();
+        }
+      }
+      /* and catching the light on the upper left: glossy laurels shine,
+         oaks and olives show their silver undersides */
+      ctx.globalAlpha = a0 * (q.glossy ? 0.55 : 0.4);
+      ctx.fillStyle = q.glossy ? '#FFFFFF' : (q.silver || shade(col, 1.65));
+      for (let j = 0; j < Math.ceil(m * 0.6); j++) {
+        const t2 = 3.5 + rnd() * 1.5, r2 = 0.2 + 0.5 * rnd();
+        ctx.beginPath(); ctx.ellipse(p[0] + Math.cos(t2) * rx * r2, p[1] + Math.sin(t2) * ry * r2, Math.max(0.8, rx * 0.08), Math.max(0.6, ry * 0.055), rnd() * 3.14, 0, 6.283); ctx.fill();
+      }
+      ctx.restore();
+    };
+
+    /** Dragon-tree rosette: a burst of sword leaves around the tip. */
+    const rosette = (c, lumK) => {
+      const { p } = c, L0 = Math.max(4, hb.R * 0.26 * s);
+      for (let j = 0; j < 13; j++) {
+        const a = -Math.PI * (0.02 + 0.96 * j / 12) + (rnd() - 0.5) * 0.15;
+        const len = L0 * (0.75 + 0.35 * rnd()) * (j < 3 || j > 9 ? 0.8 : 1);
+        stroke(ctx, shade(col, (0.8 + 0.4 * rnd()) * lumK), Math.max(1.2, L0 * 0.12));
+        seg(ctx, p[0], p[1], p[0] + Math.cos(a) * len, p[1] + Math.sin(a) * len * 0.8);
+        grow(p[0] + Math.cos(a) * len, p[1] + Math.sin(a) * len * 0.8, 0, 0);
+      }
+      for (let j = 0; j < 4; j++) {
+        const a = Math.PI * (0.15 + 0.7 * j / 3);
+        stroke(ctx, shade(col, 0.7 * lumK), Math.max(1, L0 * 0.1));
+        seg(ctx, p[0], p[1], p[0] + Math.cos(a) * L0 * 0.6, p[1] + Math.sin(a) * L0 * 0.45);
+      }
+    };
+
+    const cl = hb.clumps.map(c => ({ p:P(c.x, c.y, c.z), rx:Math.max(1.2, c.r * s), ry:Math.max(1, c.rz * s),
+      d:depth(c.x, c.y, c.z), lum:c.lum, ros:c.ros }));
+    cl.sort((a, b) => b.d - a.d);
+    const axisD = depth(hb.lx * 0.5, hb.ly * 0.5, hb.T + hb.D * 0.45);
+    const back = cl.filter(c => c.d > axisD), front = cl.filter(c => c.d <= axisD);
+    const paint = (c, k) => (c.ros ? rosette : blob)(c, k);
+
+    if (form === 'fountain') {
+      /* Broom in flower: thin rushes fanning from the base over a faint
+         green body, pea-flowers studding their upper third. */
+      const mc = P(0, 0, hb.H * 0.55);
+      ctx.save();
+      ctx.globalAlpha = 0.14 + 0.2 * hb.dens; ctx.fillStyle = col;
+      ctx.beginPath(); ctx.ellipse(mc[0], mc[1], hb.D * 0.4 * s, hb.H * 0.42 * s, 0, 0, 6.283); ctx.fill();
+      ctx.restore();
+      /* the rushes radiate all round the foot, farthest drawn first */
+      const n = Math.round(12 + 10 * hb.dens), sw = hb.D * 0.42;
+      const rush = [];
+      for (let i = 0; i < n; i++) {
+        const a = i / n * 6.283 + (rnd() - 0.5) * 0.4, rr = sw * (0.5 + 0.5 * rnd());
+        const tipH = hb.H * (0.68 + 0.32 * rnd());
+        rush.push({ d:depth(Math.cos(a) * rr, Math.sin(a) * rr, tipH), tip:P(Math.cos(a) * rr, Math.sin(a) * rr, tipH),
+          ctrl:P(Math.cos(a) * rr * 0.18, Math.sin(a) * rr * 0.18, tipH * 0.55) });
+      }
+      rush.sort((a, b) => b.d - a.d);
+      const tips = [];
+      rush.forEach(({ tip, ctrl }) => {
+        stroke(ctx, shade(col, 0.75 + 0.45 * rnd()), 1.3);
+        ctx.beginPath(); ctx.moveTo(foot[0], foot[1]); ctx.quadraticCurveTo(ctrl[0], ctrl[1], tip[0], tip[1]); ctx.stroke();
+        tips.push([ctrl, tip]);
+        grow(tip[0], tip[1], 2, 2);
+      });
+      ctx.fillStyle = q.fl || '#F5C518';
+      tips.forEach(([ctrl, tip]) => [0.62, 0.74, 0.86, 1.0].forEach(tt => {
+        if (rnd() > 0.45 + 0.55 * hb.dens) return;
+        const fx = (1 - tt) * (1 - tt) * foot[0] + 2 * (1 - tt) * tt * ctrl[0] + tt * tt * tip[0];
+        const fy = (1 - tt) * (1 - tt) * foot[1] + 2 * (1 - tt) * tt * ctrl[1] + tt * tt * tip[1];
+        ctx.beginPath(); ctx.arc(fx + (rnd() - 0.5) * 2, fy, 2, 0, 6.283); ctx.fill();
+      }));
+    } else if (form === 'fan') {
+      /* Dwarf fan palm: a clump of short stems, each leaf a pleated fan
+         opening away from the centre. */
+      const n = 7 + Math.round(4 * hb.dens);
+      const leaves = [];
+      for (let i = 0; i < n; i++) {
+        const a = rnd() * 6.283, rr = hb.R * (0.25 + 0.4 * rnd()), z = hb.H * (0.5 + 0.45 * rnd());
+        leaves.push({ x:Math.cos(a) * rr, y:Math.sin(a) * rr, z, d:depth(Math.cos(a) * rr, Math.sin(a) * rr, z) });
+      }
+      leaves.sort((a, b) => b.d - a.d).forEach(lf => {
+        const p = P(lf.x, lf.y, lf.z), b0 = P(lf.x * 0.15, lf.y * 0.15, 0.05);
+        stroke(ctx, '#8A7A55', 1); seg(ctx, b0[0], b0[1], p[0], p[1]);
+        const th = Math.atan2(p[1] - b0[1], p[0] - b0[0]), Lr = hb.H * 0.34 * s * (0.85 + 0.25 * rnd());
+        ctx.beginPath(); ctx.moveTo(p[0], p[1]);
+        for (let k = 0; k <= 10; k++) { const t2 = th - 1.15 + 2.3 * k / 10; ctx.lineTo(p[0] + Math.cos(t2) * Lr * (k % 2 ? 1 : 0.9), p[1] + Math.sin(t2) * Lr * 0.8 * (k % 2 ? 1 : 0.9)); }
+        ctx.closePath();
+        const g = ctx.createRadialGradient(p[0], p[1], 1, p[0], p[1], Lr);
+        g.addColorStop(0, shade(col, 0.8)); g.addColorStop(1, shade(col, 1.25));
+        ctx.save(); ctx.globalAlpha = alpha; ctx.fillStyle = g; ctx.fill(); ctx.restore();
+        stroke(ctx, shade(col, 0.55), 0.6); ctx.stroke();
+        for (let k = 1; k < 10; k += 2) { const t2 = th - 1.15 + 2.3 * k / 10; seg(ctx, p[0], p[1], p[0] + Math.cos(t2) * Lr, p[1] + Math.sin(t2) * Lr * 0.8); }
+        grow(p[0], p[1], Lr, Lr * 0.8);
+      });
+    } else {
+      /* the crown's shaded body first, so the gaps between clumps read as
+         foliage in shadow rather than sky — thinner as density drops */
+      if (hb.under) {
+        const u = hb.under;
+        blob({ p:P(hb.lx, hb.ly, u.z), rx:u.rx * s, ry:u.ry * s, lum:0.6, am:0.35 + 0.6 * hb.dens }, 1);
+      }
+      if (hb.underCone) {
+        /* a cone's body: its profile, filled in shade behind the whorls */
+        const { z0, p } = hb.underCone, apex = P(0, 0, hb.H * 0.97);
+        ctx.beginPath();
+        for (let k = 0; k <= 12; k++) {
+          const f = k / 12, z = z0 + (hb.H - z0) * f, w = hb.R * Math.pow(1 - f, p) * s * 0.95;
+          const c = P(0, 0, z);
+          k ? ctx.lineTo(c[0] - w, c[1]) : ctx.moveTo(c[0] - w, c[1]);
+        }
+        ctx.lineTo(apex[0], apex[1]);
+        for (let k = 12; k >= 0; k--) {
+          const f = k / 12, z = z0 + (hb.H - z0) * f, w = hb.R * Math.pow(1 - f, p) * s * 0.95;
+          const c = P(0, 0, z);
+          ctx.lineTo(c[0] + w, c[1]);
+        }
+        ctx.closePath();
+        ctx.save(); ctx.globalAlpha = (0.35 + 0.6 * hb.dens) * alpha; ctx.fillStyle = shade(col, 0.55); ctx.fill(); ctx.restore();
+      }
+      back.forEach(c => paint(c, 0.8));
+      if (hb.trunkTop > 0.05 && form !== 'mound' && form !== 'globe') {
+        const top = P(hb.lx, hb.ly, hb.trunkTop);
+        const w0 = Math.max(1.6, hb.wBase * s * (hb.boleW || 1)), w1 = Math.max(1, w0 * (form === 'dragon' ? 0.8 : hb.boleW ? 0.6 : 0.42));
+        if (q.barkTop) {
+          /* Cork stripped to the first limbs, cinnamon under grey; Scots
+             pine turning orange up the bole. */
+          const k = q.barkTop && form === 'dome' ? 0.9 : 0.55;
+          const zs = hb.trunkTop * k, sp = P(hb.lx * k, hb.ly * k, zs), wk = w0 + (w1 - w0) * k;
+          taper(foot, [(foot[0] + sp[0]) / 2, (foot[1] + sp[1]) / 2], sp, w0, wk, bark);
+          taper(sp, [(sp[0] + top[0]) / 2, (sp[1] + top[1]) / 2], top, wk, w1, q.barkTop);
+        } else taper(foot, [(foot[0] + top[0]) / 2, (foot[1] + top[1]) / 2], top, w0, w1, bark);
+        if (q.birch) {
+          /* birch: dark lenticel bands on the white bark */
+          stroke(ctx, 'rgba(40,36,32,.7)', 1);
+          for (let j = 1; j < 9; j++) {
+            const f = j / 9, x = foot[0] + (top[0] - foot[0]) * f, y = foot[1] + (top[1] - foot[1]) * f, hw = (w0 + (w1 - w0) * f) / 2;
+            seg(ctx, x - hw * (0.2 + 0.6 * rnd()), y, x + hw * (0.1 + 0.5 * rnd()), y);
+          }
+        }
+        grow(top[0], top[1], w1, 1);
+      }
+      const limbCol = q.barkTop || bark;
+      hb.limbs.forEach(l => {
+        const a = P(l.a[0], l.a[1], l.a[2]), c = P(l.c[0], l.c[1], l.c[2]), b = P(l.b[0], l.b[1], l.b[2]);
+        taper(a, c, b, Math.max(0.8, l.w0 * s), Math.max(0.6, l.w1 * s), form === 'mound' ? bark : limbCol);
+      });
+      front.forEach(c => paint(c, 1));
+    }
+
+    /* Bloom and fruit, scattered deterministically over the lit clumps so
+       the crown never shimmers between redraws. */
+    const pool = front.length ? front : back;
+    const dots = (color, n, rad, inner, blotch) => {
+      if (!color || !n || !pool.length) return;
+      for (let i = 0; i < n; i++) {
+        const c = pool[Math.floor(rnd() * pool.length)];
+        const a = rnd() * 6.283, rr = inner ? 0.08 + 0.34 * rnd() : 0.15 + 0.65 * Math.sqrt(rnd());
+        const x = c.p[0] + Math.cos(a) * c.rx * rr, y = c.p[1] + Math.sin(a) * c.ry * rr;
+        const r = Math.max(1, Math.min(rad, c.rx * 0.45));
+        ctx.fillStyle = color;
+        ctx.beginPath(); ctx.arc(x, y, r, 0, 6.283); ctx.fill();
+        stroke(ctx, 'rgba(20,23,26,.25)', 0.5); ctx.stroke();
+        if (blotch) { ctx.fillStyle = blotch; ctx.beginPath(); ctx.arc(x, y, r * 0.4, 0, 6.283); ctx.fill(); }
+      }
+    };
+    if (form !== 'fountain' && form !== 'fan') {
+      dots(q.fl, q.flN || 5, q.flR || 2.2, q.flIn, q.blotch);
+      dots(q.fl2, q.fl2N || 4, 1.8);
+    }
+    if (q.spikes) {
+      /* Lavender's rockets, rosmaninho's purple ears, massaroco's blue
+         spires, all rising out of the grey foliage. */
+      const topY = P(0, 0, hb.H)[1];
+      const nS = q.spikes === 'echium' ? 5 : q.spikes === 'ear' ? 7 : 5;
+      for (let i = 0; i < nS; i++) {
+        const f = nS > 1 ? i / (nS - 1) - 0.5 : 0;
+        const bx = foot[0] + f * hb.R * s * 1.1, by = topY + hb.H * s * 0.25 + Math.abs(f) * hb.H * s * 0.3;
+        if (q.spikes === 'echium') {
+          const hgt = hb.H * s * (0.55 + 0.2 * rnd()), wdt = Math.max(2.5, hb.H * s * 0.09);
+          ctx.beginPath(); ctx.moveTo(bx - wdt, by); ctx.lineTo(bx + (rnd() - 0.5) * 2, by - hgt); ctx.lineTo(bx + wdt, by); ctx.closePath();
+          const g = ctx.createLinearGradient(bx - wdt, 0, bx + wdt, 0);
+          g.addColorStop(0, '#9FB0EA'); g.addColorStop(0.5, '#5A6FC0'); g.addColorStop(1, '#3E4E96');
+          ctx.fillStyle = g; ctx.fill(); stroke(ctx, 'rgba(30,36,80,.5)', 0.6); ctx.stroke();
+          grow(bx, by - hgt, wdt, 1);
+        } else {
+          const tx = bx + (i - (nS - 1) / 2) * 1.5, ty = topY - 3 - (i % 2) * 4 - (q.spikes === 'ear' ? 2 : 0);
+          stroke(ctx, q.spikes === 'ear' ? '#5E6E50' : '#7D3C9E', q.spikes === 'ear' ? 1 : 2); seg(ctx, bx, by, tx, ty);
+          if (q.spikes === 'ear') {
+            ctx.fillStyle = '#4B2A6E'; ctx.beginPath(); ctx.ellipse(tx, ty, 2, 3.2, 0, 0, 6.283); ctx.fill();
+            ctx.fillStyle = '#B58AD8';
+            ctx.beginPath(); ctx.ellipse(tx - 1.6, ty - 4, 1.3, 2.4, -0.4, 0, 6.283); ctx.fill();
+            ctx.beginPath(); ctx.ellipse(tx + 1.6, ty - 4, 1.3, 2.4, 0.4, 0, 6.283); ctx.fill();
+          } else {
+            ctx.fillStyle = '#8E44AD'; ctx.beginPath(); ctx.arc(tx, ty, 2.6, 0, 6.283); ctx.fill();
+          }
+          grow(tx, ty - 6, 2, 2);
+        }
+      }
+    }
+
+    /* name and selection ring, both hugging the drawing */
+    const cx = (box.x0 + box.x1) / 2, cy = (box.y0 + box.y1) / 2;
+    const rx = (box.x1 - box.x0) / 2, ry = (box.y1 - box.y0) / 2;
+    drawnBox.set(v, { cx, cy, rx, ry });
+    ctx.save();
+    ctx.font = '8px ui-sans-serif'; ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
+    ctx.fillStyle = '#14171a';
+    ctx.fillText(nameOf(v.type), cx + rx * 0.35, box.y0 - 3);
+    ctx.restore();
+    if (isSel) {
+      stroke(ctx, '#D97706', 1.6, [5, 4]);
+      ctx.beginPath(); ctx.ellipse(cx, cy, rx + 6, ry + 6, 0, 0, 6.283); ctx.stroke();
+    }
   };
 
   /* ---- site climate + altitude physics (live, read at draw time) ----
@@ -4176,27 +4980,38 @@ function buildVentilation(host) {
   /* ---- vegetation palette: click to arm, then click the ground ---- */
   host.appendChild(section('Trees and bushes against the wind and sun',
     'Arm a species, then click open ground around the building — not on it. Click a placed plant to tune its height and density, drag to move it, double-click to remove it. Tall trees shade summer glass; low native bushes shelter the wall base against the wind.'));
+  /* The palette is the site region's own flora, and says where it was read:
+     the region's PROF and the protected areas inside it. Choose another
+     region on the setup page and the palette changes with it. */
+  const floraSrc = [FLORA.prof ? PROF_REF[FLORA.prof] : null, FLORA.src].filter(Boolean).join(' · ');
+  host.appendChild(el('p', { class:'hint', html:'<b>' + t('Native planting for') + ' ' + floraKey + '</b>'
+    + (floraKey !== S.nuts ? ' (' + t('region not found — showing Grande Lisboa') + ')' : '')
+    + ' — ' + t('sources for this region only') + ': ' + floraSrc }));
   let plantArmed = null;
   const vegPalette = host.appendChild(el('div', { class:'controls', style:'flex-wrap:wrap;gap:4px' }));
   const vegBtns = [];
   const addSpeciesBtn = sp => {
-    const b = el('button', { class:'btn small', text:sp, title:sp + ' — ' + SPECIES[sp].kind + ', ' + SPECIES[sp].h + ' m', 'data-species':sp });
+    const q = specOf(sp);
+    const b = el('button', { class:'btn small', text:nameOf(sp), 'data-species':sp,
+      title:q.pt + ' — ' + q.sci + ' · ' + t(q.kind === 'bush' ? 'bush' : 'tree') + ', ' + fmt(q.h, 1) + ' m' });
     b.onclick = () => {
       plantArmed = (plantArmed === sp) ? null : sp;
       wallArmed = false;
       vegBtns.forEach(x => x.classList.toggle('solid', x.dataset.species === plantArmed));
       wallBtn.classList.toggle('solid', false);
-      toast(plantArmed ? 'Click open ground to plant ' + sp : 'Placement cancelled');
+      toast(plantArmed ? t('Click open ground to plant') + ' ' + nameOf(sp) : 'Placement cancelled');
     };
     vegPalette.appendChild(b);
     vegBtns.push(b);
   };
   /* Two planting gestures, two groups: trees stand over their spot on a
-     trunk, bushes sit on it as a mound. */
+     trunk, bushes sit on it as a mound. The region's list decides which
+     species appear; the species table decides which group each joins. */
+  const floraAll = FLORA.trees.concat(FLORA.bushes).filter(sp => SPECIES[sp]);
   vegPalette.appendChild(el('span', { class:'hint', text:'Trees' }));
-  Object.keys(SPECIES).filter(sp => SPECIES[sp].kind === 'tree').forEach(addSpeciesBtn);
+  floraAll.filter(sp => specOf(sp).kind === 'tree').forEach(addSpeciesBtn);
   vegPalette.appendChild(el('span', { class:'hint', text:'Bushes' }));
-  Object.keys(SPECIES).filter(sp => SPECIES[sp].kind === 'bush').forEach(addSpeciesBtn);
+  floraAll.filter(sp => specOf(sp).kind === 'bush').forEach(addSpeciesBtn);
   const vegCount = el('span', { text:'0/10' });
   vegPalette.appendChild(vegCount);
   const vegClear = el('button', { class:'btn small', text:'Clear planting', onclick: () => { VEGETATION.length = 0; selected = null; refresh(); } });
@@ -4260,7 +5075,7 @@ function buildVentilation(host) {
     } else {
       const v = s.obj;
       if (v.canopyV !== 2) { const _T = trunkOf(v); v.trunk = _T; v.canopy = Math.max(0.3, v.height - _T); v.height = _T + v.canopy; v.canopyV = 2; }
-      selBox.appendChild(el('span', { class:'hint', text:v.type + ' — ' + vegKind(v).toLowerCase() + ', ' + FORM_NAME[crownFormOf(v)] + ' · height = trunk + canopy' }));
+      selBox.appendChild(el('span', { class:'hint', text:nameOf(v.type) + ' (' + specOf(v.type).sci + ') — ' + t(vegKind(v)).toLowerCase() + ', ' + t(FORM_NAME[crownFormOf(v)]) + ' · ' + t('height = trunk + canopy') }));
       edH = rangeCtl('Height', 0.6, 20, 0.1, v.height,
         hv => { const H = +hv.toFixed(1); v.trunk = Math.min(v.trunk, H - 0.3); v.canopy = Math.max(0.3, H - v.trunk); v.height = v.trunk + v.canopy; syncPlantEd(); refresh(); },
         hv => fmt(hv, 1) + ' m');
@@ -4465,195 +5280,14 @@ function buildVentilation(host) {
     }
 
     /* ---- planting stands on open garden ground (world metres, centred):
-       trees rise on a trunk with a crown, bushes hug the ground as a low
-       mound — the selected one wears an amber ring ---- */
+       trees rise on a bole into their crown, bushes sit on their spot — the
+       farthest first, so nearer crowns overlap the ones behind them; the
+       selected one wears an amber ring ---- */
     const sel = selItem();
-    const densA = v => 0.55 + 0.45 * clamp(v.density != null ? v.density : 0.6, 0, 1);
-    VEGETATION.forEach((v, i) => {
-      const g = crownGeo(v, s), col = specOf(v.type).c;
-      const isSel = sel && sel.kind === 'tree' && sel.index === i;
-      ctx.font = '8px ui-sans-serif';
-      if (g.form === 'cone') {
-        /* A cypress: foliage almost to the ground, apex at full height. */
-        const b = proj(v.x, v.y, g.baseZ), ap = proj(v.x, v.y, v.height);
-        if (g.baseZ > 0.05) { const bb = proj(v.x, v.y, 0); stroke(ctx, '#8B4513', 2); seg(ctx, bb[0], bb[1], b[0], b[1]); }
-        const hw = g.rx;
-        const lg = ctx.createLinearGradient(ap[0], ap[1], b[0], b[1]);
-        lg.addColorStop(0, shade(col, 1.45)); lg.addColorStop(0.55, col); lg.addColorStop(1, shade(col, 0.62));
-        ctx.save();
-        ctx.globalAlpha = densA(v);
-        ctx.fillStyle = lg;
-        ctx.beginPath(); ctx.moveTo(b[0] - hw, b[1]); ctx.lineTo(ap[0], ap[1]); ctx.lineTo(b[0] + hw, b[1]); ctx.closePath(); ctx.fill();
-        ctx.restore();
-        stroke(ctx, 'rgba(20,23,26,.5)', 1.2); ctx.stroke();
-        ctx.fillStyle = '#14171a';
-        ctx.fillText(String(v.type).slice(0,4), ap[0] + hw * 0.3, ap[1] - 4);
-        if (isSel) {
-          stroke(ctx, '#D97706', 1.6, [5,4]);
-          ctx.beginPath(); ctx.ellipse((b[0] + ap[0]) / 2, (b[1] + ap[1]) / 2, hw + 7, Math.abs(b[1] - ap[1]) / 2 + 7, 0, 0, 6.28); ctx.stroke();
-        }
-        return;
-      }
-      const mid = proj(v.x, v.y, g.cz);
-      if (g.form === 'pyramid') {
-        /* A young oak after the photo: one leader straight to the tip,
-           three branch tiers narrowing upward, widest at the lower third. */
-        const base = proj(v.x, v.y, 0), tipT = proj(v.x, v.y, v.height * 0.98);
-        stroke(ctx, '#8B4513', trunkWOf(v)); seg(ctx, base[0], base[1], tipT[0], tipT[1]);
-        [[0.22, 1.0], [0.55, 0.8], [0.82, 0.55]].forEach(([f, w]) => {
-          const c = proj(v.x, v.y, g.trunkH + g.canopyM * f);
-          const rx = g.rx * w, ry = Math.max(3, rx * 0.55);
-          const rg = ctx.createRadialGradient(c[0] - rx * 0.3, c[1] - ry * 0.4, Math.max(1, rx * 0.1), c[0], c[1], rx);
-          rg.addColorStop(0, shade(col, 1.5)); rg.addColorStop(0.6, col); rg.addColorStop(1, shade(col, 0.62));
-          ctx.save();
-          ctx.globalAlpha = densA(v);
-          ctx.fillStyle = rg;
-          ctx.beginPath(); ctx.ellipse(c[0], c[1], rx, ry, 0, 0, 6.28); ctx.fill();
-          ctx.restore();
-          stroke(ctx, 'rgba(20,23,26,.45)', 1.1); ctx.stroke();
-        });
-        ctx.fillStyle = '#14171a';
-        ctx.fillText(String(v.type).slice(0,4), mid[0] + g.rx * 0.4, mid[1] - g.ry - 3);
-        if (isSel) {
-          stroke(ctx, '#D97706', 1.6, [5,4]);
-          ctx.beginPath(); ctx.ellipse(mid[0], mid[1], g.rx + 6, g.ry + 6, 0, 0, 6.28); ctx.stroke();
-        }
-        return;
-      }
-      if (g.form === 'umbrella') {
-        /* A stone pine: one thick bole straight to a flat parasol disc. */
-        const base = proj(v.x, v.y, 0), top = proj(v.x, v.y, v.height);
-        stroke(ctx, '#8B4513', trunkWOf(v)); seg(ctx, base[0], base[1], top[0], top[1]);
-        const rr = Math.max(g.rx, g.ry);
-        const rg = ctx.createRadialGradient(mid[0] - g.rx * 0.3, mid[1] - g.ry * 0.4, Math.max(1, rr * 0.1), mid[0], mid[1], rr);
-        rg.addColorStop(0, shade(col, 1.5)); rg.addColorStop(0.6, col); rg.addColorStop(1, shade(col, 0.62));
-        ctx.save();
-        ctx.globalAlpha = densA(v);
-        ctx.fillStyle = rg;
-        ctx.beginPath(); ctx.ellipse(mid[0], mid[1], g.rx, g.ry, 0, 0, 6.28); ctx.fill();
-        ctx.restore();
-        stroke(ctx, 'rgba(20,23,26,.5)', 1.2); ctx.stroke();
-        ctx.fillStyle = '#14171a';
-        ctx.fillText(String(v.type).slice(0,4), mid[0] + g.rx * 0.4, mid[1] - g.ry - 3);
-        if (isSel) {
-          stroke(ctx, '#D97706', 1.6, [5,4]);
-          ctx.beginPath(); ctx.ellipse(mid[0], mid[1], g.rx + 6, g.ry + 7, 0, 0, 6.28); ctx.stroke();
-        }
-        return;
-      }
-      if (g.form === 'fountain') {
-        /* A giesta in flower: thin green rushes fanning from the base,
-           yellow pea-flowers studding their upper third. */
-        const base = proj(v.x, v.y, 0);
-        const spreadW = g.canopyM * 0.4;
-        const nStems = 9;
-        for (let si = 0; si < nStems; si++) {
-          const aa = (si / (nStems - 1) - 0.5) * 1.2;
-          const tipH = v.height * (0.72 + 0.28 * Math.abs(Math.sin(si * 2.1 + 0.5)));
-          const tip = proj(v.x + Math.sin(aa) * spreadW, v.y + Math.cos(aa * 0.8) * spreadW * 0.7, tipH);
-          const ctrl = proj(v.x + Math.sin(aa) * spreadW * 0.25, v.y + Math.cos(aa * 0.8) * spreadW * 0.18, tipH * 0.5);
-          stroke(ctx, '#3E7A2C', 1.6);
-          ctx.beginPath(); ctx.moveTo(base[0], base[1]); ctx.quadraticCurveTo(ctrl[0], ctrl[1], tip[0], tip[1]); ctx.stroke();
-          ctx.fillStyle = '#F5C518';
-          [0.68, 0.84, 1.0].forEach(tt => {
-            const fx = (1 - tt) * (1 - tt) * base[0] + 2 * (1 - tt) * tt * ctrl[0] + tt * tt * tip[0];
-            const fy = (1 - tt) * (1 - tt) * base[1] + 2 * (1 - tt) * tt * ctrl[1] + tt * tt * tip[1];
-            ctx.beginPath(); ctx.arc(fx, fy, 2.2, 0, 6.28); ctx.fill();
-          });
-        }
-        ctx.fillStyle = '#14171a';
-        ctx.fillText(String(v.type).slice(0,4), mid[0] + g.rx * 0.4, mid[1] - g.ry - 3);
-        if (isSel) {
-          stroke(ctx, '#D97706', 1.6, [5,4]);
-          ctx.beginPath(); ctx.ellipse(mid[0], mid[1], g.rx + 6, g.ry + 6, 0, 0, 6.28); ctx.stroke();
-        }
-        return;
-      }
-      if (g.form !== 'mound' && g.trunkH > 0.05) {
-        /* The bole never stops short of its cup: it rises at least to the
-           crown's underside, then limbs fan out inside - the eucalyptus
-           fork, not a ball on a stick. Limbs draw before the crown so she
-           covers their tops. */
-        const meet = Math.min(v.height, Math.max(g.trunkH, g.cz - g.ry / s));
-        const base = proj(v.x, v.y, 0), collar = proj(v.x, v.y, meet);
-        stroke(ctx, '#8B4513', trunkWOf(v)); seg(ctx, base[0], base[1], collar[0], collar[1]);
-        const nl = limbsOf(v);
-        if (nl > 1) {
-          /* Tips stay well inside the cup: low enough that the narrowing
-             crown still covers their sideways reach. Olives fork from near
-             the ground, the rest from the collar. */
-          const fork = specOf(v.type).fork != null ? specOf(v.type).fork : 1;
-          const origin = proj(v.x, v.y, Math.max(0.2, g.trunkH * fork));
-          const spread = g.rx / Math.max(1, s) * 0.4;
-          for (let li = 0; li < nl; li++) {
-            const aa = 0.3 + li * 6.283 / nl;
-            const tip = proj(v.x + Math.cos(aa) * spread, v.y + Math.sin(aa) * spread, Math.min(v.height, meet + (v.height - meet) * 0.45));
-            stroke(ctx, '#8B4513', Math.max(1, trunkWOf(v) * 0.45)); seg(ctx, origin[0], origin[1], tip[0], tip[1]);
-          }
-        }
-      }
-      if (g.form === 'mound' || g.form === 'fountain' || g.form === 'globe') {
-        /* Ground contact: a bush sits ON its spot, a tree stands over it. */
-        const gp = proj(v.x, v.y, 0.02);
-        ctx.fillStyle = 'rgba(20,23,26,.16)';
-        ctx.beginPath(); ctx.ellipse(gp[0], gp[1], g.rx * 1.05, g.rx * 0.42, 0, 0, 6.28); ctx.fill();
-      }
-      /* A shaded sphere (or mound, or column): lit from the upper left,
-         denser crowns more opaque — the same density that throttles wind. */
-      const rr = Math.max(g.rx, g.ry);
-      const vase = g.form === 'vase' ? 0.6 : 1;
-      const rg = ctx.createRadialGradient(mid[0] - g.rx * 0.35, mid[1] - g.ry * 0.4, Math.max(1, rr * 0.1), mid[0], mid[1], rr);
-      rg.addColorStop(0, shade(col, 1.55)); rg.addColorStop(0.55, col); rg.addColorStop(1, shade(col, 0.6));
-      ctx.save();
-      ctx.globalAlpha = densA(v) * vase;
-      ctx.fillStyle = rg;
-      ctx.beginPath(); ctx.ellipse(mid[0], mid[1], g.rx, g.ry, 0, 0, 6.28); ctx.fill();
-      ctx.restore();
-      stroke(ctx, 'rgba(20,23,26,.5)', 1.2); ctx.stroke();
-      if (g.form === 'mound' || g.form === 'globe' || (g.form === 'ball' && specOf(v.type).fl)) {
-        /* Bloom and fruit, scattered deterministically so the crown never
-           shimmers between redraws: mastic's red berries, kermes acorns,
-           esteva's white flags, myrtle blossom, rosemary blue - and the
-           strawberry tree wearing red fruit and white urns together. */
-        const fsp = specOf(v.type);
-        if (fsp.fl) {
-          /* Interior fruit like the mastic's clusters deep inside: smaller
-             dots on tighter radii, half-veiled by the foliage. */
-          const inner = fsp.flIn ? { lo:0.08, hi:0.42 } : { lo:0.15, hi:0.9 };
-          ctx.fillStyle = fsp.fl;
-          const nFl = fsp.flN || 5;
-          for (let fi = 0; fi < nFl; fi++) {
-            const fa = fi * 2.39996, fr = inner.lo + (inner.hi - inner.lo) * ((fi * 0.61803) % 1);
-            ctx.beginPath(); ctx.arc(mid[0] + Math.cos(fa) * g.rx * fr, mid[1] + Math.sin(fa) * g.ry * fr, fsp.flR || 2.2, 0, 6.28); ctx.fill();
-          }
-        }
-        if (fsp.fl2) {
-          ctx.fillStyle = fsp.fl2;
-          const nFl2 = fsp.fl2N || 4;
-          for (let fi = 0; fi < nFl2; fi++) {
-            const fa = 1.1 + fi * 2.39996, fr = 0.2 + 0.7 * (((fi + 3) * 0.61803) % 1);
-            ctx.beginPath(); ctx.arc(mid[0] + Math.cos(fa) * g.rx * fr, mid[1] + Math.sin(fa) * g.ry * fr, 1.8, 0, 6.28); ctx.fill();
-          }
-        }
-        if (fsp.spikes) {
-          /* Alfazema's purple rockets above grey foliage. */
-          const tipY = proj(v.x, v.y, v.height + 0.28)[1];
-          for (let qi = 0; qi < 5; qi++) {
-            const bx = mid[0] + (qi / 4 - 0.5) * g.rx * 1.1, by = mid[1] - g.ry * 0.35;
-            const tpx = bx + (qi - 2) * 2;
-            stroke(ctx, '#7D3C9E', 2); seg(ctx, bx, by, tpx, tipY + (qi % 2) * 4);
-            ctx.fillStyle = '#8E44AD';
-            ctx.beginPath(); ctx.arc(tpx, tipY + (qi % 2) * 4, 2.6, 0, 6.28); ctx.fill();
-          }
-        }
-      }
-      ctx.fillStyle = '#14171a';
-      ctx.fillText(String(v.type).slice(0,4), mid[0] + g.rx * 0.4, mid[1] - g.ry - 3);
-      if (isSel) {
-        stroke(ctx, '#D97706', 1.6, [5,4]);
-        ctx.beginPath(); ctx.ellipse(mid[0], mid[1], g.rx + 6, g.ry + 6, 0, 0, 6.28); ctx.stroke();
-      }
-    });
+    const plantDepth = v => 0.61 * camS * (v.x + v.y);
+    VEGETATION.map((v, i) => ({ v, i }))
+      .sort((a, b) => plantDepth(b.v) - plantDepth(a.v))
+      .forEach(({ v, i }) => paintPlant(ctx, v, proj, camS, s, !!(sel && sel.kind === 'tree' && sel.index === i)));
 
     /* ---- detached walls as true vertical quads, amber when selected ---- */
     WALLS.forEach((w, i) => {
@@ -4762,7 +5396,7 @@ function buildVentilation(host) {
     rows.push(['Sun altitude (°)', +sn.alt.toFixed(1)], ['Sun azimuth (°)', +sn.azi.toFixed(1)]);
     rows.push(['Ridge shadow (m)', +shadowLenV(h0live() + ((RF.n === 0 ? 0 : RF.th) ? ((RF.n === 2 || RF.n === 3) ? G.D/2 : G.D) * Math.tan(RF.th * RAD) : 0), sn.alt).toFixed(1)]);
     rows.push(['Sunspace', (typeof SUNSP !== 'undefined' && SUNSP && SUNSP.on) ? SUNSP.face + ' d=' + SUNSP.depth.toFixed(1) + 'm w=' + Math.round(SUNSP.widthFrac*100) + '%' : 'off']);
-    VEGETATION.forEach(v => rows.push([vegKind(v), v.type + ' h=' + v.height + 'm trunk=' + trunkOf(v).toFixed(1) + 'm canopy=' + canopyOf(v).toFixed(1) + 'm ' + crownFormOf(v) + ' d=' + v.density + ' x=' + v.x + ' y=' + v.y + ' → ' + sideOf(v.x, v.y)]));
+    VEGETATION.forEach(v => rows.push([vegKind(v), specOf(v.type).pt + ' (' + specOf(v.type).sci + ') h=' + v.height + 'm trunk=' + trunkOf(v).toFixed(1) + 'm canopy=' + canopyOf(v).toFixed(1) + 'm ' + crownFormOf(v) + ' d=' + v.density + ' x=' + v.x + ' y=' + v.y + ' → ' + sideOf(v.x, v.y)]));
     WALLS.forEach(w => rows.push(['Wall', 'x=' + w.x + ' y=' + w.y + ' ' + w.along + ' h=' + w.height + 'm l=' + w.length + 'm → ' + sideOf(w.x, w.y)]));
     rows.push(['Köppen–Geiger', (C && C.k) ? C.k.code : '']);
     rows.push(['Winter wind defense (0-100)', winterPosture()]);
@@ -4834,11 +5468,12 @@ function buildVentilation(host) {
       }
     }
     VEGETATION.forEach((v, i) => {
-      const g = crownGeo(v, FR.s);
-      const p = proj(v.x, v.y, g.cz);
+      /* the drawn crown when there is one, the nominal ellipse otherwise */
+      const b = drawnBox.get(v), g = b ? null : crownGeo(v, FR.s);
+      const p = b ? [b.cx, b.cy] : proj(v.x, v.y, g.cz);
       const d = Math.hypot(sx - p[0], sy - p[1]);
-      const hit = g.rx + 10;
-      if (d <= hit && (!best || d < best.d)) best = { kind:'tree', index:i, d };
+      const hit = b ? Math.pow((sx - b.cx) / (b.rx + 8), 2) + Math.pow((sy - b.cy) / (b.ry + 8), 2) <= 1 : d <= g.rx + 10;
+      if (hit && (!best || d < best.d)) best = { kind:'tree', index:i, d };
     });
     WALLS.forEach((w, i) => {
       /* Base and mid-height both: a click lands on the ground line, a
@@ -4856,7 +5491,7 @@ function buildVentilation(host) {
   const itemTip = hit => {
     if (hit.kind === 'tree') {
       const v = VEGETATION[hit.index], f = sideOf(v.x, v.y);
-      return '<b>' + t(vegKind(v)) + ' ' + (hit.index + 1) + '</b> ' + v.type + '<br><span class="tv">' +
+      return '<b>' + t(vegKind(v)) + ' ' + (hit.index + 1) + '</b> ' + nameOf(v.type) + ' <i>' + specOf(v.type).sci + '</i><br><span class="tv">' +
         fmt(v.height, 1) + ' m = ' + fmt(trunkOf(v), 1) + ' + ' + fmt(canopyOf(v), 1) + ' · ' + t('shelters') + ' ' + t(FACE_NAME[f]) + '</span><br><span class="tm">' +
         t('Click to tune · drag to move · double-click to remove') + '</span>';
     }
@@ -4875,7 +5510,7 @@ function buildVentilation(host) {
     if (plantArmed) {
       if (VEGETATION.length >= 10) { toast('Maximum 10 plantings reached'); return; }
       const spec = specOf(plantArmed);
-      VEGETATION.push({ type:plantArmed, height:spec.h, trunk:spec.tr, canopy:+(spec.h - spec.tr).toFixed(1), canopyV:2, density:spec.d, x:+pos.x.toFixed(1), y:+pos.y.toFixed(1) });
+      VEGETATION.push({ type:plantArmed, height:spec.h, trunk:spec.tr, canopy:+(spec.h - spec.tr).toFixed(1), canopyV:2, density:spec.d, x:+pos.x.toFixed(1), y:+pos.y.toFixed(1), seed:(Math.random() * 4294967296) >>> 0 });
       plantArmed = null;
       vegBtns.forEach(x => x.classList.toggle('solid', false));
       selected = { kind:'tree', ref:VEGETATION[VEGETATION.length - 1] };
@@ -5070,7 +5705,9 @@ const REFS = [
   ['Gonçalves, H., &amp; Mariz Graça, J. (2004). <i>Conceitos bioclimáticos para os edifícios em Portugal</i>. DGGE/IP-3E.',
    'The Portuguese reading of bioclimatic strategy, and the character of the country’s own climatic zones.', null],
   ['IPMA (2022). <i>Fichas Climatológicas 1981–2010</i>, v2.2. Divisão de Clima e Alterações Climáticas.',
-   'The observed monthly means and totals embedded for 28 stations — homogeneous series plus WRF-modelled infill after WMO-No. 1203.', 'https://www.ipma.pt/pt/oclima/normais.clima/']
+   'The observed monthly means and totals embedded for 28 stations — homogeneous series plus WRF-modelled infill after WMO-No. 1203.', 'https://www.ipma.pt/pt/oclima/normais.clima/'],
+  ['Portarias n.º 52/2019 a 58/2019, de 11 de fevereiro, alteradas pela Portaria n.º 18/2022. <i>Programas Regionais de Ordenamento Florestal</i> (PROF LVT, ALG, ALT, CI, CL, TMAD, EDM). Diário da República, 1.ª série.',
+   'The regional forest programme each site region answers to. The Ventilation palette names the region\u2019s PROF and the protected areas inside it (ICNF, IFCN, Governo dos Açores) whose flora its species were read from — nothing from outside the region.', 'https://www.icnf.pt/florestas/prof/profemvigor']
 ];
 function buildRefs() {
   const ul = $('#refList');
@@ -6057,7 +6694,35 @@ Object.assign(PT, {
   "Fin side": "Lado dos brises",
   "Left": "Esquerda",
   "Right": "Direita",
-  "Both": "Ambos"
+  "Both": "Ambos",
+  /* planting on Ventilation: the regional palette and its species */
+  "Native planting for": "Plantação autóctone para",
+  "sources for this region only": "fontes apenas desta região",
+  "region not found — showing Grande Lisboa": "região não encontrada — mostra-se a Grande Lisboa",
+  "Trees": "Árvores",
+  "Bushes": "Arbustos",
+  "Tree": "Árvore",
+  "Bush": "Arbusto",
+  "tree": "árvore",
+  "bush": "arbusto",
+  "Click open ground to plant": "Clique em terreno livre para plantar",
+  "Placement cancelled": "Colocação cancelada",
+  "Clear planting": "Limpar plantação",
+  "height = trunk + canopy": "altura = tronco + copa",
+  "round crown": "copa arredondada",
+  "oval crown": "copa oval",
+  "columnar crown": "copa colunar",
+  "conical crown": "copa cónica",
+  "mound": "moita",
+  "umbrella crown": "copa em guarda-sol",
+  "tiered pine crown": "copa de pinheiro em andares",
+  "flowering fountain": "fonte florida",
+  "broad dome": "cúpula larga",
+  "open vase": "vaso aberto",
+  "fruiting globe": "globo com fruto",
+  "tiered pyramid": "pirâmide em andares",
+  "fan-palm clump": "touceira de palmeira",
+  "dragon-tree umbrella": "guarda-sol de dragoeiro"
 });
 
 /* --- the long captions, keyed by identifier ----------------------------- */
