@@ -638,7 +638,7 @@ footer{border-top:1px solid var(--line); margin-top:26px; background:var(--wash)
 /* ------------------------------------------------------------ 0. IDENTITY -- */
 const APP = {
   name:        'Architecture Advisor',
-  version:     '1.75.0',
+  version:     '1.76.0',
   author:      'Nuno Dinis Cortiços',
   institution: 'Lisbon School of Architecture, Universidade de Lisboa',
   builtWith:   'Claude Opus 5 (Anthropic)',
@@ -1804,46 +1804,95 @@ function solarOptimum(site, tech, az, Ta) {
   return (SOLAR_OPT[key] = Object.assign(best, { measured:hm.measured }));
 }
 /**
- * The collector field on the roof, in the bar's own metres (x along the main
- * facade, y toward the back, z up): modules flush on the slope that faces
- * the main facade — portrait, in columns and rows, 0.4 m up from the eave,
- * clear of the ridge and, on a hip roof, of the hips — or, on a flat roof,
- * rows racked at the optimum pitch and spaced so the winter-noon sun clears
+ * The roof plane that collects: of the planes the roof model cuts, the one
+ * facing the main facade with the most area — all its pieces, wherever the
+ * plan's wings or recesses split it; between two of about the same size,
+ * the one nearer the front. Null when no plane faces that way (a
+ * flat roof, or gables that all run front to back).
+ */
+function collectPlane(M) {
+  const byKey = {};
+  M.pieces.forEach(pc => { if (pc.f.a === 0 && pc.f.b === 1) (byKey[pc.key] = byKey[pc.key] || []).push(pc); });
+  /* the largest — or, within a tenth of it, the one nearest the front,
+     which the rest of the building cannot shade (a courtyard's inner slope
+     can be as large as its outer one) */
+  const cands = Object.keys(byKey).map(k => ({ key:k, pieces:byKey[k], f:byKey[k][0].f, area:byKey[k].reduce((acc, pc) => acc + pc.area, 0), y0:-byKey[k][0].f.c }));
+  if (!cands.length) return null;
+  const amax = Math.max.apply(null, cands.map(c => c.area));
+  return cands.filter(c => c.area >= 0.9 * amax).reduce((p, q) => q.y0 < p.y0 - 1e-9 ? q : p);
+}
+/**
+ * The collector field on the roof, in the plan's own metres (x along the main
+ * facade, y toward the back, z up): modules flush on the collecting plane —
+ * portrait, in columns and rows from 0.4 m above its lowest edge, each row
+ * centred on the plane's widest run and kept 0.3 m inside it, clear of
+ * ridges, hips, valleys and patios — or, on a flat roof, rows racked at the
+ * optimum pitch over the whole roof, spaced so the winter-noon sun clears
  * the row in front. Returns the modules as quads, the corner point that
  * resizes the field, and what fits.
  */
 function solarField(G, RF, lat, optTilt) {
   const sol = RF.sol;
   if (!sol || sol.tech === 'none') return null;
-  const md = SOLAR_TECH[sol.tech], H0 = G.fl * G.fh, g = md.gap, mods = [];
-  if (RF.n === 0) {
-    const beta = optTilt * RAD, altMin = Math.max(5, 90 - Math.abs(lat) - 23.44) * RAD;
-    const row = md.h * Math.cos(beta) + md.h * Math.sin(beta) / Math.tan(altMin);
-    const maxC = Math.floor((G.L - 0.8 + g) / (md.w + g)), maxR = Math.floor((G.D - 0.8 - md.h * Math.cos(beta)) / row) + 1;
-    if (maxC < 1 || maxR < 1) return { fits:false, maxC, maxR, c:0, r:0, mods, md };
-    const c = clamp(sol.cols, 1, maxC), r = clamp(sol.rows, 1, maxR);
-    const W = c * md.w + (c - 1) * g, y0 = -G.D / 2 + 0.4, z0 = H0 + 0.3;
+  const md = SOLAR_TECH[sol.tech], g = md.gap, mods = [], M = roofModel(G, RF), H0 = M.H0, bb = M.pl.bbox;
+  const flat = RF.n === 0, cp = flat ? null : collectPlane(M);
+  if (!flat && !cp) return { fits:false, noPlane:true, maxC:0, maxR:0, c:0, r:0, mods, md };
+  const key = flat ? 'flat' : cp.key;
+  const onPlane = (x, y) => { const r0 = M.at(x, y); return !!r0 && r0.key === key; };
+  /** The runs along x where a band of the plan, ya to yb, lies wholly on the plane, each cut by mg. */
+  const spans = (ya, yb, mg) => {
+    const out = [], st = 0.05;
+    let run = null;
+    for (let x = bb[0] + st / 2; x < bb[2]; x += st) {
+      if (onPlane(x, ya + 0.01) && onPlane(x, yb - 0.01) && onPlane(x, (ya + yb) / 2)) { if (run) run[1] = x + st / 2; else run = [x - st / 2, x + st / 2]; }
+      else if (run) { out.push(run); run = null; }
+    }
+    if (run) out.push(run);
+    return out.map(v => [v[0] + mg, v[1] - mg]).filter(v => v[1] > v[0]);
+  };
+  /* rows start at the plane's lowest edge — on a flat roof, at the front of
+     the plan's largest block, not at the tip of a wing */
+  const ys = flat ? [M.pl.boxes.reduce((p, q) => (q[2] - q[0]) * (q[3] - q[1]) > (p[2] - p[0]) * (p[3] - p[1]) ? q : p)[1]]
+    : cp.pieces.reduce((acc, pc) => acc.concat(pc.poly.map(q => q[1])), []);
+  const yMin = Math.min.apply(null, ys);
+  /* each row: its band in plan, and how many columns fit centred on xc */
+  const beta = flat ? optTilt * RAD : RF.th * RAD, altMin = Math.max(5, 90 - Math.abs(lat) - 23.44) * RAD;
+  const row = flat ? md.h * Math.cos(beta) + md.h * Math.sin(beta) / Math.tan(altMin) : 0;
+  const s0 = flat ? 0 : (yMin - cp.y0) / Math.cos(beta) + 0.4, fy0 = yMin + 0.4, mg = flat ? 0.4 : 0.3;
+  const band = j => flat ? [fy0 + j * row, fy0 + j * row + md.h * Math.cos(beta)]
+    : [cp.y0 + (s0 + j * (md.h + g)) * Math.cos(beta), cp.y0 + (s0 + j * (md.h + g) + md.h) * Math.cos(beta)];
+  const first = spans(band(0)[0], band(0)[1], mg);
+  if (!first.length) return { fits:false, maxC:0, maxR:0, c:0, r:0, mods, md };
+  const wide = first.reduce((p, q) => q[1] - q[0] > p[1] - p[0] ? q : p), xc = (wide[0] + wide[1]) / 2;
+  const colsAt = j => {
+    const b = band(j);
+    if (b[1] > bb[3] + 1e-6) return 0;
+    const sp = spans(b[0], b[1], mg).find(v => v[0] <= xc + 1e-6 && v[1] >= xc - 1e-6);
+    return sp ? Math.floor((2 * Math.min(xc - sp[0], sp[1] - xc) + g) / (md.w + g)) : 0;
+  };
+  const cm = [];
+  while (cm.length < 40) { const k = colsAt(cm.length); if (k < 1) break; cm.push(k); }
+  const maxR = cm.length;
+  if (maxR < 1) return { fits:false, maxC:0, maxR:0, c:0, r:0, mods, md };
+  const r = clamp(sol.rows, 1, maxR), maxC = Math.min.apply(null, cm.slice(0, r));
+  if (maxC < 1) return { fits:false, maxC, maxR, c:0, r:0, mods, md };
+  const c = clamp(sol.cols, 1, maxC), W = c * md.w + (c - 1) * g;
+  if (flat) {
+    const z0 = H0 + 0.3;
     for (let j = 0; j < r; j++) for (let i = 0; i < c; i++) {
-      const x0 = -W / 2 + i * (md.w + g), x1 = x0 + md.w, ya = y0 + j * row, yb = ya + md.h * Math.cos(beta), zb = z0 + md.h * Math.sin(beta);
+      const x0 = xc - W / 2 + i * (md.w + g), x1 = x0 + md.w, ya = fy0 + j * row, yb = ya + md.h * Math.cos(beta), zb = z0 + md.h * Math.sin(beta);
       mods.push({ i, j, q:[[x0, ya, z0], [x1, ya, z0], [x1, yb, zb], [x0, yb, zb]] });
     }
-    return { fits:true, flat:true, c, r, maxC, maxR, md, beta, row, y0, z0, W, tilt:optTilt, mods,
-      handle:[W / 2, y0 + (r - 1) * row + md.h * Math.cos(beta), z0 + md.h * Math.sin(beta)] };
+    return { fits:true, flat:true, c, r, maxC, maxR, md, beta, row, y0:fy0, z0, W, xc, tilt:optTilt, mods,
+      handle:[xc + W / 2, fy0 + (r - 1) * row + md.h * Math.cos(beta), z0 + md.h * Math.sin(beta)] };
   }
-  const th = RF.th * RAD, span = (RF.n === 2 || RF.n === 3) ? G.D / 2 : G.D, Ls = span / Math.cos(th), s0 = 0.4;
-  const P = (x, sl) => [x, -G.D / 2 + sl * Math.cos(th), H0 + sl * Math.sin(th) + 0.03];
-  const maxR = Math.floor((Ls - s0 - 0.2 + g) / (md.h + g));
-  const r = clamp(sol.rows, 1, Math.max(1, maxR));
-  const sTop = s0 + r * md.h + (r - 1) * g;
-  const avail = RF.n === 3 ? G.L - 2 * sTop * Math.cos(th) : G.L;
-  const maxC = Math.floor((avail - 0.6 + g) / (md.w + g));
-  if (maxR < 1 || maxC < 1) return { fits:false, maxC, maxR, c:0, r:0, mods, md };
-  const c = clamp(sol.cols, 1, maxC), W = c * md.w + (c - 1) * g;
+  const P = (x, sl) => [x, cp.y0 + sl * Math.cos(beta), H0 + sl * Math.sin(beta) + 0.03];
   for (let j = 0; j < r; j++) for (let i = 0; i < c; i++) {
-    const x0 = -W / 2 + i * (md.w + g), sa = s0 + j * (md.h + g);
+    const x0 = xc - W / 2 + i * (md.w + g), sa = s0 + j * (md.h + g);
     mods.push({ i, j, q:[P(x0, sa), P(x0 + md.w, sa), P(x0 + md.w, sa + md.h), P(x0, sa + md.h)] });
   }
-  return { fits:true, flat:false, c, r, maxC, maxR, md, th, s0, W, tilt:RF.th, mods, P, handle:P(W / 2, sTop) };
+  const sTop = s0 + r * md.h + (r - 1) * g;
+  return { fits:true, flat:false, c, r, maxC, maxR, md, th:beta, s0, W, xc, ey0:cp.y0, tilt:RF.th, mods, P, handle:P(xc + W / 2, sTop) };
 }
 /** Forget a failed fetch so the next call tries again. */
 function retryRadiation(site) {
@@ -2181,6 +2230,21 @@ function roofModel(G, RF) {
   ROOF_CACHE.key = key; ROOF_CACHE.val = val;
   return val;
 }
+/** Form factor of the whole volume: exterior envelope ÷ heated volume — every
+    wall up to the roof's profile (steps included), every roof plane, the
+    ground floor — for any plan and roof. */
+function formFactor(G, RF) {
+  const m = roofModel(G, RF), A = m.wallArea + m.roofArea + m.pl.area, V = m.pl.area * m.H0 + m.roofVol;
+  return { H:m.ridge, V, A, ff:A / V };
+}
+/** A translucent fill as the opaque colour it shows over white, for views
+    drawn back to front where nothing should show through. */
+const opaque = c => {
+  const m = /rgba\((\d+),(\d+),(\d+),([\d.]+)\)/.exec(String(c).replace(/\s/g, ''));
+  if (!m) return c;
+  const a = +m[4];
+  return 'rgb(' + [1, 2, 3].map(i => Math.round(+m[i] * a + 255 * (1 - a))).join(',') + ')';
+};
 /** Local facade key of an outline wall, from its outward normal. */
 const segFace = sg => sg.n[1] < 0 ? 'S' : sg.n[1] > 0 ? 'N' : sg.n[0] > 0 ? 'E' : 'W';
 /**
@@ -2899,10 +2963,7 @@ function buildSite(host) {
    * Single zone, everything exterior: the ratio the REH calls factor de forma,
    * stated here as pure geometry with no limits attached.
    */
-  const labFF = () => {
-    const m = roofModel(G, RF), A = m.wallArea + m.roofArea + m.pl.area, V = m.pl.area * m.H0 + m.roofVol;
-    return { H:m.ridge, V, A, ff:A / V };
-  };
+  const labFF = () => formFactor(G, RF);
   /** The plan outline, shared with every later tab. */
   const planOf = () => planModel(G);
   /**
@@ -3706,12 +3767,11 @@ function buildSite(host) {
     const w = Math.round(selfShade(355)), su = Math.round(selfShade(172));
     const name = (G.form && G.form !== 'rect' && G.wing && Math.abs(G.wing.e) >= 0.5 ? G.form + (G.wing.e < 0 ? ' ' + t('carved') : '') : t('Bar')) + (pt.on && pt.ok !== false ? ' + ' + t('patio') : '');
     pillShade.className = 'pill ' + (w <= 5 ? 'ok' : w <= 15 ? 'empty' : 'bad');
-    pillShade.textContent = name + ' · ' + t('takes') + ' ' + w + ' % ' + t('of the winter sun off its own walls, gives') + ' ' + su + ' % ' + t('summer shade') +
-      ' · FF ' + fmt(labFF().ff, 2) + ' · ' + fmt(pl.area, 0) + ' m²';
+    pillShade.textContent = name + ' · ' + t('takes') + ' ' + w + ' % ' + t('of the winter sun off its own walls, gives') + ' ' + su + ' % ' + t('summer shade');
   };
   refreshShade();
   host.appendChild(hint('site-form',
-    'Break the volume with the tools left of the model. <b>L</b> works one end of the bar, <b>T</b> its middle, <b>H</b> both ends on both long sides. <b>Extend</b> adds the wing out past the bar; <b>Carve</b> cuts the same shape into it as a recess, so the bar itself becomes the L, T or H. The break’s black point is one continuous reach: drag it outward and the wing grows, back to the facade and the plain bar returns, further in and the recess deepens — it never jumps to the other side. <b>⇆ Other end</b> and <b>⇅ Other side</b> mirror the break to the opposite end of the bar or to its opposite long side. <b>Open a central patio</b> cuts a courtyard out of the middle; its corner point opens it wider or deeper, always leaving 2 m of building round it and 2 m clear of any recess. Every wall of the outline — a wing’s, a recess’s, a patio’s — takes the window its orientation has on Windows &amp; Shading, so a break redistributes the glass instead of hiding it. A worked plan changes what the badges read. <b>Own shade · winter %</b> is the share of the 21 December sun on the walls that the building takes off itself — every wall sampled every 0.75 m at three heights, the sun every half hour, each sample weighed by how squarely the sun meets it, and counted lost when the ray back to the sun meets any part of the plan (eaves height; pitched roofs shade a little more). The same test on 21 June gives the summer shade in the reading under the model: a break or a patio that shades east and west walls in summer earns it, one that shades the main facade in winter costs it. <b>Form factor</b> is taken from the whole volume — every wall up to the roof’s own profile along it, every roof plane at the pitch set on Roof, the ground floor — so a break or a patio almost always raises it: more envelope for the same volume. The Olgyay fit still reads the bar’s length, depth and turn. The CAD export writes this volume as drawn; Roof, Windows &amp; Shading and Ventilation are being moved onto it tab by tab — until then they read the bar, and Ventilation adds the extended wings.'));
+    'Break the volume with the tools left of the model. <b>L</b> works one end of the bar, <b>T</b> its middle, <b>H</b> both ends on both long sides. <b>Extend</b> adds the wing out past the bar; <b>Carve</b> cuts the same shape into it as a recess, so the bar itself becomes the L, T or H. The break’s black point is one continuous reach: drag it outward and the wing grows, back to the facade and the plain bar returns, further in and the recess deepens — it never jumps to the other side. <b>⇆ Other end</b> and <b>⇅ Other side</b> mirror the break to the opposite end of the bar or to its opposite long side. <b>Open a central patio</b> cuts a courtyard out of the middle; its corner point opens it wider or deeper, always leaving 2 m of building round it and 2 m clear of any recess. Every wall of the outline — a wing’s, a recess’s, a patio’s — takes the window its orientation has on Windows &amp; Shading, so a break redistributes the glass instead of hiding it. A worked plan changes what the badges read. <b>Own shade · winter %</b> is the share of the 21 December sun on the walls that the building takes off itself — every wall sampled every 0.75 m at three heights, the sun every half hour, each sample weighed by how squarely the sun meets it, and counted lost when the ray back to the sun meets any part of the plan (eaves height; pitched roofs shade a little more). The same test on 21 June gives the summer shade in the reading under the model: a break or a patio that shades east and west walls in summer earns it, one that shades the main facade in winter costs it. <b>Form factor</b> is taken from the whole volume — every wall up to the roof’s own profile along it, every roof plane at the pitch set on Roof, the ground floor — so a break or a patio almost always raises it: more envelope for the same volume. The Olgyay fit still reads the bar’s length, depth and turn. Roof roofs this volume as drawn and the CAD export writes it; Windows &amp; Shading and Ventilation are being moved onto it — until then they read the bar, and Ventilation adds the extended wings.'));
   host.appendChild(hint('ori-score',
     'The badge is a didactic index, not an energy prediction: 60 % orientation — full marks on the green normal, zero at 90° off — plus 40 % form — closeness to the 1:X elongation, discounted for square, diagonal and north–south plans. Two plans can share a score and behave differently; read it with the pills.'));
   host.appendChild(hint('ori-height',
@@ -3853,15 +3913,15 @@ function buildRoof(host) {
   const S = STATE.site, C = STATE.clim;
   const lat = S.lat;
   pageHead(host, 'Roof',
-    'Pitch a roof to catch the low sun — the winter and summer solar ideals for this latitude, using the heating–cooling balance from Climate.');
+    'Roof the plan drawn on Site — slopes, pitch, colour, and the sun the slope facing the main facade can collect.');
   const G = MASS, RF = ROOF;
 
-  /* --- pitched roof: slopes, angle, and the sun it catches ----------------------
-     The roof is the largest summer collector, so its pitch decides between
-     winter gain and summer rejection. A south surface collects most when the
-     noon ray meets it near-perpendicularly: winter ideal = latitude + 15°,
-     summer ideal = latitude − 15°, year-round = latitude (Galloway; Lechner).
-     Heating-led sites lean to the winter figure, cooling-led to the summer. */
+  /* --- the pitch and the sun it catches --------------------------------------
+     A south surface collects most when the noon ray meets it
+     near-perpendicularly: winter ideal = latitude + 15°, summer ideal =
+     latitude − 15°, year-round = latitude (Galloway; Lechner). They are
+     drawn as the green gauge; the one score is computed, not a rule: the
+     year's sun on the slope at this pitch against the best pitch here. */
   const latN = Math.abs(lat);
   const idealW = Math.min(75, latN + 15), idealS = Math.max(10, latN - 15);
   const idealB = Math.round(latN);
@@ -3869,81 +3929,29 @@ function buildRoof(host) {
   const lean = Hm > Cm ? 'this site leans heating — favour the winter figure'
              : Cm > Hm ? 'this site leans cooling — favour the summer figure'
              : 'heating and cooling balance here — hold the middle figure';
-  /* The site's own target pitch: the two seasonal ideals weighted by that
-     same month count — a heating-led site sits nearer the winter figure, a
-     cooling-led one nearer the summer figure, a balanced one on the
-     latitude itself. */
-  const wHeat = Hm + Cm > 0 ? Hm / (Hm + Cm) : 0.5;
-  const target = idealS + (idealW - idealS) * wHeat;
-  /** 0–100 fit of the pitch to that target: 100 on it, 0 at 30° off — the
-      whole gap between the two seasonal ideals. A teaching index, like the
-      Site tab's Olgyay fit. Null for a flat roof: it has no pitch to judge,
-      its collectors take their own frame. */
-  const roofFit = () => RF.n === 0 ? null : Math.round(clamp(100 - Math.abs(RF.th - target) * (100 / 30), 0, 100));
-  /* The season that matters here and its noon sun altitude on the equator
-     side: winter for a heating-led site, summer for a cooling-led one, the
-     equinox when they balance. */
-  const season = Hm > Cm ? { key:'Winter', dec:-23.44 } : Cm > Hm ? { key:'Summer', dec:23.44 } : { key:'Equinox', dec:0 };
-  const seasonAlt = Math.min(90, 90 - latN + season.dec);
-  /** Share of that season's noon beam the south slope meets squarely, in
-      percent — the cosine of the incidence angle, sin(altitude + pitch), the
-      physics behind the Galloway–Lechner rule. A flat roof reads as a
-      horizontal collector. */
-  const roofCatch = () => Math.round(100 * clamp(Math.sin((seasonAlt + (RF.n === 0 ? 0 : RF.th)) * RAD), 0, 1));
-  /* The roof colour, read exactly as the wall colour is on Site: its class
-     α, the albedo 1 − α, and a fit to this site's summer. */
   const { T:sumT, w:sumW, band:sumBand } = summerOf(C, lat);
   const roofAlbFit = () => albedoFitFor(RF.col, sumW);
-  SCORES.roof = () => ({ 'Solar pitch fit /100':roofFit(), [season.key + ' sun %']:roofCatch(), 'Site target pitch (°)':+target.toFixed(1),
-    'Roof albedo fit /100':roofAlbFit(), 'Roof albedo':finishOf(RF.col) ? +(1 - FINISH_ALPHA[finishOf(RF.col).cls]).toFixed(2) : null });
-  const seasonName = () => LANG === 'pt' ? { Winter:'Inverno', Summer:'Verão', Equinox:'equinócio' }[season.key] : season.key;
-  host.appendChild(section('Pitched roof — catch the low sun',
-    'South slope as a solar collector; the same geometry explains deep winter glass'));
-  host.appendChild(hint('ori-roof',
-    'A south surface collects most when the noon ray meets it near-perpendicularly: <b>winter = latitude + 15°, summer = latitude − 15°, year-round = latitude</b> (Galloway; Lechner) — here <b>%1° / %2° / %3°</b>. %4. Traditional Portuguese tile roofs sit far shallower, so collectors usually need their own frame — the tension is the lesson.',
-    [fmt(idealW, 0), fmt(idealS, 0), fmt(idealB, 0), t(lean)]));
-
-  const cN = segCtl('Roof slopes', [{ value:0, label:'Flat' }, { value:1, label:'Shed' }, { value:2, label:'Gable' }, { value:3, label:'Hip' }], 2,
-    v => { RF.n = v; cP.range.disabled = v === 0; roofDraw(); });
-  const cP = rangeCtl('Pitch', 10, 60, 1, RF.th, v => { RF.th = v; roofDraw(); }, v => fmt(v, 0) + '°');
-  const pillRoof = el('span', { class:'pill ok' });
-  host.appendChild(stats([
-    statCard('Winter ideal', fmt(idealW, 0), '°', t('steep for the low sun')),
-    statCard('Summer ideal', fmt(idealS, 0), '°', t('shallow against the high sun')),
-    statCard('Year-round ideal', fmt(idealB, 0), '°', t('the latitude itself')),
-    statCard('South collector', fmt(RF.n === 3 ? (G.L + 2 * Math.max(0, G.L / 2 - G.D / 2)) / 2 * (G.D / 2) / Math.cos(RF.th * RAD) : ((RF.n === 2 ? G.D / 2 : G.D) / Math.cos(RF.th * RAD)) * G.L, 0), 'm²',
-      t('at your pitch — live below'))
-  ]));
-  host.appendChild(controls([cN, cP]));
-  host.appendChild(el('div', { class:'limitrow' }, [pillRoof]));
-  host.appendChild(hint('roof-score',
-    'The two corner boxes read the pitch the way Galloway and Lechner set the ideals. <b>Solar pitch fit</b> measures your pitch against this site’s own target, <b>%1°</b>: the winter figure (%2°) and the summer figure (%3°) weighted by the Climate balance of %4 heating months (mean below 18 °C) to %5 cooling months (above 22 °C). It gives 100 on the target and 0 at 30° off, the whole gap between the seasonal ideals. <b>%6 sun</b> is the share of that season’s noon beam the south slope meets squarely — the cosine of the incidence angle, so a flat roof reads what a horizontal collector would. It changes slowly near the ideal: 10° off costs under 2 %. The 80/50 and 95/85 colour bands are this application’s teaching cuts, not numbers from the sources. A flat roof has no pitch to judge: its collectors take their own frame.',
-    [fmt(target, 0), fmt(idealW, 0), fmt(idealS, 0), Hm, Cm, seasonName()]));
-  host.appendChild(section('Roof colour — albedo', 'How much of the sun the roof reflects, read against this site’s summer'));
-  host.appendChild(finishPicker(() => RF.col, k => { RF.col = k; roofDraw(); }));
-  const pillRoofCol = el('span', { class:'pill empty' });
-  host.appendChild(el('div', { class:'limitrow' }, [pillRoofCol]));
-  host.appendChild(hint('roof-albedo',
-    'The roof colour decides how much of the sun the roof absorbs. It takes the same three colour classes as the walls on Site — light α 0.4, medium 0.5, dark 0.8 (RCCTE Quadro V.5, carried into the REH by Despacho n.º 15793-K/2013) — and the albedo shown is the part reflected, 1 − α. Of the whole envelope the roof meets the high summer sun most squarely, so its colour weighs on the cooling season at least as much as the walls’ do; light surfaces are the standard warm-climate advice (Lechner; Gonçalves &amp; Graça). <b>Albedo fit</b> reads it exactly as the walls are read, against this site’s summer — June to September averages <b>%1 °C</b> here, a <b>%2</b> summer — with no weight at 17 °C or below and full weight at 23 °C or above; the box beneath it gives the albedo itself. This application reads a ceramic tile by its tone: a pale or weathered tile as light red, a deep one as dark red. The roof takes the colour in every 3D view.',
-    [fmt(sumT, 1), t(sumBand)]));
-  function refreshRoofCol() {
-    const f = finishOf(RF.col), sc = roofAlbFit();
-    if (!f) { pillRoofCol.className = 'pill empty'; pillRoofCol.textContent = t('Pick a roof colour to read its albedo here'); return; }
-    const head = t({ light:'Light', medium:'Medium', dark:'Dark' }[f.cls]) + ' · ' + t('albedo') + ' ' + fmt(1 - FINISH_ALPHA[f.cls], 2) + ' — ';
-    if (sc >= 80) { pillRoofCol.className = 'pill ok'; pillRoofCol.textContent = head + t(sumW < 0.3 ? 'the summer here is cool, colour is a minor call' : 'suits the summer here'); }
-    else if (sc >= 50) { pillRoofCol.className = 'pill empty'; pillRoofCol.textContent = head + t('lighten it for the summer here'); }
-    else { pillRoofCol.className = 'pill bad'; pillRoofCol.textContent = head + t('the summer here will overheat this roof'); }
-  }
-  /* --- solar collection on the roof: PV panels or thermal collectors -------
-     The collecting slope is the one over the main facade, so it faces the
-     azimuth set on Site. The site's irradiation is fetched once; until it
-     arrives the numbers stand on the labelled estimate. */
   if (!RF.sol) RF.sol = { tech:'none', cols:4, rows:2 };
-  const slopeAz = () => G.rot;
+  const slopeAz = () => G.rot;   // the collecting slope faces the main facade
   let solarRedraw = () => {};
   radiationFor(S, () => solarRedraw());
-  /** Everything the page says about the field: what fits, its area, the
-      sun on its plane and at the optimum, and the year's output. */
+  /**
+   * The one pitch score: the year's yield of the slope facing the main
+   * facade at this pitch, as a share of the yield at the best pitch for that
+   * direction here, found degree by degree — for the collectors chosen, or,
+   * with none, for the sun on the plane (what PV would read). Null on a flat
+   * roof, which has no pitch to judge.
+   */
+  const pitchNow = () => {
+    if (RF.n === 0) return null;
+    const own = RF.sol && RF.sol.tech !== 'none', tech = own ? RF.sol.tech : 'pv';
+    const opt = solarOptimum(S, tech, slopeAz(), C.t);
+    const hm = horizontalMonths(S), tp = tiltedYear(hm.H, lat, RF.th, slopeAz());
+    const y = solarYield(tech, tp.mon, lat, C.t);
+    return { pct:Math.round(100 * (opt.y > 0 ? y / opt.y : 0)), opt, plane:tp.year, tech, own, measured:hm.measured };
+  };
+  /** Everything the page says about the field: what fits, its area, the sun
+      on its plane and the year's output. */
   const solarNow = () => {
     const sol = RF.sol;
     if (!sol || sol.tech === 'none') return null;
@@ -3956,136 +3964,180 @@ function buildRoof(host) {
     return { sol, opt, fld, tilt, plane:tp.year, perM2, n, area, out:area * perM2,
       kWp:sol.tech === 'pv' ? area * md.eff : null, ratio:opt.y > 0 ? perM2 / opt.y : 0, measured:hm.measured };
   };
-  const scoresRoofBase = SCORES.roof;
+  /** The sloped area of the plane facing the main facade, m². */
+  const collectArea = M => { const cp = collectPlane(M); return cp ? cp.area / Math.cos(M.th * RAD) : 0; };
+  const nearestIdeal = th => [{ a:idealW, k:'winter' }, { a:idealS, k:'summer' }, { a:idealB, k:'year-round' }]
+    .reduce((p, q) => Math.abs(q.a - th) < Math.abs(p.a - th) ? q : p);
   SCORES.roof = () => {
-    const o = scoresRoofBase(), sn = solarNow();
+    const pn = pitchNow(), M = roofModel(G, RF), sn = solarNow();
+    const o = { 'Roof':['flat', 'shed', 'gable', 'hip'][RF.n], 'Pitch (°)':RF.n === 0 ? 0 : RF.th,
+      'Pitch, % of the best':pn ? pn.pct : null, 'Best pitch (°)':pn ? pn.opt.tilt : null,
+      'Roof area (m²)':+M.roofArea.toFixed(1), 'Ridge height (m)':+M.ridge.toFixed(2),
+      'Roof albedo fit /100':roofAlbFit(), 'Roof albedo':finishOf(RF.col) ? +(1 - FINISH_ALPHA[finishOf(RF.col).cls]).toFixed(2) : null };
     if (sn) Object.assign(o, { 'Solar collection':sn.sol.tech === 'pv' ? 'PV panels' : 'thermal collectors', 'Collector area (m²)':+sn.area.toFixed(1),
-      'Sun on the collector plane (kWh/m²·year)':Math.round(sn.plane), 'Collector pitch (°)':sn.tilt, 'Optimum pitch (°)':sn.opt.tilt,
-      '% of the optimum':Math.round(100 * sn.ratio), [sn.sol.tech === 'pv' ? 'PV electricity (kWh/year)' : 'Useful heat (kWh/year)']:Math.round(sn.out),
+      'Sun on the collector plane (kWh/m²·year)':Math.round(sn.plane), 'Collector pitch (°)':sn.tilt,
+      [sn.sol.tech === 'pv' ? 'PV electricity (kWh/year)' : 'Useful heat (kWh/year)']:Math.round(sn.out),
       'Irradiation':sn.measured ? 'ERA5 1991–2020 (Open-Meteo)' : 'estimate, clearness 0.55' });
     return o;
   };
-  /* The pill and the corner box read the same score, so the page never
-     gives two verdicts on one pitch. */
+
+  /* --- the workbench: the collectors left, the model and its readings in
+     the middle, the roof's shape and colour right --------------------------- */
+  host.appendChild(section('Pitched roof — catch the low sun',
+    'South slope as a solar collector; the same geometry explains deep winter glass'));
+  const bench = host.appendChild(el('div', { class:'bench' }));
+  const rail = bench.appendChild(el('div', { class:'rail' }));
+  const stage = bench.appendChild(el('div', { class:'stage' }));
+  const props = bench.appendChild(el('div', { class:'props' }));
+  host.appendChild(hint('ori-roof',
+    'A south surface collects most when the noon ray meets it near-perpendicularly: <b>winter = latitude + 15°, summer = latitude − 15°, year-round = latitude</b> (Galloway; Lechner) — here <b>%1° / %2° / %3°</b>. %4. Traditional Portuguese tile roofs sit far shallower, so collectors usually need their own frame — the tension is the lesson.',
+    [fmt(idealW, 0), fmt(idealS, 0), fmt(idealB, 0), t(lean)]));
+
+  const cN = segCtl('Roof slopes', [{ value:0, label:'Flat' }, { value:1, label:'Shed' }, { value:2, label:'Gable' }, { value:3, label:'Hip' }], RF.n,
+    v => { RF.n = v; cP.range.disabled = v === 0; roofDraw(); });
+  const cP = rangeCtl('Pitch', 10, 60, 1, RF.th, v => { RF.th = v; roofDraw(); }, v => fmt(v, 0) + '°');
+  cP.range.disabled = RF.n === 0;
+  props.appendChild(el('div', { class:'gh', text:'Roof' }));
+  props.appendChild(controls([cN, cP]));
+  props.appendChild(el('div', { class:'gh', text:'Roof colour — albedo' }));
+  props.appendChild(finishPicker(() => RF.col, k => { RF.col = k; roofDraw(); })).classList.add('fpick');
+
+  const pillRoof = el('span', { class:'pill ok' });
+  const pillRoofCol = el('span', { class:'pill empty' });
+  const pillSolar = el('span', { class:'pill empty' });
+  host.appendChild(hint('roof-score',
+    'One score reads the pitch. <b>Pitch · % of best</b> is the year’s sun on the slope facing the main facade at your pitch, as a share of the sun at the best pitch for that direction on this site — found by trying every degree, from the site’s own irradiation (see the collectors below): the yield of the collectors you chose, or, with none, the sun on the plane, which is what PV reads. It changes slowly near the best pitch — 10° off costs about 1 to 2 % — so any pitch a roof can carry scores high; it drops fast only far off. The green gauge beside the slope draws the Galloway–Lechner rules of thumb for a south slope’s noon sun — winter %1°, summer %2°, year-round %3° — on this site’s balance of %4 heating months (mean below 18 °C) to %5 cooling months (above 22 °C); drag the slope parallel to a ray to stand on it. The best pitch for the whole year sits near the year-round figure, lower where summer sun is strong. The 97/90 colour bands are this application’s teaching cuts. A flat roof has no pitch to judge: its collectors take their own frame.',
+    [fmt(idealW, 0), fmt(idealS, 0), fmt(idealB, 0), Hm, Cm]));
+  host.appendChild(hint('roof-albedo',
+    'The roof colour decides how much of the sun the roof absorbs. It takes the same three colour classes as the walls on Site — light α 0.4, medium 0.5, dark 0.8 (RCCTE Quadro V.5, carried into the REH by Despacho n.º 15793-K/2013) — and the albedo shown is the part reflected, 1 − α. Of the whole envelope the roof meets the high summer sun most squarely, so its colour weighs on the cooling season at least as much as the walls’ do; light surfaces are the standard warm-climate advice (Lechner; Gonçalves &amp; Graça). <b>Albedo fit</b> reads it exactly as the walls are read, against this site’s summer — June to September averages <b>%1 °C</b> here, a <b>%2</b> summer — with no weight at 17 °C or below and full weight at 23 °C or above; the box beneath it gives the albedo itself. This application reads a ceramic tile by its tone: a pale or weathered tile as light red, a deep one as dark red. The roof takes the colour on every slope, in every 3D view.',
+    [fmt(sumT, 1), t(sumBand)]));
+  function refreshRoofCol() {
+    const f = finishOf(RF.col), sc = roofAlbFit();
+    if (!f) { pillRoofCol.className = 'pill empty'; pillRoofCol.textContent = t('Pick a roof colour to read its albedo here'); return; }
+    const head = t({ light:'Light', medium:'Medium', dark:'Dark' }[f.cls]) + ' · ' + t('albedo') + ' ' + fmt(1 - FINISH_ALPHA[f.cls], 2) + ' — ';
+    if (sc >= 80) { pillRoofCol.className = 'pill ok'; pillRoofCol.textContent = head + t(sumW < 0.3 ? 'the summer here is cool, colour is a minor call' : 'suits the summer here'); }
+    else if (sc >= 50) { pillRoofCol.className = 'pill empty'; pillRoofCol.textContent = head + t('lighten it for the summer here'); }
+    else { pillRoofCol.className = 'pill bad'; pillRoofCol.textContent = head + t('the summer here will overheat this roof'); }
+  }
+  /** The pitch in words: the ideal it stands nearest, and the best pitch
+      the score reads it against — the percentage itself is on the model. */
   function refreshRoof() {
     refreshRoofCol();
     refreshSolar();
-    if (RF.n === 0) { pillRoof.className = 'pill empty'; pillRoof.textContent = t('Flat — frame the collectors, insulate for summer'); return; }
-    const sc = roofFit();
-    if (sc >= 80) { pillRoof.className = 'pill ok'; pillRoof.textContent = t('Near this site’s solar pitch'); }
-    else if (sc >= 50) { pillRoof.className = 'pill empty'; pillRoof.textContent = t('Between the seasonal ideals — decide by use'); }
-    else { pillRoof.className = 'pill bad'; pillRoof.textContent = t('Far from any solar ideal'); }
+    const pn = pitchNow();
+    if (!pn) { pillRoof.className = 'pill empty'; pillRoof.textContent = t('Flat — no pitch to judge; racked collectors take the best pitch'); return; }
+    const ni = nearestIdeal(RF.th), facing = COMPASS8[Math.round(slopeAz() / 45) % 8];
+    const none = !collectPlane(roofModel(G, RF)) ? ' — ' + t('no slope faces the main facade: the ridges run front to back') : '';
+    pillRoof.className = 'pill ' + (pn.pct >= 97 ? 'ok' : pn.pct >= 90 ? 'empty' : 'bad');
+    pillRoof.textContent = t('Slope facing') + ' ' + facing + ', ' + fmt(RF.th, 0) + '° — ' + t('nearest the ' + ni.k + ' ideal') + ' (' + fmt(ni.a, 0) + '°) · '
+      + t('best pitch here') + ' ' + pn.opt.tilt + '°' + none;
   }
-  /* The same fixed south-west isometric camera as the Site tab — this view
-     never orbits, so the model always shows exactly the two faces (south
-     and west) it's built to draw. screenX = (x−y)·cos30·s,
-     screenY = −(x+y)·sin30·s − z·s, x east, y north, z up. */
+  /* The same fixed south-west isometric camera as the Site tab, in the
+     plan's own frame, so the view never orbits: the main facade (y = −D/2)
+     faces the lower right. screenX = (x−y)·cos30·s, screenY = −(x+y)·sin30·s − z·s. */
   const ISO_C = Math.cos(30 * RAD), ISO_S = Math.sin(30 * RAD);
   const projF = (FR, x, y, z) => [FR.cx + (x - y) * ISO_C * FR.s, FR.cy - (x + y) * ISO_S * FR.s - (z || 0) * FR.s];
+  /** The pitch point and its gauge: the highest corner of the collecting
+      plane (or, without one, of the largest pitched plane) — the west end of
+      a level ridge — and the eave point straight down its fall. */
+  const gaugeOf = M => {
+    if (RF.n === 0 || !M.pieces.length) return null;
+    const cp = collectPlane(M);
+    let pcs = cp ? cp.pieces : null;
+    if (!pcs) {
+      const byKey = {};
+      M.pieces.forEach(pc => (byKey[pc.key] = byKey[pc.key] || []).push(pc));
+      const area = k => byKey[k].reduce((a, pc) => a + pc.area, 0);
+      pcs = byKey[Object.keys(byKey).reduce((p, q) => !p || area(q) > area(p) ? q : p, null)];
+    }
+    const f = pcs[0].f;
+    let top = null;
+    pcs.forEach(pc => pc.poly.forEach(q => {
+      const d = f.a * q[0] + f.b * q[1] + f.c;
+      if (!top || d > top.d + 1e-6 || (Math.abs(d - top.d) <= 1e-6 && q[0] < top.x - 1e-6)) top = { x:q[0], y:q[1], d };
+    }));
+    return { x:top.x, y:top.y, run:top.d, ex:top.x - f.a * top.d, ey:top.y - f.b * top.d };
+  };
+  /** Scale and centre so the plan, the roof and the gauge's steepest ray fit
+      beside the badges. */
   const roofFrame = (W, H) => {
-    const cx = W / 2;
-    const H0 = G.fl * G.fh;
-    const th = (RF.n === 0 ? 0 : RF.th) * RAD;
-    const span = (RF.n === 2 || RF.n === 3) ? G.D / 2 : G.D;
-    const ridge = H0 + span * Math.tan(th);
-    const fanTop = H0 + span * Math.tan(idealW * RAD);   // winter is always the steepest ideal marker
-    const margin = 3;                          // room for the sun rays
-    const half = G.L / 2 + G.D / 2 + margin;
-    const narrow = W < 600;   // phone width: the badges run in two rows across the top
-    const top = narrow ? 142 : 14, bottom = H - 34;
-    const availV = Math.max(40, bottom - top);
-    const sByW = (W / 2 - 16) / (half * ISO_C);
-    const sByH = availV / (half * ISO_S * 2 + Math.max(ridge, fanTop));
-    const s = Math.max(3, Math.min(sByW, sByH));
-    const cy = bottom - half * ISO_S * s;
-    return { cx, cy, s, H0, th, span, ridge };
+    const M = roofModel(G, RF), bb = M.pl.bbox, gm = 1.2, gg = gaugeOf(M), narrow = W < 600;
+    const zTop = Math.max(M.ridge, gg ? M.H0 + gg.run * Math.tan(idealW * RAD) : 0);
+    const top = narrow ? 142 : 44, bottom = H - 30, left = 8, right = narrow ? W - 8 : W - 100;
+    let uMin = Infinity, uMax = -Infinity, vMin = Infinity, vMax = -Infinity;
+    [[bb[0] - gm, bb[1] - gm], [bb[2] + gm, bb[1] - gm], [bb[2] + gm, bb[3] + gm], [bb[0] - gm, bb[3] + gm]].forEach(([x, y]) => [0, zTop].forEach(z => {
+      const u = (x - y) * ISO_C, v = (x + y) * ISO_S + z;
+      uMin = Math.min(uMin, u); uMax = Math.max(uMax, u); vMin = Math.min(vMin, v); vMax = Math.max(vMax, v);
+    }));
+    const availW = right - left, availV = Math.max(40, bottom - top);
+    const s = Math.max(3, Math.min(availW / (uMax - uMin), availV / (vMax - vMin)));
+    return { cx:left + (availW - (uMax - uMin) * s) / 2 - uMin * s, cy:bottom - (availV - (vMax - vMin) * s) / 2 + vMin * s,
+      s, H0:M.H0, M, gg };
   };
 
   let roofPanel = null;
   const roofDraw = () => { if (roofPanel) roofPanel.draw(); refreshRoof(); };
 
-  roofPanel = makePanel(host, {
+  roofPanel = makePanel(stage, {
     title: 'The roof in three dimensions',
-    note: 'Isometric view, matching the Site tab — the plan comes from there. Drag the black handle to re-pitch the roof; the green gauge shows each ideal pitch — from the east ridge end on a hip roof, the eave corner otherwise — drag until the slope runs parallel to the season ray. The lines behind the ridge are the hidden north eave and east rake, closed by the east eave.',
-    heightFn: w => w < 600 ? Math.round(w * 0.95 + 140) : Math.round(w / 1.7),
+    note: 'Isometric view of the plan from Site, the main facade toward the lower right. Drag the black point to re-pitch the roof — the green gauge draws each ideal pitch; stand the slope parallel to a ray to take it. Drag the amber point to size the collector field.',
+    heightFn: w => w < 600 ? Math.round(w * 0.95 + 150) : Math.round(w / 1.55),
     render(ctx, W, H) {
-      const FR = roofFrame(W, H), narrow = W < 600;
-      const { H0, th, ridge } = FR;
+      const FR = roofFrame(W, H), narrow = W < 600, M = FR.M, pl = M.pl, H0 = FR.H0, bb = pl.bbox;
       const desk = labelDesk(ctx, W, H);   // numbers are placed last, beside their lines
       const proj = (x, y, z) => projF(FR, x, y, z);
-      const poly = (pts3, fill, strokeColor, width, dash) => {
+      const pathOf = pts3 => {
         const p = pts3.map(q => proj(q[0], q[1], q[2]));
         ctx.beginPath();
         p.forEach((q, i) => i ? ctx.lineTo(q[0], q[1]) : ctx.moveTo(q[0], q[1]));
         ctx.closePath();
-        if (strokeColor) desk.path(p, true);
-        if (fill) { ctx.fillStyle = fill; ctx.fill(); }
-        if (strokeColor) { stroke(ctx, strokeColor, width || 1.4, dash || null); ctx.stroke(); }
+        return p;
       };
-
-      // the ground the box sits on
+      // the ground the building stands on
       const gm = 1.2;
-      poly([[-G.L/2 - gm, -G.D/2 - gm, 0], [G.L/2 + gm, -G.D/2 - gm, 0],
-            [G.L/2 + gm, G.D/2 + gm, 0], [-G.L/2 - gm, G.D/2 + gm, 0]],
-           'rgba(20,23,26,.025)', CH.line, 1.2);
+      desk.path(pathOf([[bb[0] - gm, bb[1] - gm, 0], [bb[2] + gm, bb[1] - gm, 0], [bb[2] + gm, bb[3] + gm, 0], [bb[0] - gm, bb[3] + gm, 0]]), true);
+      ctx.fillStyle = 'rgba(20,23,26,.025)'; ctx.fill();
+      stroke(ctx, CH.line, 1.2); ctx.stroke();
 
-      /** Wall/roof height at a given north offset y: flat has none, shed
-          ramps south (low) to north (high), gable peaks at the centre. */
-      const topZ = y => RF.n === 0 ? H0
-        : RF.n === 1 ? H0 + (y + G.D / 2) * Math.tan(th)
-        : RF.n === 3 ? H0
-        : H0 + Math.max(0, G.D / 2 - Math.abs(y)) * Math.tan(th);
+      /* Every face the camera sees — outline walls up to the roof's profile,
+         the step walls where one roof stands over another, every roof plane
+         in the roof's colour, shaded by the way it faces — painted back to
+         front. */
+      const faces = [], seen = (nx, ny) => -nx - ny > 1e-6;
+      const wallCol = ns => opaque(wallFill(ns ? 0.14 : 0.08, ns ? 0.85 : 1));
+      M.walls.forEach(wl => {
+        const sg = wl.sg;
+        if (!seen(sg.n[0], sg.n[1])) return;
+        const ux = (sg.b[0] - sg.a[0]) / sg.len, uy = (sg.b[1] - sg.a[1]) / sg.len, P = (u, z) => [sg.a[0] + ux * u, sg.a[1] + uy * u, z];
+        faces.push({ pts:[P(0, 0), P(sg.len, 0)].concat(wl.prof.slice().reverse().map(q => P(q[0], q[1]))), fill:wallCol(sg.n[1] !== 0) });
+      });
+      M.steps.forEach(st => {
+        if (!seen(st.n[0], st.n[1])) return;
+        const P = (u, z) => st.ax === 'x' ? [st.a[0], st.a[1] + u, z] : [st.a[0] + u, st.a[1], z];
+        faces.push({ pts:st.prof.map(q => P(q[0], q[1])).concat(st.prof.slice().reverse().map(q => P(q[0], q[2]))), fill:wallCol(st.n[1] !== 0) });
+      });
+      M.pieces.forEach(pc => {
+        const f = pc.f;
+        if (M.t * (f.a + f.b) + 1 <= 1e-6) return;   // a steep back slope, turned away
+        const k = RF.n === 0 ? 1 : 0.87 + 0.11 * f.b + 0.05 * f.a;
+        faces.push({ pts:pc.poly.map(q => [q[0], q[1], M.zOf(f, q[0], q[1])]), fill:opaque(roofFill(0.2 + 0.3 * (1 - k), k)), pc });
+      });
+      const depth = F => F.pts.reduce((a, q) => a + q[0] + q[1] - q[2], 0) / F.pts.length;
+      faces.sort((p, q) => depth(q) - depth(p)).forEach(F => {
+        const p = pathOf(F.pts);
+        ctx.fillStyle = F.fill; ctx.fill();
+        if (F.pc) {
+          /* the seams between pieces of one plane close under their own
+             colour; only the roof's real edges are inked */
+          stroke(ctx, F.fill, 1); ctx.stroke();
+          stroke(ctx, CH.ink, 1.5);
+          F.pc.edges.forEach(e => {
+            const a = proj(e[0][0], e[0][1], M.zOf(F.pc.f, e[0][0], e[0][1])), b = proj(e[1][0], e[1][1], M.zOf(F.pc.f, e[1][0], e[1][1]));
+            seg(ctx, a[0], a[1], b[0], b[1]); desk.line(a[0], a[1], b[0], b[1]);
+          });
+        } else { stroke(ctx, CH.ink, 1.4); ctx.stroke(); desk.path(p, true); }
+      });
 
-      // south wall — always a plain rectangle to the eave
-      poly([[-G.L/2, -G.D/2, 0], [G.L/2, -G.D/2, 0], [G.L/2, -G.D/2, H0], [-G.L/2, -G.D/2, H0]],
-           wallFill(0.14, 0.85), CH.ink, 1.4);
-
-      // west wall — a rectangle (flat/shed/hip) or a pentagon with a gable
-      const westBreaks = RF.n === 2 ? [G.D / 2, 0, -G.D / 2] : [G.D / 2, -G.D / 2];
-      const westPts = [[-G.L/2, -G.D/2, 0], [-G.L/2, G.D/2, 0]].concat(westBreaks.map(y => [-G.L/2, y, topZ(y)]));
-      poly(westPts, wallFill(0.08, 1), CH.ink, 1.4);
-
-      // the roof surface(s) a south-west viewer can see
-      if (RF.n === 0) {
-        poly([[-G.L/2,-G.D/2,H0], [G.L/2,-G.D/2,H0], [G.L/2,G.D/2,H0], [-G.L/2,G.D/2,H0]],
-             roofFill(0.05, 1), CH.ink, 2);
-      } else if (RF.n === 1) {
-        poly([[-G.L/2,-G.D/2,H0], [G.L/2,-G.D/2,H0], [G.L/2,G.D/2,ridge], [-G.L/2,G.D/2,ridge]],
-             roofFill(0.05, 1), CH.ink, 2);
-      } else if (RF.n === 2) {
-        poly([[-G.L/2,-G.D/2,H0], [G.L/2,-G.D/2,H0], [G.L/2,0,ridge], [-G.L/2,0,ridge]],
-             roofFill(0.05, 1), CH.ink, 2);
-        // the ridge line itself, since the north-facing half stays hidden
-        const r0 = proj(-G.L/2, 0, ridge), r1 = proj(G.L/2, 0, ridge);
-        stroke(ctx, CH.ink, 1.6); seg(ctx, r0[0], r0[1], r1[0], r1[1]);
-        // the hidden upper contour: occluded by the south slope from the
-        // fixed south-west viewpoint, drawn solid black like every other
-        // edge so the wall plate reads as one closed contour
-        const hn0 = proj(-G.L/2, G.D/2, H0), hn1 = proj(G.L/2, G.D/2, H0);
-        stroke(ctx, CH.ink, 1.4); seg(ctx, hn0[0], hn0[1], hn1[0], hn1[1]);
-        const hre = proj(G.L/2, 0, ridge), hne = proj(G.L/2, G.D/2, H0);
-        stroke(ctx, CH.ink, 1.4); seg(ctx, hre[0], hre[1], hne[0], hne[1]);
-      } else {
-        // hip: trapezoid facing south, triangle closing the west end, ridge
-        // shortened by half the depth at each end (a pyramid when L<=D)
-        const rl = Math.max(0, G.L / 2 - G.D / 2);
-        poly([[-G.L/2,-G.D/2,H0], [G.L/2,-G.D/2,H0], [rl,0,ridge], [-rl,0,ridge]],
-             roofFill(0.05, 1), CH.ink, 2);
-        poly([[-G.L/2,-G.D/2,H0], [-G.L/2,G.D/2,H0], [-rl,0,ridge]],
-             roofFill(0.08, 0.88), CH.ink, 1.4);
-        const q0 = proj(-rl, 0, ridge), q1 = proj(rl, 0, ridge);
-        stroke(ctx, CH.ink, 1.6); seg(ctx, q0[0], q0[1], q1[0], q1[1]);
-        // hidden upper contour, same convention: the north eave plus the
-        // east rake running down from the shortened ridge end
-        const hn0 = proj(-G.L/2, G.D/2, H0), hn1 = proj(G.L/2, G.D/2, H0);
-        stroke(ctx, CH.ink, 1.4); seg(ctx, hn0[0], hn0[1], hn1[0], hn1[1]);
-        const hre = proj(rl, 0, ridge), hne = proj(G.L/2, G.D/2, H0);
-        stroke(ctx, CH.ink, 1.4); seg(ctx, hre[0], hre[1], hne[0], hne[1]);
-        // the east eave closes the base: south-east corner to north-east
-        // corner, the one wall-plate line the hip was missing
-        const hee0 = proj(G.L/2, -G.D/2, H0), hee1 = proj(G.L/2, G.D/2, H0);
-        stroke(ctx, CH.ink, 1.4); seg(ctx, hee0[0], hee0[1], hee1[0], hee1[1]);
-      }
       /* the collector field: dark-blue PV modules with their cell lines, or
          flat-plate collectors with an aluminium frame and their risers;
          racked rows on a flat roof go down back to front, each on its legs */
@@ -4093,14 +4145,16 @@ function buildRoof(host) {
       if (sn && sn.fld && sn.fld.fits) {
         const pv = sn.sol.tech === 'pv', fl = sn.fld;
         const mods = fl.flat ? fl.mods.slice().sort((a, b) => b.j - a.j || a.i - b.i) : fl.mods;
-        const lerp = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
+        const lerp = (a, b, t0) => [a[0] + (b[0] - a[0]) * t0, a[1] + (b[1] - a[1]) * t0, a[2] + (b[2] - a[2]) * t0];
         mods.forEach(mo => {
           const q = mo.q;
           if (fl.flat) {   // the rack's two legs under the raised edge
             stroke(ctx, '#64748b', 1);
             [q[2], q[3]].forEach(p => { const a = proj(p[0], p[1], p[2]), b = proj(p[0], p[1], H0); seg(ctx, a[0], a[1], b[0], b[1]); });
           }
-          poly(q, pv ? '#1e3a8a' : '#111827', pv ? '#0f172a' : '#cbd5e1', pv ? 0.9 : 1.3);
+          const pp = pathOf(q);
+          ctx.fillStyle = pv ? '#1e3a8a' : '#111827'; ctx.fill();
+          stroke(ctx, pv ? '#0f172a' : '#cbd5e1', pv ? 0.9 : 1.3); ctx.stroke(); desk.path(pp, true);
           stroke(ctx, pv ? 'rgba(255,255,255,.28)' : 'rgba(203,213,225,.55)', 0.7);
           if (pv) {
             [1 / 3, 2 / 3].forEach(t0 => { const a = proj(...lerp(q[0], q[3], t0)), b = proj(...lerp(q[1], q[2], t0)); seg(ctx, a[0], a[1], b[0], b[1]); });
@@ -4117,61 +4171,52 @@ function buildRoof(host) {
         desk.block(hq[0] - 9, hq[1] - 9, hq[0] + 9, hq[1] + 9);
       }
 
-      // the ridge (or top edge) the height label will sit beside
-      const ridgeY = (RF.n === 2 || RF.n === 3) ? 0 : G.D / 2;
-      const ridgeHalf = RF.n === 3 ? Math.max(0, G.L / 2 - G.D / 2) : G.L / 2;
-      const ridgeA = proj(-ridgeHalf, ridgeY, ridge), ridgeB = proj(ridgeHalf, ridgeY, ridge);
-      desk.line(ridgeA[0], ridgeA[1], ridgeB[0], ridgeB[1]);
-
-      // the ideal-pitch gauge grows out of the east ridge-end vertex on a
-      // hip roof, the eave corner on every other type. Each ray is that
-      // season's true cross-section — same south-north run the pitch is built
-      // on, projected like the model — so whenever the roof stands on an
-      // ideal, the slope runs exactly parallel to its ray. Drag until they
-      // agree — standing on one, that ray turns solid with a bigger dot and
-      // the readout names it. From the ridge end the rays climb into empty
-      // sky, clear of bullet, labels, eaves and rakes at every pitch.
-      const span = (RF.n === 2 || RF.n === 3) ? G.D / 2 : G.D;
-      const topY = -G.D / 2 + span;
-      const fanSgn = RF.n === 3 ? 1 : -1;
-      const rlH = Math.max(0, G.L / 2 - G.D / 2);
-      const gO = RF.n === 3 ? proj(rlH, 0, ridge) : proj(fanSgn * G.L / 2, -G.D / 2, H0);
-      const gOx = gO[0], gOy = gO[1];
+      /* The ideal-pitch gauge: each ray the true section of that season's
+         pitch along the collecting slope's fall, from the eave below the
+         pitch point — so whenever the roof stands on an ideal, its slope
+         runs exactly parallel to the ray; standing on one, the ray turns
+         solid with a bigger dot. */
+      const gg = FR.gg, gaugeTags = [];
       let hitTag = null;
-      const gaugeTags = [];
-      [{ a:idealW, tag:'winter' }, { a:idealS, tag:'summer' }, { a:idealB, tag:'year' }].forEach(gd => {
-        const idealZ = H0 + span * Math.tan(gd.a * RAD);
-        const p1 = RF.n === 3 ? proj(rlH, span, ridge + span * Math.tan(gd.a * RAD))
-          : proj(fanSgn * G.L / 2, topY, idealZ);
-        const hit = RF.n !== 0 && Math.abs(RF.th - gd.a) < 0.6;
-        if (hit) hitTag = gd.tag;
-        if (hit) stroke(ctx, '#16A34A', 2.6); else stroke(ctx, '#16A34A', 1.4, [5, 4]);
-        seg(ctx, gOx, gOy, p1[0], p1[1]);
-        desk.line(gOx, gOy, p1[0], p1[1]);
-        ctx.fillStyle = '#16A34A';
-        ctx.beginPath(); ctx.arc(p1[0], p1[1], hit ? 4 : 2.5, 0, 6.284); ctx.fill();
-        gaugeTags.push({ txt:t(gd.tag) + ' ' + fmt(gd.a, 0) + '°', p:p1 });
-      });
+      if (gg) {
+        const O = proj(gg.ex, gg.ey, H0);
+        [{ a:idealW, tag:'winter' }, { a:idealS, tag:'summer' }, { a:idealB, tag:'year' }].forEach(gd => {
+          const p1 = proj(gg.x, gg.y, H0 + gg.run * Math.tan(gd.a * RAD));
+          const hit = Math.abs(RF.th - gd.a) < 0.6;
+          if (hit) hitTag = gd.tag;
+          if (hit) stroke(ctx, '#16A34A', 2.6); else stroke(ctx, '#16A34A', 1.4, [5, 4]);
+          seg(ctx, O[0], O[1], p1[0], p1[1]); desk.line(O[0], O[1], p1[0], p1[1]);
+          ctx.fillStyle = '#16A34A';
+          ctx.beginPath(); ctx.arc(p1[0], p1[1], hit ? 4 : 2.5, 0, 6.284); ctx.fill();
+          gaugeTags.push({ txt:t(gd.tag) + ' ' + fmt(gd.a, 0) + '°', p:p1 });
+        });
+        // the pitch point: white ring, black centre, as on Site
+        const hp = proj(gg.x, gg.y, H0 + M.t * gg.run);
+        ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(hp[0], hp[1], 8, 0, 6.284); ctx.fill();
+        ctx.fillStyle = CH.ink; ctx.beginPath(); ctx.arc(hp[0], hp[1], 4.5, 0, 6.284); ctx.fill();
+        desk.block(hp[0] - 10, hp[1] - 10, hp[0] + 10, hp[1] + 10);
+      }
 
-      // the pitch handle: the one point on the model that drags — a white
-      // ring with a black centre, the same affordance the Site tab uses
-      const handle = proj(RF.n === 3 ? -Math.max(0, G.L / 2 - G.D / 2) : -G.L / 2, topY, ridge);
-      ctx.fillStyle = '#fff';
-      ctx.beginPath(); ctx.arc(handle[0], handle[1], 8, 0, 6.284); ctx.fill();
-      ctx.fillStyle = CH.ink;
-      ctx.beginPath(); ctx.arc(handle[0], handle[1], 4.5, 0, 6.284); ctx.fill();
-      desk.block(handle[0] - 10, handle[1] - 10, handle[0] + 10, handle[1] + 10);
+      // the readout: the roof's geometry, and the field's size
+      const ff = formFactor(G, RF), ca = collectArea(M);
+      const readout = 'θ ' + fmt(RF.n === 0 ? 0 : RF.th, 0) + '° · ' + t('roof') + ' ' + fmt(M.roofArea, 0) + ' m²'
+        + (ca > 0 && !narrow ? ' · ' + t('slope facing the main facade') + ' ' + fmt(ca, 0) + ' m²' : '')
+        + ' · ' + t('ridge') + ' ' + fmt(M.ridge, 1) + ' m · FF ' + fmt(ff.ff, 2) + (hitTag && !narrow ? ' · = ' + t(hitTag) + ' ideal' : '');
+      const rf = FM(narrow ? 9 : 11), ry = narrow ? 112 : 12;
+      label(ctx, readout, 8, ry, CH.ink2, rf, 'left', 'middle');
+      desk.block(4, ry - 9, 12 + desk.measure(readout, rf).w, ry + 9);
+      if (sn) {
+        const good = sn.fld && sn.fld.fits;
+        const line = t(sn.sol.tech === 'pv' ? 'PV' : 'Thermal') + ' · ' + (good ? sn.fld.c + ' × ' + sn.fld.r + ' = ' + sn.n + ' · ' + fmt(sn.area, 1) + ' m²'
+          + (sn.kWp !== null ? ' · ' + fmt(sn.kWp, 1) + ' kWp' : '') : t('no room on this slope')) + ' · ' + sn.tilt + '°';
+        const lf = FM(narrow ? 9 : 10.5), ly = narrow ? 128 : 30;
+        label(ctx, line, 8, ly, '#1D4ED8', lf, 'left', 'middle');
+        desk.block(4, ly - 8, 12 + desk.measure(line, lf).w, ly + 8);
+      }
 
-      // live readout
-      const coll = RF.n === 3 ? (G.L + 2 * Math.max(0, G.L / 2 - G.D / 2)) / 2 * span / Math.cos(th) : span / Math.cos(th) * G.L;
-      label(ctx, 'θ ' + fmt(RF.n === 0 ? 0 : RF.th, 0) + '° · ' + t('South collector') + ' ' + fmt(coll, 0) + ' m² · '
-        + t('ridge') + ' ' + fmt(ridge, 1) + ' m' + (narrow ? '' : (hitTag ? ' · = ' + t(hitTag) + ' ideal' : '')
-        + ' · ' + t('site target') + ' ' + fmt(target, 0) + '°'),
-        8, narrow ? 112 : 12, CH.ink2, FM(narrow ? 9.5 : 11), 'left', 'middle');
-
-      // corner boxes — the same convention as Site, Windows & Shading and
-      // Ventilation: the pitch's fit to this site's target, and the sun its
-      // south slope catches in the season that matters here
+      /* the badges — one for the pitch, two for the colour, one for the
+         collectors' year — down the right edge, or across the top of a
+         phone-width canvas */
       const bw = narrow ? Math.min(100, (W - 16) / 3) : 84, bh = narrow ? 46 : 52;
       const badge = (i, value, col, caption) => {
         const bx = narrow ? 4 + (i % 3) * (bw + 4) : W - 92, by = narrow ? 4 + Math.floor(i / 3) * (bh + 4) : 6 + i * 58;
@@ -4179,73 +4224,68 @@ function buildRoof(host) {
         ctx.fillRect(bx, by, bw, bh);
         stroke(ctx, col, 1.5); ctx.strokeRect(bx, by, bw, bh);
         let vs = narrow ? 18 : 24;   // a long number shrinks to stay inside the box
-        ctx.font = FM(vs);
-        while (vs > 11 && ctx.measureText(value === null ? '–' : String(value)).width > bw - 8) { vs -= 1; ctx.font = FM(vs); }
+        while (vs > 11 && desk.measure(value === null ? '–' : String(value), FM(vs)).w > bw - 8) vs -= 1;
         label(ctx, value === null ? '–' : String(value), bx + bw / 2, by + (narrow ? 19 : 25), col, FM(vs), 'center', 'middle');
         let cs = narrow ? 8 : 9;   // longer captions shrink to stay inside the box
-        ctx.font = F(cs);
-        while (cs > 6 && ctx.measureText(t(caption)).width > bw - 6) { cs -= 0.5; ctx.font = F(cs); }
+        while (cs > 6 && desk.measure(caption, F(cs)).w > bw - 6) cs -= 0.5;
         label(ctx, caption, bx + bw / 2, by + (narrow ? 37 : 44), CH.muted, F(cs), 'center', 'middle');
+        desk.block(bx - 2, by - 2, bx + bw + 2, by + bh + 2);
       };
-      const fitV = roofFit(), catchV = roofCatch();
-      badge(0, fitV, fitV === null ? CH.faint : fitV >= 80 ? '#16A34A' : fitV >= 50 ? '#D97706' : '#DC2626', t('Solar pitch fit /100'));
-      badge(1, catchV, catchV >= 95 ? '#16A34A' : catchV >= 85 ? '#D97706' : '#DC2626', t(season.key + ' sun %'));
-      // the roof colour: its fit to this summer, then the albedo it reads as
+      const pn = pitchNow();
+      badge(0, pn ? pn.pct : null, !pn ? CH.faint : pn.pct >= 97 ? '#16A34A' : pn.pct >= 90 ? '#D97706' : '#DC2626', t('Pitch · % of best'));
       const raf = roofAlbFit(), rfin = finishOf(RF.col);
       const racol = raf === null ? CH.faint : raf >= 80 ? '#16A34A' : raf >= 50 ? '#D97706' : '#DC2626';
-      badge(2, raf, racol, t('Albedo fit') + ' /100');
-      badge(3, rfin ? fmt(1 - FINISH_ALPHA[rfin.cls], 2) : null, racol, t('Albedo · ' + sumBand + ' summer'));
-      // the collectors: the year's output, and how much of the optimum the pitch keeps
-      let nb = 4;
+      badge(1, raf, racol, t('Albedo fit') + ' /100');
+      badge(2, rfin ? fmt(1 - FINISH_ALPHA[rfin.cls], 2) : null, racol, t('Albedo · ' + sumBand + ' summer'));
       if (sn) {
         const good = sn.fld && sn.fld.fits;
-        badge(4, good ? Math.round(sn.out).toLocaleString(LANG === 'pt' ? 'pt-PT' : 'en-GB') : null, good ? '#2563EB' : CH.faint,
+        badge(3, good ? Math.round(sn.out).toLocaleString(LANG === 'pt' ? 'pt-PT' : 'en-GB') : null, good ? '#2563EB' : CH.faint,
           t(sn.sol.tech === 'pv' ? 'PV kWh/year' : 'Heat kWh/year'));
-        const rp = Math.round(100 * sn.ratio);
-        badge(5, rp, rp >= 97 ? '#16A34A' : rp >= 90 ? '#D97706' : '#DC2626', t('% of the optimum'));
-        nb = 6;
-        const line = t(sn.sol.tech === 'pv' ? 'PV' : 'Thermal') + ' · ' + (good ? sn.fld.c + ' × ' + sn.fld.r + ' = ' + sn.n + ' · ' + fmt(sn.area, 1) + ' m²'
-          + (sn.kWp !== null ? ' · ' + fmt(sn.kWp, 1) + ' kWp' : '') : t('no room on this slope'))
-          + ' · ' + fmt(sn.plane, 0) + ' kWh/m² ' + t('at') + ' ' + sn.tilt + '° · ' + t('optimum') + ' ' + sn.opt.tilt + '°' + (sn.measured ? '' : ' · ' + t('estimate'));
-        const lineN = t(sn.sol.tech === 'pv' ? 'PV' : 'Thermal') + ' · ' + (good ? sn.n + ' · ' + fmt(sn.area, 1) + ' m²' : '–') + ' · ' + fmt(sn.plane, 0) + ' kWh/m² · ' + sn.tilt + '°/' + sn.opt.tilt + '°';
-        label(ctx, narrow ? lineN : line, 8, narrow ? 130 : 30, '#1D4ED8', FM(narrow ? 9 : 10.5), 'left', 'middle');
       }
-      for (let i = 0; i < nb; i++) {
-        const bx = narrow ? 4 + (i % 3) * (bw + 4) : W - 92, by = narrow ? 4 + Math.floor(i / 3) * (bh + 4) : 6 + i * 58;
-        desk.block(bx - 2, by - 2, bx + bw + 2, by + bh + 2);
-      }
-      desk.block(0, 0, 12 + W * 0.6, narrow ? 138 : (sn ? 40 : 22));   // the readout lines
 
       /* --- the numbers, last, each beside its line and on its own pad ------ */
       {
-        const txt = t('ridge') + ' ' + fmt(ridge, 1) + ' m', from = proj(0, -G.D / 2, H0);
-        const cands = Math.hypot(ridgeB[0] - ridgeA[0], ridgeB[1] - ridgeA[1]) > 20
-          ? desk.beside(txt, FM(10), ridgeA, ridgeB, from, [0.5, 0.35, 0.65, 0.2, 0.8], 4, 2)
-          : [[ridgeA[0], ridgeA[1] - 14, 'center'], [ridgeA[0] + 10, ridgeA[1] - 6, 'left'], [ridgeA[0] - 10, ridgeA[1] - 6, 'right']];
-        desk.place(txt, cands, CH.ink2, FM(10));
+        /* the ridge height beside the highest level ridge, or at the apex */
+        let rg = null;
+        M.pieces.forEach(pc => pc.edges.forEach(e => {
+          const z0 = M.zOf(pc.f, e[0][0], e[0][1]), z1 = M.zOf(pc.f, e[1][0], e[1][1]);
+          if (Math.abs(z0 - M.ridge) < 1e-3 && Math.abs(z1 - M.ridge) < 1e-3 && (!rg || Math.hypot(e[1][0] - e[0][0], e[1][1] - e[0][1]) > rg.len)) rg = { e, len:Math.hypot(e[1][0] - e[0][0], e[1][1] - e[0][1]) };
+        }));
+        const txt = t('ridge') + ' ' + fmt(M.ridge, 1) + ' m', from = proj((bb[0] + bb[2]) / 2, bb[1], H0);
+        if (rg && rg.len > 0.5) {
+          const A = proj(rg.e[0][0], rg.e[0][1], M.ridge), B = proj(rg.e[1][0], rg.e[1][1], M.ridge);
+          desk.place(txt, desk.beside(txt, FM(10), A, B, from, [0.5, 0.35, 0.65, 0.2, 0.8], 4, 2), CH.ink2, FM(10));
+        } else if (RF.n !== 0) {
+          let apex = null;
+          M.pieces.forEach(pc => pc.poly.forEach(q => { if (Math.abs(M.zOf(pc.f, q[0], q[1]) - M.ridge) < 1e-3) apex = q; }));
+          if (apex) { const A = proj(apex[0], apex[1], M.ridge);
+            desk.place(txt, [[A[0], A[1] - 14, 'center'], [A[0] + 10, A[1] - 6, 'left'], [A[0] - 10, A[1] - 6, 'right']], CH.ink2, FM(10)); }
+        }
       }
       gaugeTags.forEach(g => {
-        const sg = fanSgn > 0 ? -1 : 1;   // the side away from the fan
-        desk.place(g.txt, [[g.p[0] + sg * 7, g.p[1], sg > 0 ? 'left' : 'right'], [g.p[0] - sg * 7, g.p[1], sg > 0 ? 'right' : 'left'],
-          [g.p[0], g.p[1] - 11, 'center'], [g.p[0], g.p[1] + 11, 'center'],
-          [g.p[0] + sg * 7, g.p[1] - 10, sg > 0 ? 'left' : 'right'], [g.p[0] + sg * 7, g.p[1] + 10, sg > 0 ? 'left' : 'right']], '#15803d', F(9));
+        desk.place(g.txt, [[g.p[0] - 7, g.p[1], 'right'], [g.p[0] + 7, g.p[1], 'left'], [g.p[0], g.p[1] - 11, 'center'], [g.p[0], g.p[1] + 11, 'center'],
+          [g.p[0] - 7, g.p[1] - 10, 'right'], [g.p[0] + 7, g.p[1] - 10, 'left']], '#15803d', F(9));
       });
     },
     csv: () => {
-      const sp = (RF.n === 2 || RF.n === 3) ? G.D / 2 : G.D;
-      const thE = RF.n === 0 ? 0 : RF.th;
-      const rg = G.fl * G.fh + sp * Math.tan(thE * RAD);
+      const M = roofModel(G, RF), pn = pitchNow(), ff = formFactor(G, RF);
       return csvRows([['Parameter', 'Value'],
-      ['Roof slopes', RF.n], ['Pitch (°)', thE],
+      ['Roof', ['flat', 'shed', 'gable', 'hip'][RF.n]], ['Pitch (°)', RF.n === 0 ? 0 : RF.th],
+      ['Plan form (from Site)', (G.form || 'rect') + (G.patio && G.patio.on && G.patio.ok !== false ? ' + patio' : '')],
       ['Winter solar ideal (°)', +idealW.toFixed(0)],
       ['Summer solar ideal (°)', +idealS.toFixed(0)],
       ['Year-round solar ideal (°)', idealB],
       ['Heating / cooling months', Hm + ' / ' + Cm],
-      ['Site target pitch (°)', +target.toFixed(1)],
-      ['Solar pitch fit (0–100)', roofFit() === null ? 'flat — n/a' : roofFit()],
-      [season.key + ' noon sun on the south slope (%)', roofCatch()],
-      ['South collector area (m²)', RF.n === 3 ? +(((G.L + 2 * Math.max(0, G.L / 2 - G.D / 2)) / 2 * sp / Math.cos(thE * RAD))).toFixed(1) : +((sp / Math.cos(thE * RAD)) * G.L).toFixed(1)],
-      ['Ridge height (m)', +rg.toFixed(1)],
+      ['Collecting slope azimuth (°)', slopeAz()],
+      ['Best pitch for that slope (°)', pn ? pn.opt.tilt : 'flat — n/a'],
+      ['Pitch, % of the best yield', pn ? pn.pct : 'flat — n/a'],
+      ['Scored for', pn ? (pn.own ? (pn.tech === 'pv' ? 'PV panels' : 'thermal collectors') : 'sun on the plane (PV)') : ''],
+      ['Roof area, sloped (m²)', +M.roofArea.toFixed(1)],
+      ['Slope facing the main facade (m²)', +collectArea(M).toFixed(1)],
+      ['Roof step walls (m²)', +M.steps.reduce((a, st) => a + st.area, 0).toFixed(1)],
+      ['Ridge height (m)', +M.ridge.toFixed(2)],
+      ['Volume under the roof (m³)', +M.roofVol.toFixed(1)],
+      ['Form factor FF (m⁻¹)', +ff.ff.toFixed(2)],
       ['Roof colour', finishOf(RF.col) ? finishOf(RF.col).en + ' (' + finishOf(RF.col).cls + ')' : 'not chosen'],
       ['Roof solar absorptance α', finishOf(RF.col) ? FINISH_ALPHA[finishOf(RF.col).cls] : ''],
       ['Roof albedo (1 − α)', finishOf(RF.col) ? +(1 - FINISH_ALPHA[finishOf(RF.col).cls]).toFixed(2) : ''],
@@ -4255,17 +4295,18 @@ function buildRoof(host) {
       ['Köppen–Geiger', STATE.clim.k.code]]);
     }
   });
+  stage.appendChild(el('div', { class:'limitrow readings' }, [pillRoof, pillRoofCol, pillSolar]));
 
-  /* --- the solar bar, right above the model: the technology, the field in
-     columns and rows (or its corner point on the model), and what it reads */
+  /* --- the rail: the technology, and the field in columns and rows (or its
+     corner point on the model) --------------------------------------------- */
   const cCols = numCtl('Columns', 1, 30, 1, RF.sol.cols, v => { RF.sol.cols = v; roofDraw(); }, null);
   const cRows = numCtl('Rows', 1, 12, 1, RF.sol.rows, v => { RF.sol.rows = v; roofDraw(); }, null);
   const syncField = () => {
     const sn = solarNow(), on = !!sn;
-    cCols.hidden = cRows.hidden = !on;
+    cCols.style.display = cRows.style.display = on ? '' : 'none';
     if (sn && sn.fld && sn.fld.fits) { cCols.input.value = sn.fld.c; cRows.input.value = sn.fld.r; }
   };
-  const cTech = segCtl('Solar collection', [{ value:'none', label:'None' }, { value:'pv', label:'PV panels' }, { value:'thermal', label:'Thermal collectors' }],
+  const cTech = segCtl(null, [{ value:'none', label:'None' }, { value:'pv', label:'PV panels' }, { value:'thermal', label:'Thermal collectors' }],
     RF.sol.tech, v => {
       /* a household-sized start: 8 PV modules (about 3 kWp), or two
          collectors (4 m²) — the student sizes it from there */
@@ -4273,23 +4314,23 @@ function buildRoof(host) {
       if (radiationFor(S).failed) { retryRadiation(S); radiationFor(S, () => solarRedraw()); }
       RF.sol.tech = v; roofDraw();
     });
-  roofPanel.body.insertBefore(el('div', { class:'controls', style:'margin:0 0 8px' },
-    [cTech, cCols, cRows, el('span', { class:'hint', text:t('Drag the amber point at the field’s corner to size it on the roof') })]), roofPanel.body.firstChild);
-  const pillSolar = el('span', { class:'pill empty' });
-  host.appendChild(el('div', { class:'limitrow' }, [pillSolar]));
+  rail.appendChild(el('div', { class:'gh', text:'Solar collection' }));
+  rail.appendChild(el('div', { class:'rgroup' }, [cTech, cCols, cRows]));
+  rail.appendChild(el('div', { class:'keys', text:t('Drag the black point to re-pitch the roof, the amber point at the field’s corner to size the field.') }));
   function refreshSolar() {
     syncField();
     const sn = solarNow();
-    if (!sn) { pillSolar.className = 'pill empty'; pillSolar.textContent = t('No collectors — choose PV panels or thermal collectors above the model'); return; }
+    if (!sn) { pillSolar.className = 'pill empty'; pillSolar.textContent = t('No collectors — choose PV panels or thermal collectors left of the model'); return; }
     const facing = COMPASS8[Math.round(slopeAz() / 45) % 8];
     const what = t(sn.sol.tech === 'pv' ? 'PV panels' : 'Thermal collectors');
-    if (!sn.fld || !sn.fld.fits) { pillSolar.className = 'pill bad'; pillSolar.textContent = what + ' — ' + t('no room on this slope for one module'); return; }
-    const rp = Math.round(100 * sn.ratio);
-    const where = RF.n === 0 ? t('racked on the flat roof at the optimum') + ' ' + sn.tilt + '°'
-      : t('on the roof at') + ' ' + sn.tilt + '° ' + t('facing') + ' ' + facing + (Math.abs(sn.tilt - sn.opt.tilt) <= 2 ? ' — ' + t('the roof pitch is the optimum') : ' — ' + t('optimum') + ' ' + sn.opt.tilt + '°, ' + rp + ' % ' + t('of its yield'));
-    pillSolar.className = 'pill ' + (rp >= 97 ? 'ok' : rp >= 90 ? 'empty' : 'bad');
-    pillSolar.textContent = what + ' ' + where + ' · ' + fmt(sn.plane, 0) + ' kWh/m²·' + t('year on the plane') + ' · '
-      + Math.round(sn.out).toLocaleString(LANG === 'pt' ? 'pt-PT' : 'en-GB') + ' kWh/' + t('year of') + ' ' + t(sn.sol.tech === 'pv' ? 'electricity' : 'heat at 50 °C')
+    if (!sn.fld || !sn.fld.fits) {
+      pillSolar.className = 'pill bad';
+      pillSolar.textContent = what + ' — ' + t(sn.fld && sn.fld.noPlane ? 'no slope faces the main facade: choose a roof whose ridge runs along it, or a flat roof' : 'no room on this slope for one module');
+      return;
+    }
+    const where = RF.n === 0 ? t('racked on the flat roof at the best pitch') + ' ' + sn.tilt + '°' : t('on the slope at') + ' ' + sn.tilt + '° ' + t('facing') + ' ' + facing;
+    pillSolar.className = 'pill ok';
+    pillSolar.textContent = what + ' ' + where + ' · ' + fmt(sn.plane, 0) + ' kWh/m²·' + t('year on the plane')
       + (sn.measured ? '' : ' · ' + t(radiationFor(S).failed ? 'estimate — the site’s irradiation could not be loaded; choose the collector again to retry' : 'estimate until the site’s irradiation loads'));
   }
   function solarCsvRows() {
@@ -4307,58 +4348,38 @@ function buildRoof(host) {
   }
   solarRedraw = () => { roofDraw(); };
   host.appendChild(hint('roof-solar',
-    'Choose <b>PV panels</b> or <b>thermal collectors</b> above the model, then size the field — by its columns and rows, or by dragging the amber point at its corner across the roof. The modules lie flush on the slope over the main facade, so they face the direction set on Site; on a flat roof they stand in racked rows at the optimum pitch, spaced so the 21 December noon sun clears the row in front. The sun on the collector plane is read from the site’s own horizontal irradiation — daily shortwave radiation 1991–2020 from the ERA5 reanalysis (Hersbach et al., 2020), via Open-Meteo — carried onto the tilted plane month by month with the method of Duffie &amp; Beckman: the Erbs, Klein &amp; Duffie monthly split into beam and diffuse, the beam ratio over each month’s mean day (Klein), the isotropic sky and 20 % ground reflection. <b>% of the optimum</b> compares the yield at the roof’s pitch with the best pitch for that technology here, found by trying every degree. PV: modules of about 20 % efficiency (0.20 kWp per m²) and a performance ratio of 0.80 (IEC 61724-1) give the electricity. Thermal: a flat-plate collector read by the EN ISO 9806 efficiency curve with typical coefficients (η0 0.78, a1 3.5, a2 0.015) at a 50 °C mean fluid against each month’s air temperature gives the heat it can collect — more than a house draws in summer, so a real system’s solar fraction is lower. A real module’s or collector’s datasheet replaces these figures. Without the site’s data the numbers rest on an assumed clearness index of 0.55 and say so.'));
+    'Choose <b>PV panels</b> or <b>thermal collectors</b> left of the model, then size the field — by its columns and rows, or by dragging the amber point at its corner across the roof. The modules lie flush on the largest roof plane facing the main facade, whatever the plan’s wings, recesses or patio do to it — rows from 0.4 m above its lowest edge, kept 0.3 m inside it, clear of ridges, hips and valleys — so they face the direction set on Site; on a flat roof they stand in racked rows at the best pitch, spaced so the 21 December noon sun clears the row in front. The sun on the collector plane is read from the site’s own horizontal irradiation — daily shortwave radiation 1991–2020 from the ERA5 reanalysis (Hersbach et al., 2020), via Open-Meteo — carried onto the tilted plane month by month with the method of Duffie &amp; Beckman: the Erbs, Klein &amp; Duffie monthly split into beam and diffuse, the beam ratio over each month’s mean day (Klein), the isotropic sky and 20 % ground reflection. The pitch’s share of the best yield is the one pitch score on the model. PV: modules of about 20 % efficiency (0.20 kWp per m²) and a performance ratio of 0.80 (IEC 61724-1) give the electricity. Thermal: a flat-plate collector read by the EN ISO 9806 efficiency curve with typical coefficients (η0 0.78, a1 3.5, a2 0.015) at a 50 °C mean fluid against each month’s air temperature gives the heat it can collect — more than a house draws in summer, so a real system’s solar fraction is lower. A real module’s or collector’s datasheet replaces these figures. Without the site’s data the numbers rest on an assumed clearness index of 0.55 and say so.'));
   refreshRoof();
 
-  /* --- direct pitch: drag the west slope up or down -------------------------
-     The floor plan (length, depth, floors, height) is read-only here — it
-     comes from the Site tab. Point interaction on this canvas does exactly
-     one thing: re-pitch the roof. */
-  // buildRoof is its own function, not nested inside buildSite — syncCtl
-  // has to be defined again here rather than reused from there
+  /* --- direct manipulation: the pitch point, and the field's corner -------- */
   const syncCtl = (c, v, f) => { c.range.value = v; c.out.textContent = f(v); };
   const rcv = roofPanel.canvas;
   rcv.style.touchAction = 'none';
-  rcv.style.cursor = 'ns-resize';
+  rcv.style.cursor = 'default';
   // a <canvas> is natively draggable as an "image" in some browsers, which
-  // hijacks the gesture into an OS drag (a grab-hand cursor, no pointermove)
-  // before our own handlers ever see it — kill that native behaviour outright
+  // hijacks the gesture into an OS drag before our own handlers see it
   rcv.draggable = false;
   rcv.addEventListener('dragstart', ev => ev.preventDefault());
-  const invWest = (FR, px, py, xPlane) => {
-    const xp = xPlane !== undefined ? xPlane : -G.L / 2;
-    const p00 = projF(FR, xp, 0, 0), p10 = projF(FR, xp, 1, 0), p01 = projF(FR, xp, 0, 1);
-    let dXdy = p10[0] - p00[0], dYdy = p10[1] - p00[1], dYdz = p01[1] - p00[1];
-    if (Math.abs(dXdy) < 1e-6) dXdy = dXdy < 0 ? -1e-6 : 1e-6;
-    if (Math.abs(dYdz) < 1e-6) dYdz = dYdz < 0 ? -1e-6 : 1e-6;
-    const y = (px - p00[0]) / dXdy;
-    const z = (py - p00[1] - y * dYdy) / dYdz;
-    return { y, z };
-  };
-  const slopeEnds = FR => {
-    const topY = (RF.n === 2 || RF.n === 3) ? 0 : G.D / 2;
-    const hx = RF.n === 3 ? -Math.max(0, G.L / 2 - G.D / 2) : -G.L / 2;
-    return { p1: projF(FR, -G.L / 2, -G.D / 2, FR.H0), p2: projF(FR, hx, topY, FR.ridge) };
-  };
+  /** On the pitch point, or on the slope's fall line below it? */
   const nearSlope = (clientX, clientY) => {
-    if (RF.n === 0) return false;
-    if (!roofPanel.W || !roofPanel.H) return false;
-    const r = rcv.getBoundingClientRect();
-    const FR = roofFrame(roofPanel.W, roofPanel.H);
-    const { p1, p2 } = slopeEnds(FR);
-    const mx = clientX - r.left, my = clientY - r.top;
+    if (RF.n === 0 || !roofPanel.W || !roofPanel.H) return false;
+    const FR = roofFrame(roofPanel.W, roofPanel.H), gg = FR.gg;
+    if (!gg) return false;
+    const r = rcv.getBoundingClientRect(), mx = clientX - r.left, my = clientY - r.top;
+    const p1 = projF(FR, gg.ex, gg.ey, FR.H0), p2 = projF(FR, gg.x, gg.y, FR.H0 + FR.M.t * gg.run);
     if (Math.hypot(mx - p2[0], my - p2[1]) <= 24) return true;
     const dx = p2[0] - p1[0], dy = p2[1] - p1[1], L2 = dx * dx + dy * dy || 1;
     const u = clamp(((mx - p1[0]) * dx + (my - p1[1]) * dy) / L2, 0, 1);
-    return Math.hypot(mx - (p1[0] + u * dx), my - (p1[1] + u * dy)) <= 20;
+    return Math.hypot(mx - (p1[0] + u * dx), my - (p1[1] + u * dy)) <= 16;
   };
+  /** The pitch point rides straight up and down over its own spot on the
+      plan; the pitch is the rise over its run from the eave. */
   const doDrag = (clientX, clientY) => {
+    const FR = roofFrame(roofPanel.W, roofPanel.H), gg = FR.gg;
+    if (!gg) return;
     const r = rcv.getBoundingClientRect();
-    const FR = roofFrame(roofPanel.W, roofPanel.H);
-    const xp = RF.n === 3 ? -Math.max(0, G.L / 2 - G.D / 2) : -G.L / 2;
-    const { y, z } = invWest(FR, clientX - r.left, clientY - r.top, xp);
-    const run = y + G.D / 2, rise = z - FR.H0;
-    RF.th = Math.round(clamp(Math.atan2(rise, Math.max(0.5, run)) / RAD, 10, 60));
+    const z = (FR.cy - (clientY - r.top)) / FR.s - (gg.x + gg.y) * ISO_S;
+    RF.th = Math.round(clamp(Math.atan2(z - FR.H0, Math.max(0.5, gg.run)) / RAD, 10, 60));
     syncCtl(cP, RF.th, v => fmt(v, 0) + '°');
     roofDraw();
   };
@@ -4371,30 +4392,30 @@ function buildRoof(host) {
     const q = projF(FR, sn.fld.handle[0], sn.fld.handle[1], sn.fld.handle[2]);
     return Math.hypot(clientX - r.left - q[0], clientY - r.top - q[1]) <= 12;
   };
-  /** The corner point follows the pointer on the roof plane — the slope, or
-      the racks' top edge on a flat roof — and the field snaps to whole
-      modules, centred along the eave. */
+  /** The corner point follows the pointer on the collecting plane — the
+      slope, or the racks' top edge on a flat roof — and the field snaps to
+      whole modules, centred on the plane's widest run. */
   const doFieldDrag = (clientX, clientY) => {
     const sn = solarNow();
     if (!sn || !sn.fld || !sn.fld.fits) return;
     const r = rcv.getBoundingClientRect(), FR = roofFrame(roofPanel.W, roofPanel.H), fl = sn.fld, md = fl.md;
-    const a = (clientX - r.left - FR.cx) / (ISO_C * FR.s), bb = (FR.cy - (clientY - r.top)) / FR.s;   // x − y = a, (x + y)·sin30 + z = bb
+    const a = (clientX - r.left - FR.cx) / (ISO_C * FR.s), bv = (FR.cy - (clientY - r.top)) / FR.s;   // x − y = a, (x + y)·sin30 + z = bv
     let x, rows;
     if (fl.flat) {
-      const sum = (bb - fl.handle[2]) / ISO_S, y = (sum - a) / 2;
+      const sum = (bv - fl.handle[2]) / ISO_S, y = (sum - a) / 2;
       x = (a + sum) / 2;
       rows = 1 + Math.round((y - fl.y0 - md.h * Math.cos(fl.beta)) / fl.row);
     } else {
-      const sl = (bb - a * ISO_S + ISO_S * G.D - FR.H0 - 0.03) / (2 * ISO_S * Math.cos(fl.th) + Math.sin(fl.th));
-      x = a + (-G.D / 2 + sl * Math.cos(fl.th));
+      const sl = (bv - a * ISO_S - 2 * fl.ey0 * ISO_S - FR.H0 - 0.03) / (2 * ISO_S * Math.cos(fl.th) + Math.sin(fl.th));
+      x = a + fl.ey0 + sl * Math.cos(fl.th);
       rows = Math.round((sl - fl.s0 + md.gap) / (md.h + md.gap));
     }
-    RF.sol.cols = clamp(Math.round((2 * Math.abs(x) + md.gap) / (md.w + md.gap)), 1, Math.max(1, fl.maxC));
+    RF.sol.cols = clamp(Math.round((2 * Math.abs(x - fl.xc) + md.gap) / (md.w + md.gap)), 1, Math.max(1, fl.maxC));
     RF.sol.rows = clamp(rows, 1, Math.max(1, fl.maxR));
     roofDraw();
   };
 
-  /* --- pointer events (pen / touch) --- */
+  /* --- pointer events (pen / touch / mouse) --- */
   rcv.addEventListener('pointerdown', ev => {
     if (fieldHandleAt(ev.clientX, ev.clientY)) {
       ev.preventDefault();
@@ -4412,28 +4433,15 @@ function buildRoof(host) {
   rcv.addEventListener('pointermove', ev => {
     if (fdrag) { ev.preventDefault(); doFieldDrag(ev.clientX, ev.clientY); return; }
     if (!rdrag) {
-      rcv.style.cursor = fieldHandleAt(ev.clientX, ev.clientY) ? 'move' : nearSlope(ev.clientX, ev.clientY) ? 'grab' : 'ns-resize';
+      rcv.style.cursor = fieldHandleAt(ev.clientX, ev.clientY) ? 'move' : nearSlope(ev.clientX, ev.clientY) ? 'ns-resize' : 'default';
       return;
     }
     ev.preventDefault();
     doDrag(ev.clientX, ev.clientY);
   });
-  rcv.addEventListener('pointerup', () => { rdrag = fdrag = false; rcv.style.cursor = 'ns-resize'; });
-  rcv.addEventListener('pointercancel', () => { rdrag = fdrag = false; rcv.style.cursor = 'ns-resize'; });
-
-  /* --- mouse fallback (trackpad / old browsers) --- */
-  rcv.addEventListener('mousedown', ev => {
-    if (fieldHandleAt(ev.clientX, ev.clientY) || !nearSlope(ev.clientX, ev.clientY)) return;
-    ev.preventDefault();
-    rdrag = true;
-    rcv.style.cursor = 'grabbing';
-    const onMove = ev => { ev.preventDefault(); doDrag(ev.clientX, ev.clientY); };
-    const onUp = () => { rdrag = false; rcv.style.cursor = 'ns-resize';
-      window.removeEventListener('mousemove', onMove);
-      window.removeEventListener('mouseup', onUp); };
-    window.addEventListener('mousemove', onMove);
-    window.addEventListener('mouseup', onUp);
-  });
+  const endDrag = () => { rdrag = fdrag = false; rcv.style.cursor = 'default'; };
+  rcv.addEventListener('pointerup', endDrag);
+  rcv.addEventListener('pointercancel', endDrag);
 }
 
 function buildOpenings(host) {
@@ -8531,8 +8539,8 @@ Object.assign(PT, {
 
   /* the roof page */
   "Roof": "Telhado",
-  "Pitch a roof to catch the low sun — the winter and summer solar ideals for this latitude, using the heating–cooling balance from Climate.":
-    "Incline um telhado para apanhar o sol baixo — os ideais solares de Inverno e de Verão para esta latitude, usando o equilíbrio entre aquecimento e arrefecimento de Clima.",
+  "Roof the plan drawn on Site — slopes, pitch, colour, and the sun the slope facing the main facade can collect.":
+    "Cubra a planta desenhada no Local — vertentes, inclinação, cor e o sol que a vertente virada para a fachada principal pode recolher.",
 
   /* the orientation page */
   "Solar Geometry": "Geometria Solar",
@@ -8660,7 +8668,6 @@ Object.assign(PT, {
   "Judge the wind exposure — yours to decide": "Avalie a exposição ao vento — a decisão é sua",
   "Exposure judged": "Exposição avaliada",
   "Pitch": "Inclinação",
-  "Flat — frame the collectors, insulate for summer": "Plana — colectores em estrutura, isolar para o Verão",
   "Winter ideal": "Ideal de Inverno",
   "Summer ideal": "Ideal de Verão",
   "Year-round ideal": "Ideal anual",
@@ -8670,17 +8677,11 @@ Object.assign(PT, {
   "the latitude itself": "a própria latitude",
   "at your pitch — live below": "à sua inclinação — em directo abaixo",
   "Near the year-round solar ideal": "Perto do ideal solar anual",
-  "Near this site’s solar pitch": "Perto da inclinação solar deste local",
-  "Solar pitch fit /100": "Inclinação solar /100",
-  "Winter sun %": "Sol de Inverno %",
-  "Summer sun %": "Sol de Verão %",
-  "Equinox sun %": "Sol do equinócio %",
-  "site target": "alvo do local",
   "Between the seasonal ideals — decide by use": "Entre os ideais sazonais — decidir pelo uso",
   "Far from any solar ideal": "Longe de qualquer ideal solar",
   "The roof in three dimensions": "O telhado em três dimensões",
-  "Isometric view, matching the Site tab — the plan comes from there. Drag the black handle to re-pitch the roof; the green gauge shows each ideal pitch — from the east ridge end on a hip roof, the eave corner otherwise — drag until the slope runs parallel to the season ray. The lines behind the ridge are the hidden north eave and east rake, closed by the east eave.":
-    "Vista isométrica, como no separador Local — a planta vem de lá. Arraste o botão preto para mudar a inclinação do telhado; o calibre verde mostra cada inclinação ideal — da ponta este da cumeeira no telhado de quatro águas, do canto do beirado nos outros — arraste até a vertente ficar paralela ao raio da estação. As linhas atrás da cumeeira são o beirado norte e a aresta este escondidos, fechados pelo beirado este.",
+  "Isometric view of the plan from Site, the main facade toward the lower right. Drag the black point to re-pitch the roof — the green gauge draws each ideal pitch; stand the slope parallel to a ray to take it. Drag the amber point to size the collector field.":
+    "Vista isométrica da planta do Local, com a fachada principal para baixo à direita. Arraste o ponto preto para mudar a inclinação — o calibre verde desenha cada inclinação ideal; ponha a vertente paralela a um raio para a tomar. Arraste o ponto âmbar para dimensionar o campo de colectores.",
   "winter": "inverno",
   "summer": "verão",
   "year": "ano",
@@ -8775,12 +8776,23 @@ Object.assign(PT, {
   "Thermal collectors": "Colectores térmicos",
   "Columns": "Colunas",
   "Rows": "Filas",
-  "Drag the amber point at the field’s corner to size it on the roof": "Arraste o ponto âmbar no canto do campo para o dimensionar sobre a cobertura",
-  "No collectors — choose PV panels or thermal collectors above the model": "Sem colectores — escolha painéis fotovoltaicos ou colectores térmicos por cima do modelo",
+  "Drag the black point to re-pitch the roof, the amber point at the field’s corner to size the field.": "Arraste o ponto preto para mudar a inclinação, o ponto âmbar no canto do campo para o dimensionar.",
+  "No collectors — choose PV panels or thermal collectors left of the model": "Sem colectores — escolha painéis fotovoltaicos ou colectores térmicos à esquerda do modelo",
+  "no slope faces the main facade: choose a roof whose ridge runs along it, or a flat roof": "nenhuma vertente está virada para a fachada principal: escolha uma cobertura com a cumeeira ao longo dela, ou uma cobertura plana",
+  "racked on the flat roof at the best pitch": "em estrutura na cobertura plana, à melhor inclinação de",
+  "on the slope at": "na vertente a",
+  "Pitch · % of best": "Inclinação · % do melhor",
+  "Flat — no pitch to judge; racked collectors take the best pitch": "Plana — sem inclinação a avaliar; os colectores em estrutura tomam a melhor inclinação",
+  "Slope facing": "Vertente virada a",
+  "nearest the winter ideal": "mais perto do ideal de inverno",
+  "nearest the summer ideal": "mais perto do ideal de verão",
+  "nearest the year-round ideal": "mais perto do ideal anual",
+  "best pitch here": "melhor inclinação aqui",
+  "no slope faces the main facade: the ridges run front to back": "nenhuma vertente está virada para a fachada principal: as cumeeiras correm de frente para trás",
+  "roof": "cobertura",
+  "slope facing the main facade": "vertente virada para a fachada principal",
   "no room on this slope for one module": "não cabe um módulo nesta vertente",
   "no room on this slope": "não cabe nesta vertente",
-  "racked on the flat roof at the optimum": "em estrutura na cobertura plana, à inclinação óptima de",
-  "on the roof at": "na cobertura a",
   "facing": "virados a",
   "the roof pitch is the optimum": "a inclinação da cobertura é a óptima",
   "optimum": "óptimo",
@@ -8935,11 +8947,11 @@ Object.assign(PT, {
 /* --- the long captions, keyed by identifier ----------------------------- */
 Object.assign(PT_HINT, {
   'roof-solar':
-    'Escolha <b>painéis fotovoltaicos</b> ou <b>colectores térmicos</b> por cima do modelo e dimensione o campo — pelas colunas e filas, ou arrastando o ponto âmbar no seu canto sobre a cobertura. Os módulos assentam na vertente sobre a fachada principal, pelo que ficam virados para a orientação definida no separador Local; numa cobertura plana ficam em filas sobre estrutura, à inclinação óptima, espaçadas para que o sol do meio-dia de 21 de Dezembro passe por cima da fila da frente. O sol no plano dos colectores é lido da irradiação horizontal do próprio local — radiação de onda curta diária 1991–2020 da reanálise ERA5 (Hersbach et al., 2020), via Open-Meteo — levada para o plano inclinado mês a mês pelo método de Duffie &amp; Beckman: a separação mensal em directa e difusa de Erbs, Klein &amp; Duffie, a razão da directa no dia médio de cada mês (Klein), o céu isotrópico e 20 % de reflexão do solo. A <b>% do óptimo</b> compara a produção à inclinação da cobertura com a da melhor inclinação para essa tecnologia neste local, encontrada grau a grau. FV: módulos de cerca de 20 % de rendimento (0,20 kWp por m²) e um índice de desempenho de 0,80 (IEC 61724-1) dão a electricidade. Térmico: um colector plano lido pela curva de rendimento da EN ISO 9806 com coeficientes típicos (η0 0,78, a1 3,5, a2 0,015), a uma temperatura média do fluido de 50 °C contra a temperatura do ar de cada mês, dá o calor que consegue captar — mais do que uma casa consome no verão, pelo que a fracção solar de um sistema real é menor. A ficha técnica de um módulo ou colector real substitui estes valores. Sem os dados do local, os números assentam num índice de limpidez assumido de 0,55 e dizem-no.',
+    'Escolha <b>painéis fotovoltaicos</b> ou <b>colectores térmicos</b> à esquerda do modelo e dimensione o campo — pelas colunas e filas, ou arrastando o ponto âmbar no seu canto sobre a cobertura. Os módulos assentam no maior plano da cobertura virado para a fachada principal, seja o que for que as alas, os recuos ou o pátio da planta lhe façam — filas a partir de 0,4 m acima do seu bordo mais baixo, 0,3 m para dentro dele, livres de cumeeiras, rincões e larós — pelo que ficam virados para a orientação definida no separador Local; numa cobertura plana ficam em filas sobre estrutura, à melhor inclinação, espaçadas para que o sol do meio-dia de 21 de Dezembro passe por cima da fila da frente. O sol no plano dos colectores é lido da irradiação horizontal do próprio local — radiação de onda curta diária 1991–2020 da reanálise ERA5 (Hersbach et al., 2020), via Open-Meteo — levada para o plano inclinado mês a mês pelo método de Duffie &amp; Beckman: a separação mensal em directa e difusa de Erbs, Klein &amp; Duffie, a razão da directa no dia médio de cada mês (Klein), o céu isotrópico e 20 % de reflexão do solo. A parte da melhor produção que a inclinação dá é a única pontuação da inclinação no modelo. FV: módulos de cerca de 20 % de rendimento (0,20 kWp por m²) e um índice de desempenho de 0,80 (IEC 61724-1) dão a electricidade. Térmico: um colector plano lido pela curva de rendimento da EN ISO 9806 com coeficientes típicos (η0 0,78, a1 3,5, a2 0,015), a uma temperatura média do fluido de 50 °C contra a temperatura do ar de cada mês, dá o calor que consegue captar — mais do que uma casa consome no verão, pelo que a fracção solar de um sistema real é menor. A ficha técnica de um módulo ou colector real substitui estes valores. Sem os dados do local, os números assentam num índice de limpidez assumido de 0,55 e dizem-no.',
   'site-form':
-    'Quebre o volume com as ferramentas à esquerda do modelo. O <b>L</b> trabalha uma ponta da barra, o <b>T</b> o meio, o <b>H</b> as duas pontas dos dois lados compridos. <b>Estender</b> acrescenta a ala para fora da barra; <b>Escavar</b> recorta a mesma forma dentro dela como um recuo, pelo que é a própria barra que se torna o L, o T ou o H. O ponto preto da quebra é um alcance contínuo: arrastado para fora a ala cresce, de volta à fachada regressa a barra simples, mais para dentro o recuo aprofunda-se — nunca salta para o outro lado. <b>⇆ Outra ponta</b> e <b>⇅ Outro lado</b> espelham a quebra para a ponta oposta da barra ou para o seu lado comprido oposto. <b>Abrir um pátio central</b> recorta um pátio no meio; o ponto do seu canto abre-o mais largo ou mais fundo, deixando sempre 2 m de edifício à volta e 2 m livres de qualquer recuo. Todas as paredes do contorno — de uma ala, de um recuo, de um pátio — recebem a janela que a sua orientação tem em Janelas e Sombreamento, pelo que uma quebra redistribui o vidro em vez de o esconder. Uma planta trabalhada muda o que as caixas lêem. <b>Sombra própria · inverno %</b> é a parte do sol de 21 de Dezembro nas paredes que o edifício retira a si próprio — cada parede amostrada a cada 0,75 m em três alturas, o sol a cada meia hora, cada amostra pesada por quão de frente o sol a atinge, e contada como perdida quando o raio de volta ao sol encontra alguma parte da planta (altura do beirado; coberturas inclinadas sombreiam um pouco mais). O mesmo teste a 21 de Junho dá a sombra de verão na leitura por baixo do modelo: uma quebra ou um pátio que sombreia paredes a nascente e a poente no verão ganha com isso, um que sombreia a fachada principal no inverno paga por isso. O <b>fator de forma</b> é tirado de todo o volume — cada parede até ao perfil da própria cobertura, cada plano de cobertura com a inclinação definida em Cobertura, o piso térreo — pelo que uma quebra ou um pátio quase sempre o aumenta: mais envolvente para o mesmo volume. O ajuste a Olgyay continua a ler o comprimento, a profundidade e a rotação da barra. A exportação CAD escreve este volume tal como está desenhado; Cobertura, Janelas e Sombreamento e Ventilação estão a passar para ele separador a separador — até lá lêem a barra, e a Ventilação acrescenta as alas estendidas.',
+    'Quebre o volume com as ferramentas à esquerda do modelo. O <b>L</b> trabalha uma ponta da barra, o <b>T</b> o meio, o <b>H</b> as duas pontas dos dois lados compridos. <b>Estender</b> acrescenta a ala para fora da barra; <b>Escavar</b> recorta a mesma forma dentro dela como um recuo, pelo que é a própria barra que se torna o L, o T ou o H. O ponto preto da quebra é um alcance contínuo: arrastado para fora a ala cresce, de volta à fachada regressa a barra simples, mais para dentro o recuo aprofunda-se — nunca salta para o outro lado. <b>⇆ Outra ponta</b> e <b>⇅ Outro lado</b> espelham a quebra para a ponta oposta da barra ou para o seu lado comprido oposto. <b>Abrir um pátio central</b> recorta um pátio no meio; o ponto do seu canto abre-o mais largo ou mais fundo, deixando sempre 2 m de edifício à volta e 2 m livres de qualquer recuo. Todas as paredes do contorno — de uma ala, de um recuo, de um pátio — recebem a janela que a sua orientação tem em Janelas e Sombreamento, pelo que uma quebra redistribui o vidro em vez de o esconder. Uma planta trabalhada muda o que as caixas lêem. <b>Sombra própria · inverno %</b> é a parte do sol de 21 de Dezembro nas paredes que o edifício retira a si próprio — cada parede amostrada a cada 0,75 m em três alturas, o sol a cada meia hora, cada amostra pesada por quão de frente o sol a atinge, e contada como perdida quando o raio de volta ao sol encontra alguma parte da planta (altura do beirado; coberturas inclinadas sombreiam um pouco mais). O mesmo teste a 21 de Junho dá a sombra de verão na leitura por baixo do modelo: uma quebra ou um pátio que sombreia paredes a nascente e a poente no verão ganha com isso, um que sombreia a fachada principal no inverno paga por isso. O <b>fator de forma</b> é tirado de todo o volume — cada parede até ao perfil da própria cobertura, cada plano de cobertura com a inclinação definida em Cobertura, o piso térreo — pelo que uma quebra ou um pátio quase sempre o aumenta: mais envolvente para o mesmo volume. O ajuste a Olgyay continua a ler o comprimento, a profundidade e a rotação da barra. A Cobertura cobre este volume tal como está desenhado e a exportação CAD escreve-o; Janelas e Sombreamento e Ventilação estão a passar para ele — até lá lêem a barra, e a Ventilação acrescenta as alas estendidas.',
   'roof-albedo':
-    'A cor da cobertura decide quanto do sol a cobertura absorve. Segue as mesmas três classes de cor das paredes no separador Local — clara α 0,4, média 0,5, escura 0,8 (RCCTE, Quadro V.5, retomado no REH pelo Despacho n.º 15793-K/2013) — e o albedo indicado é a parte reflectida, 1 − α. De toda a envolvente, a cobertura é a que recebe mais de frente o sol alto de Verão, pelo que a sua cor pesa na estação de arrefecimento pelo menos tanto como a das paredes; superfícies claras são o conselho corrente para climas quentes (Lechner; Gonçalves &amp; Graça). O <b>Ajuste albedo</b> lê-a exactamente como as paredes, contra o verão deste local — de Junho a Setembro a média é <b>%1 °C</b>, um verão <b>%2</b> — sem peso a 17 °C ou menos e com peso total a 23 °C ou mais; a caixa de baixo dá o próprio albedo. Esta aplicação lê uma telha cerâmica pelo seu tom: uma telha pálida ou envelhecida como vermelho-claro, uma telha carregada como vermelho-escuro. A cobertura toma a cor em todas as vistas 3D.',
+    'A cor da cobertura decide quanto do sol a cobertura absorve. Segue as mesmas três classes de cor das paredes no separador Local — clara α 0,4, média 0,5, escura 0,8 (RCCTE, Quadro V.5, retomado no REH pelo Despacho n.º 15793-K/2013) — e o albedo indicado é a parte reflectida, 1 − α. De toda a envolvente, a cobertura é a que recebe mais de frente o sol alto de Verão, pelo que a sua cor pesa na estação de arrefecimento pelo menos tanto como a das paredes; superfícies claras são o conselho corrente para climas quentes (Lechner; Gonçalves &amp; Graça). O <b>Ajuste albedo</b> lê-a exactamente como as paredes, contra o verão deste local — de Junho a Setembro a média é <b>%1 °C</b>, um verão <b>%2</b> — sem peso a 17 °C ou menos e com peso total a 23 °C ou mais; a caixa de baixo dá o próprio albedo. Esta aplicação lê uma telha cerâmica pelo seu tom: uma telha pálida ou envelhecida como vermelho-claro, uma telha carregada como vermelho-escuro. A cobertura toma a cor em todas as vertentes, em todas as vistas 3D.',
   'site-windows':
     'As janelas do modelo são as dimensionadas em <b>Janelas e Sombreamento</b> — a mesma largura, peitoril e padieira, cada uma dada pela razão vão/parede da sua fachada — pelo que rodar aqui a planta roda-as com ela. Cada etiqueta azul indica para onde essa janela fica realmente virada depois de rodada a planta, depois a largura × altura e a razão vão/parede da fachada; em Janelas e Sombreamento as fachadas mantêm os nomes que têm com a fachada principal a sul. A regra para as ler: <b>quanto maior a janela, mais deve estar virada a sul; quanto menor, mais fica virada a norte</b> (norte e sul trocam abaixo do equador). O vidro a sul recolhe o sol baixo de Inverno e é o mais fácil de sombrear do sol alto de Verão; o vidro a norte dá luz difusa e uniforme, mas quase não recebe sol de Inverno enquanto perde calor (Lechner; Gonçalves &amp; Graça). O <b>Ajuste vãos</b> lê-a: cada janela conta como uma seta que sai da sua fachada, tão longa quanto o vidro que a sua razão vão/parede pede, e o ajuste é 100 quando a soma aponta a sul, 50 a nascente ou poente, 0 a norte. As dimensões mudam-se em Janelas e Sombreamento; a rotação da planta, aqui, decide para onde olham. Janelas e Sombreamento desenha cada janela como uma faixa única no piso térreo, com no máximo 92 % da fachada — com dois ou três pisos as faixas podem atingir esse limite e parecer iguais, embora a razão vão/parede, e o ajuste, continuem diferentes. Numa planta quebrada cada parede com pelo menos 1,5 m recebe a janela da sua orientação, dimensionada pela sua própria área, e a etiqueta conta as janelas viradas para esse lado com as suas larguras; o <b>Ajuste vãos</b> soma então todo o vidro de cada orientação.',
   'clim-method':
@@ -8988,7 +9000,7 @@ Object.assign(PT_HINT, {
   'site-albedo':
     'A cor das paredes decide quanto do sol a envolvente absorve. Os acabamentos seguem as três classes de cor da regulamentação térmica portuguesa — clara α 0,4, média 0,5, escura 0,8 (RCCTE, Quadro V.5, retomado no REH pelo Despacho n.º 15793-K/2013) — e o albedo indicado é a parte reflectida, 1 − α. A cor é uma decisão de Verão: o REH só conta o sol absorvido pelas paredes opacas na estação de arrefecimento, e as superfícies claras são o conselho corrente para climas quentes (Lechner; Gonçalves &amp; Graça). Por isso o <b>Ajuste do albedo</b> pesa cada degrau acima da classe clara pelo verão deste local — de Junho a Setembro a média é aqui de <b>%1 °C</b>, um verão <b>%2</b> — sem peso a 17 °C ou menos e com peso total a 23 °C ou mais. A caixa abaixo dá o próprio albedo e nomeia o verão contra o qual é lido. Dentro de cada classe a regulamentação dá um só valor; uma caiação fresca reflecte mais do que uma tinta creme. As faixas de cor 80/50 são cortes didácticos desta aplicação. As paredes tomam a cor em todas as vistas 3D; a cobertura mantém o seu acabamento.',
   'roof-score':
-    'As duas caixas do canto lêem a inclinação tal como Galloway e Lechner fixam os ideais. <b>Inclinação solar</b> mede a sua inclinação contra o alvo próprio deste local, <b>%1°</b>: o valor de Inverno (%2°) e o de Verão (%3°) ponderados pelo balanço do Clima, %4 meses de aquecimento (média abaixo de 18 °C) para %5 de arrefecimento (acima de 22 °C). Dá 100 sobre o alvo e 0 a 30° dele, a distância inteira entre os ideais sazonais. <b>Sol de %6</b> é a fracção do feixe do meio-dia dessa estação que a vertente sul recebe de frente — o cosseno do ângulo de incidência, pelo que um telhado plano lê o que leria um colector horizontal. Muda devagar junto ao ideal: 10° de desvio custam menos de 2 %. As faixas de cor 80/50 e 95/85 são cortes didácticos desta aplicação, não números das fontes. Um telhado plano não tem inclinação a julgar: os seus colectores pedem estrutura própria.',
+    'Uma só pontuação lê a inclinação. <b>Inclinação · % do melhor</b> é o sol do ano na vertente virada para a fachada principal à sua inclinação, como parte do sol à melhor inclinação para essa direcção neste local — encontrada grau a grau, a partir da irradiação do próprio local (ver os colectores abaixo): a produção dos colectores escolhidos ou, sem nenhum, o sol no plano, que é o que o fotovoltaico lê. Muda devagar perto da melhor inclinação — 10° de desvio custam cerca de 1 a 2 % — pelo que qualquer inclinação que um telhado aguente pontua alto; só cai depressa muito longe dela. O calibre verde junto à vertente desenha as regras práticas de Galloway e Lechner para o sol do meio-dia numa vertente a sul — Inverno %1°, Verão %2°, anual %3° — sobre o balanço deste local de %4 meses de aquecimento (média abaixo de 18 °C) para %5 de arrefecimento (acima de 22 °C); arraste a vertente até ficar paralela a um raio para o tomar. A melhor inclinação para todo o ano fica perto do valor anual, mais baixa onde o sol de verão é forte. As faixas de cor 97/90 são cortes didácticos desta aplicação. Uma cobertura plana não tem inclinação a avaliar: os seus colectores tomam a sua própria estrutura.',
   'ori-roof':
     'Uma superfície a sul recolhe o máximo quando o raio do meio-dia lhe chega quase perpendicular: <b>Inverno = latitude + 15°, Verão = latitude − 15°, anual = latitude</b> (Galloway; Lechner) — aqui <b>%1° / %2° / %3°</b>. %4. Os telhados tradicionais portugueses de telha ficam muito mais baixos, pelo que os colectores pedem em geral a sua própria estrutura — a tensão é a lição.',
   'ori-ff':
