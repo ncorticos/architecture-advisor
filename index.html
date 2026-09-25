@@ -386,6 +386,12 @@ footer{border-top:1px solid var(--line); margin-top:26px; background:var(--wash)
 .bench .effect{font-size:12px; color:var(--ink2); line-height:1.55; padding:2px 2px 6px}
 .bench .effect b{font-family:var(--mono)}
 .bench .keys{font-size:11px; color:var(--muted); line-height:1.5; margin-top:8px}
+.bench .rail .ctl,.bench .rail .seg{flex-wrap:wrap}
+.bench .rail .hint{font-size:11px; line-height:1.45}
+.bench .props .controls.fpick{flex-direction:row; flex-wrap:wrap; align-items:center; gap:4px}
+.bench .fpick .hint{flex-basis:100%; margin-top:2px}
+.bench .readings{margin:8px 0 0; gap:6px}
+.bench .readings .pill{white-space:normal; line-height:1.5}
 @media(max-width:1100px){.bench{grid-template-columns:1fr}.bench .rgroup{flex-direction:row; flex-wrap:wrap}.bench .rgroup .btn{width:auto}
   .bench .props .controls{flex-direction:row; flex-wrap:wrap}}
 </style>
@@ -632,7 +638,7 @@ footer{border-top:1px solid var(--line); margin-top:26px; background:var(--wash)
 /* ------------------------------------------------------------ 0. IDENTITY -- */
 const APP = {
   name:        'Architecture Advisor',
-  version:     '1.74.0',
+  version:     '1.75.0',
   author:      'Nuno Dinis Cortiços',
   institution: 'Lisbon School of Architecture, Universidade de Lisboa',
   builtWith:   'Claude Opus 5 (Anthropic)',
@@ -1856,25 +1862,35 @@ const albedoFitFor = (key, w) => {
   const f = finishOf(key);
   return f ? Math.round(clamp(100 * (1 - w * (FINISH_ALPHA[f.cls] - 0.4) / 0.4), 0, 100)) : null;
 };
-/* --- the plan: one bar, or a bar broken into an L, a T or an H --------------
-   Local metres: x along the main facade, y toward the back, the main facade
-   on y = −D/2 and the bar centred on the origin. A break adds wings — an L
-   one at an end, a T one at the middle, an H one at each end reaching both
-   ways. A wing's reach e is signed: behind the bar when positive, in front
-   of the main facade when negative. The pieces never overlap, so their areas
-   add and their boxes can be ray-cast one by one. */
-function planRects(G) {
-  const L = G.L, D = G.D, bar = [-L / 2, -D / 2, L / 2, D / 2], f = G.form || 'rect', wg = G.wing;
-  if (f === 'rect' || !wg) return [bar];
-  const w = wg.w, e = wg.e, yb = e >= 0 ? [D / 2, D / 2 + e] : [-D / 2 + e, -D / 2];
-  if (f === 'L') {
-    const xr = wg.side < 0 ? [-L / 2, -L / 2 + w] : [L / 2 - w, L / 2];
-    return [bar, [xr[0], yb[0], xr[1], yb[1]]];
+/* --- the plan: one bar, broken, carved or opened on a patio ------------------
+   Local metres: x along the main facade, y toward the back, the main facade on
+   y = −D/2, the bar centred on the origin. A break works the bar's long sides:
+   an L at one end, a T at the middle, an H at both ends. The wing's reach e is
+   signed — out past the chosen face when positive, carved into the bar when
+   negative — so one drag runs from a wing, through the plain bar, to a notch
+   in it. face picks the long side worked (+1 behind, −1 the main facade), side
+   the L's end. A patio is a hole opened in the bar. The plan is the solid
+   rectangles minus the carved ones. */
+function planParts(G) {
+  const L = G.L, D = G.D, f = G.form || 'rect', wg = G.wing, pos = [[-L / 2, -D / 2, L / 2, D / 2]], neg = [];
+  if (f !== 'rect' && wg && Math.abs(wg.e) >= 0.5) {
+    const w = wg.w, e = wg.e, fc = wg.face < 0 ? -1 : 1, a = Math.abs(e);
+    const band = e > 0 ? (fc > 0 ? [D / 2, D / 2 + a] : [-D / 2 - a, -D / 2])   // out past the face
+                       : (fc > 0 ? [D / 2 - a, D / 2] : [-D / 2, -D / 2 + a]);  // carved in from it
+    if (f === 'L') {
+      const leg = wg.side < 0 ? [-L / 2, -L / 2 + w] : [L / 2 - w, L / 2], rest = wg.side < 0 ? [-L / 2 + w, L / 2] : [-L / 2, L / 2 - w];
+      if (e > 0) pos.push([leg[0], band[0], leg[1], band[1]]); else neg.push([rest[0], band[0], rest[1], band[1]]);
+    } else if (f === 'T') {
+      if (e > 0) pos.push([-w / 2, band[0], w / 2, band[1]]);
+      else neg.push([-L / 2, band[0], -w / 2, band[1]], [w / 2, band[0], L / 2, band[1]]);
+    } else if (f === 'H') {
+      if (e > 0) [[D / 2, D / 2 + a], [-D / 2 - a, -D / 2]].forEach(b => pos.push([-L / 2, b[0], -L / 2 + w, b[1]], [L / 2 - w, b[0], L / 2, b[1]]));
+      else neg.push([-L / 2 + w, D / 2 - a, L / 2 - w, D / 2], [-L / 2 + w, -D / 2, L / 2 - w, -D / 2 + a]);
+    }
   }
-  if (f === 'T') return [bar, [-w / 2, yb[0], w / 2, yb[1]]];
-  const a = Math.abs(e);   // H: both ends, both ways
-  return [bar, [L / 2 - w, D / 2, L / 2, D / 2 + a], [L / 2 - w, -D / 2 - a, L / 2, -D / 2],
-    [-L / 2, D / 2, -L / 2 + w, D / 2 + a], [-L / 2, -D / 2 - a, -L / 2 + w, -D / 2]];
+  const pt = G.patio;
+  if (pt && pt.on && pt.ok !== false) { const w = pt.ew || pt.w, d = pt.ed || pt.d; neg.push([pt.cx - w / 2, pt.cy - d / 2, pt.cx + w / 2, pt.cy + d / 2]); }
+  return { pos, neg };
 }
 /** Does a ray from p along d meet the box over plan rectangle r, up to height h? (slabs) */
 function rayHitsBox(p, d, r, h) {
@@ -1890,32 +1906,56 @@ function rayHitsBox(p, d, r, h) {
   }
   return true;
 }
-/** Keeps a wing inside what its bar can carry, in half metres. */
+/** Keeps a wing inside what its bar can carry, in half metres: at least 2 m
+    of building left beside a notch, a wing no longer than its bar. */
 function fixWing(G) {
   if (!G.form || G.form === 'rect') return;
-  const wg = G.wing || (G.wing = { w:4, e:5, side:1 });
+  const wg = G.wing || (G.wing = { w:4, e:5, side:1, face:1 });
   const maxW = G.form === 'H' ? (G.L - 2) / 2 : G.L - 2;
   wg.w = Math.round(clamp(wg.w, 2, Math.max(2, maxW)) * 2) / 2;
-  const a = Math.round(clamp(Math.abs(wg.e), 2, 16) * 2) / 2;
-  wg.e = G.form === 'H' ? a : (wg.e < 0 ? -a : a);
+  const maxIn = G.form === 'H' ? (G.D - 2) / 2 : G.D - 2;
+  wg.e = Math.round(clamp(wg.e, -Math.max(0, maxIn), 16) * 2) / 2;
   wg.side = wg.side < 0 ? -1 : 1;
+  wg.face = wg.face < 0 ? -1 : 1;
+}
+/** The patio as built: the size the student asked for (w × d, kept as set)
+    cut to leave at least 2 m of building round it and 2 m clear of any
+    recess (ew × ed); ok = false when no patio fits at all. */
+function fixPatio(G) {
+  const pt = G.patio;
+  if (!pt || !pt.on) return;
+  pt.cx = 0; pt.cy = 0;
+  pt.w = Math.round(clamp(pt.w, 2, 40) * 2) / 2;
+  pt.d = Math.round(clamp(pt.d, 2, 40) * 2) / 2;
+  pt.ew = Math.max(2, Math.min(pt.w, Math.floor((G.L - 4) * 2) / 2));
+  pt.ed = Math.max(2, Math.min(pt.d, Math.floor((G.D - 4) * 2) / 2));
+  const carved = (() => { const p0 = pt.on; pt.on = false; const r = planParts(G).neg; pt.on = p0; return r; })();
+  const hits = () => carved.some(r => pt.cx - pt.ew / 2 - 2 < r[2] && pt.cx + pt.ew / 2 + 2 > r[0] && pt.cy - pt.ed / 2 - 2 < r[3] && pt.cy + pt.ed / 2 + 2 > r[1]);
+  for (let k = 0; k < 80 && hits(); k++) {
+    if (pt.ed > 2) pt.ed -= 0.5; else if (pt.ew > 2) pt.ew -= 0.5; else break;
+  }
+  pt.ok = G.L - 4 >= 2 && G.D - 4 >= 2 && !hits();
 }
 /**
- * The outline of a union of rectangles, read off the grid their edges cut:
- * the filled cells, the area, the perimeter and the boundary walls as merged
- * segments, each with its outward normal.
+ * The outline of the plan — solid rectangles minus carved ones — read off
+ * the grid their edges cut: the filled cells, the area, the perimeter, and
+ * the boundary walls as merged segments with their outward normals (a
+ * patio's walls face into it). Also the plan's maximal rectangles: every
+ * largest axis-aligned rectangle inside it, which the roof and the shading
+ * read the volume through.
  */
-function planOutline(rects) {
-  const k = v => Math.round(v * 1000) / 1000;
-  const xs = [...new Set(rects.reduce((a, r) => a.concat([k(r[0]), k(r[2])]), []))].sort((a, b) => a - b);
-  const ys = [...new Set(rects.reduce((a, r) => a.concat([k(r[1]), k(r[3])]), []))].sort((a, b) => a - b);
-  const nx = xs.length - 1, ny = ys.length - 1;
-  const F = [];
+function planOutline(pos, neg) {
+  neg = neg || [];
+  const k = v => Math.round(v * 1000) / 1000, all = pos.concat(neg);
+  const xs = [...new Set(all.reduce((a, r) => a.concat([k(r[0]), k(r[2])]), []))].sort((a, b) => a - b);
+  const ys = [...new Set(all.reduce((a, r) => a.concat([k(r[1]), k(r[3])]), []))].sort((a, b) => a - b);
+  const nx = xs.length - 1, ny = ys.length - 1, F = [];
+  const inR = (r, x, y) => x > r[0] && x < r[2] && y > r[1] && y < r[3];
   for (let i = 0; i < nx; i++) {
     F.push([]);
     for (let j = 0; j < ny; j++) {
       const cx = (xs[i] + xs[i + 1]) / 2, cy = (ys[j] + ys[j + 1]) / 2;
-      F[i].push(rects.some(r => cx > r[0] && cx < r[2] && cy > r[1] && cy < r[3]));
+      F[i].push(pos.some(r => inR(r, cx, cy)) && !neg.some(r => inR(r, cx, cy)));
     }
   }
   const at = (i, j) => i >= 0 && j >= 0 && i < nx && j < ny && F[i][j];
@@ -1943,7 +1983,219 @@ function planOutline(rects) {
     }
   }
   segs.forEach(sg => { sg.len = Math.hypot(sg.b[0] - sg.a[0], sg.b[1] - sg.a[1]); });
-  return { rects, cells, area, segs, perimeter:segs.reduce((a, sg) => a + sg.len, 0), bbox:[xs[0], ys[0], xs[nx], ys[ny]] };
+  /* maximal rectangles: every filled block of cells that cannot grow in any
+     direction without leaving the plan */
+  const full = (i0, j0, i1, j1) => { for (let i = i0; i <= i1; i++) for (let j = j0; j <= j1; j++) if (!F[i][j]) return false; return true; };
+  const boxes = [];
+  for (let i0 = 0; i0 < nx; i0++) for (let j0 = 0; j0 < ny; j0++) {
+    if (!F[i0][j0]) continue;
+    for (let i1 = i0; i1 < nx; i1++) {
+      if (!F[i1][j0]) break;
+      for (let j1 = j0; j1 < ny; j1++) {
+        if (!full(i0, j0, i1, j1)) break;
+        const grow = (i0 > 0 && full(i0 - 1, j0, i0 - 1, j1)) || (i1 < nx - 1 && full(i1 + 1, j0, i1 + 1, j1))
+                  || (j0 > 0 && full(i0, j0 - 1, i1, j0 - 1)) || (j1 < ny - 1 && full(i0, j1 + 1, i1, j1 + 1));
+        if (!grow) boxes.push([xs[i0], ys[j0], xs[i1 + 1], ys[j1 + 1]]);
+      }
+    }
+  }
+  const bb = cells.length ? [Math.min(...cells.map(c => c[0])), Math.min(...cells.map(c => c[1])), Math.max(...cells.map(c => c[2])), Math.max(...cells.map(c => c[3]))] : [0, 0, 0, 0];
+  return { cells, area, segs, boxes, perimeter:segs.reduce((a, sg) => a + sg.len, 0), bbox:bb,
+    inside:(x, y) => cells.some(c => x >= c[0] && x <= c[2] && y >= c[1] && y <= c[3]) };
+}
+/** The plan outline for a model, rebuilt only when the plan changes. */
+const PLAN_CACHE = { key:null, val:null };
+function planModel(G) {
+  fixWing(G); fixPatio(G);
+  const wg = G.wing || {}, pt = G.patio || {};
+  const key = [G.L, G.D, G.form, wg.w, wg.e, wg.side, wg.face, pt.on, pt.ok, pt.w, pt.d].join('|');
+  if (PLAN_CACHE.key !== key) {
+    const pp = planParts(G);
+    PLAN_CACHE.val = Object.assign(planOutline(pp.pos, pp.neg), { key, parts:pp });
+    PLAN_CACHE.key = key;
+  }
+  return PLAN_CACHE.val;
+}
+/* --- convex polygons in plan: clip by a half-plane, subtract a convex set --- */
+/** Keeps the part of convex polygon P where a·x + b·y + c ≥ 0. */
+function clipHalf(P, a, b, c) {
+  const out = [], val = q => a * q[0] + b * q[1] + c;
+  for (let i = 0; i < P.length; i++) {
+    const p = P[i], q = P[(i + 1) % P.length], vp = val(p), vq = val(q);
+    if (vp >= 0) out.push(p);
+    if ((vp >= 0) !== (vq >= 0)) { const u = vp / (vp - vq); out.push([p[0] + (q[0] - p[0]) * u, p[1] + (q[1] - p[1]) * u]); }
+  }
+  return out;
+}
+const polyArea = P => { let s = 0; for (let i = 0; i < P.length; i++) { const p = P[i], q = P[(i + 1) % P.length]; s += p[0] * q[1] - q[0] * p[1]; } return s / 2; };
+/** P minus the convex set where every half-plane h (a·x + b·y + c > th) holds, as convex pieces. */
+function subtractConvex(P, hs) {
+  const out = [];
+  let rest = P;
+  for (const h of hs) {
+    const outside = clipHalf(rest, -h.a, -h.b, -h.c + h.th);
+    if (outside.length > 2 && Math.abs(polyArea(outside)) > 1e-6) out.push(outside);
+    rest = clipHalf(rest, h.a, h.b, h.c - h.th);
+    if (rest.length < 3 || Math.abs(polyArea(rest)) < 1e-9) return out;
+  }
+  return out;
+}
+/**
+ * The roof over any plan the Site tab draws. Every maximal rectangle of the
+ * plan carries the Roof tab's roof along its own long side — flat, a shed
+ * rising away from the main facade, a gable, or a hip — and the building's
+ * roof is the highest of them wherever they overlap: hips round a plain bar,
+ * valleys where two wings meet, a courtyard's roof falling into its patio
+ * (for a hip roof this is exactly the straight skeleton of the outline).
+ * Faces come out exact, as convex pieces in plan, each on its plane; the
+ * walls rise to the roof's own profile along them, so a gable's end wall
+ * carries its triangle.
+ */
+const ROOF_CACHE = { key:null, val:null };
+function roofModel(G, RF) {
+  const pl = planModel(G), H0 = G.fl * G.fh, n = RF.n, th = n === 0 ? 0 : RF.th, t = Math.tan(th * RAD);
+  const key = pl.key + '|' + n + '|' + th + '|' + H0;
+  if (ROOF_CACHE.key === key) return ROOF_CACHE.val;
+  const facesOf = r => {
+    const [x0, y0, x1, y1] = r, F = (a, b, c, k) => ({ a, b, c, key:k });
+    if (n === 0) return [F(0, 0, 0, 'flat')];
+    if (n === 1) return [F(0, 1, -pl.bbox[1], 'shed')];   // one plane over the whole plan, rising from its front
+    const sd = { x0:F(1, 0, -x0, 'x+' + x0), x1:F(-1, 0, x1, 'x-' + x1), y0:F(0, 1, -y0, 'y+' + y0), y1:F(0, -1, y1, 'y-' + y1) };
+    if (n === 2) return (x1 - x0) >= (y1 - y0) ? [sd.y0, sd.y1] : [sd.x0, sd.x1];
+    return [sd.y0, sd.y1, sd.x0, sd.x1];
+  };
+  const boxes = pl.boxes, BF = boxes.map(facesOf);
+  /** Height above the eaves at a point of the plan, and the face it is on. */
+  const at = (x, y) => {
+    let best = -Infinity, k = null, pf = null;
+    boxes.forEach((r, i) => {
+      if (x < r[0] - 1e-9 || x > r[2] + 1e-9 || y < r[1] - 1e-9 || y > r[3] + 1e-9) return;
+      let v = Infinity, kf = null;
+      BF[i].forEach(f => { const d = f.a * x + f.b * y + f.c; if (d < v - 1e-9) { v = d; kf = f; } });
+      if (v > best + 1e-9) { best = v; k = kf.key; pf = kf; }
+    });
+    return k === null ? null : { d:best, key:k, f:pf };
+  };
+  const pieces = [];
+  boxes.forEach((r, i) => {
+    BF[i].forEach(f => {
+      let P = [[r[0], r[1]], [r[2], r[1]], [r[2], r[3]], [r[0], r[3]]];
+      BF[i].forEach(g => { if (g !== f) P = P.length > 2 ? clipHalf(P, g.a - f.a, g.b - f.b, g.c - f.c) : P; });
+      if (P.length < 3 || Math.abs(polyArea(P)) < 1e-6) return;
+      let parts = [P];
+      boxes.forEach((r2, j) => {
+        if (j === i) return;
+        const tie = j < i ? -1e-9 : 1e-9;
+        const hs = [{ a:1, b:0, c:-r2[0], th:0 }, { a:-1, b:0, c:r2[2], th:0 }, { a:0, b:1, c:-r2[1], th:0 }, { a:0, b:-1, c:r2[3], th:0 }]
+          .concat(BF[j].map(g => ({ a:g.a - f.a, b:g.b - f.b, c:g.c - f.c, th:tie })));
+        parts = parts.reduce((acc, Q) => acc.concat(subtractConvex(Q, hs)), []);
+      });
+      parts.forEach(Q => pieces.push({ key:f.key, f, poly:Q, area:Math.abs(polyArea(Q)) }));
+    });
+  });
+  const zOf = (f, x, y) => H0 + t * (f.a * x + f.b * y + f.c);
+  /* the edges worth a line: eaves, ridges, hips and valleys — not the seams
+     the subtraction cut inside one plane */
+  pieces.forEach(pc => {
+    const P = pc.poly, cw = polyArea(P) < 0 ? -1 : 1;
+    pc.edges = [];
+    for (let i = 0; i < P.length; i++) {
+      const a = P[i], b = P[(i + 1) % P.length], dx = b[0] - a[0], dy = b[1] - a[1], L2 = Math.hypot(dx, dy);
+      if (L2 < 1e-6) continue;
+      const ox = cw * dy / L2 * 0.03, oy = -cw * dx / L2 * 0.03, mx = (a[0] + b[0]) / 2 + ox, my = (a[1] + b[1]) / 2 + oy;
+      const other = pl.inside(mx, my) ? at(mx, my) : null;
+      if (!other || other.key !== pc.key) pc.edges.push([a, b]);
+    }
+    let cx = 0, cy = 0, A6 = 0;   // the area centroid, where a plane's mean height sits
+    for (let i = 0; i < P.length; i++) { const p0 = P[i], p1 = P[(i + 1) % P.length], cr = p0[0] * p1[1] - p1[0] * p0[1]; cx += (p0[0] + p1[0]) * cr; cy += (p0[1] + p1[1]) * cr; A6 += 3 * cr; }
+    const c = Math.abs(A6) > 1e-12 ? [cx / A6, cy / A6] : P[0];
+    pc.centroid = c;
+    pc.dMid = pc.f.a * c[0] + pc.f.b * c[1] + pc.f.c;
+  });
+  /* Where one piece's roof ends above its neighbour's — a taller wing's
+     gable end over a lower roof — the roof steps, and the step is wall. The
+     steps can only lie on the edges between the plan's cells: each is
+     sampled for the height either side and kept where they differ, as
+     strips from the lower roof up to the higher one. */
+  const steps = [], cellKey = (x, y) => x.toFixed(3) + '|' + y.toFixed(3);
+  const cellAt = new Map(pl.cells.map(c => [cellKey(c[0], c[1]), c]));
+  pl.cells.forEach(c => {
+    [['x', c[2], c[1], c[3] - c[1]], ['y', c[0], c[3], c[2] - c[0]]].forEach(([ax, x0, y0, len]) => {
+      if (!cellAt.has(ax === 'x' ? cellKey(c[2], c[1]) : cellKey(c[0], c[3]))) return;
+      const nS = Math.max(2, Math.ceil(len / 0.05)), e = 0.005, smp = [];
+      for (let k = 0; k <= nS; k++) {
+        /* the ends are read a hair inside the edge: on a cell corner the
+           heights belong to the cells round it, not to this edge */
+        const u = len * k / nS, us = clamp(u, 0.01, len - 0.01), x = ax === 'x' ? x0 : x0 + us, y = ax === 'x' ? y0 + us : y0;
+        const A = ax === 'x' ? at(x - e, y) : at(x, y - e), B = ax === 'x' ? at(x + e, y) : at(x, y + e);
+        smp.push([u, A ? Math.max(0, A.d) : 0, B ? Math.max(0, B.d) : 0]);
+      }
+      /* runs where one side stands above the other by the same sign */
+      const sg = q => q[1] - q[2] > 1e-6 ? 1 : q[2] - q[1] > 1e-6 ? -1 : 0;
+      let k = 0;
+      while (k < smp.length) {
+        const sgn = sg(smp[k]);
+        if (!sgn) { k++; continue; }
+        let j = k;
+        while (j + 1 < smp.length && sg(smp[j + 1]) === sgn) j++;
+        const run = smp.slice(Math.max(0, k - 1), Math.min(smp.length, j + 2)).map(q => [q[0], Math.min(q[1], q[2]), Math.max(q[1], q[2])]);
+        const keep = [run[0]];   // drop the samples both edges pass straight through
+        for (let m = 1; m < run.length - 1; m++) {
+          const p0 = keep[keep.length - 1], p1 = run[m], p2 = run[m + 1];
+          const off = i => Math.abs((p1[i] - p0[i]) * (p2[0] - p0[0]) - (p2[i] - p0[i]) * (p1[0] - p0[0]));
+          if (off(1) > 1e-6 || off(2) > 1e-6) keep.push(p1);
+        }
+        keep.push(run[run.length - 1]);
+        /* the step faces the lower side: +x or +y when the first side stands higher */
+        const nrm = ax === 'x' ? [sgn, 0] : [0, sgn];
+        const area = keep.reduce((acc, q, m) => m ? acc + (q[0] - keep[m - 1][0]) * t * ((q[2] - q[1]) + (keep[m - 1][2] - keep[m - 1][1])) / 2 : 0, 0);
+        if (area > 1e-3) steps.push({ a:[x0, y0], ax, n:nrm, prof:keep.map(q => [q[0], H0 + t * q[1], H0 + t * q[2]]),
+          area });
+        k = j + 1;
+      }
+    });
+  });
+  /* each outline wall's top: the roof's height along it, just inside */
+  const walls = pl.segs.map(sg => {
+    const ux = (sg.b[0] - sg.a[0]) / sg.len, uy = (sg.b[1] - sg.a[1]) / sg.len, steps = Math.max(2, Math.ceil(sg.len / 0.05));
+    const prof = [];
+    for (let k2 = 0; k2 <= steps; k2++) {
+      const u = sg.len * k2 / steps, x = sg.a[0] + ux * u - sg.n[0] * 0.005, y = sg.a[1] + uy * u - sg.n[1] * 0.005;
+      const r0 = at(x, y);
+      prof.push([u, H0 + t * Math.max(0, r0 ? r0.d : 0)]);
+    }
+    const keep = [prof[0]];   // drop the points a straight run passes through
+    for (let k2 = 1; k2 < prof.length - 1; k2++) {
+      const p0 = keep[keep.length - 1], p1 = prof[k2], p2 = prof[k2 + 1];
+      if (Math.abs((p1[1] - p0[1]) * (p2[0] - p0[0]) - (p2[1] - p0[1]) * (p1[0] - p0[0])) > 1e-6) keep.push(p1);
+    }
+    keep.push(prof[prof.length - 1]);
+    return { sg, prof:keep, area:keep.reduce((acc, q, k2) => k2 ? acc + (q[0] - keep[k2 - 1][0]) * (q[1] + keep[k2 - 1][1]) / 2 : 0, 0) };
+  });
+  const roofArea = pieces.reduce((a, pc) => a + pc.area, 0) / Math.cos(th * RAD);
+  const roofVol = pieces.reduce((a, pc) => a + pc.area * t * pc.dMid, 0);
+  const ridge = H0 + t * Math.max(0, ...pieces.map(pc => Math.max(...pc.poly.map(q => pc.f.a * q[0] + pc.f.b * q[1] + pc.f.c))));
+  const val = { key, pl, H0, t, th, n, pieces, walls, steps, at, zOf, roofArea, roofVol, ridge,
+    zAt:(x, y) => { const r0 = at(x, y); return r0 ? H0 + t * r0.d : null; },
+    wallArea:walls.reduce((a, w) => a + w.area, 0) + steps.reduce((a, st) => a + st.area, 0) };
+  ROOF_CACHE.key = key; ROOF_CACHE.val = val;
+  return val;
+}
+/** Local facade key of an outline wall, from its outward normal. */
+const segFace = sg => sg.n[1] < 0 ? 'S' : sg.n[1] > 0 ? 'N' : sg.n[0] > 0 ? 'E' : 'W';
+/**
+ * Windows spread over every wall of the plan: each wall at least 1.5 m long
+ * takes the window its orientation's WWR asks for — the Windows & Shading
+ * settings of the facade it faces like — centred on it, as wide as that
+ * glass needs at the set sill and head, up to 92 % of the wall. A wall that
+ * a wing or a notch leaves short simply has less glass.
+ */
+function segWindow(sg, G) {
+  const f = segFace(sg), o = OPEN && OPEN[f];
+  if (!o || !(o.wwr > 0) || sg.len < 1.5) return null;
+  const H0 = G.fl * G.fh, h = Math.max(0.3, o.headZ - o.sillZ);
+  const w = Math.min(sg.len * 0.92, o.wwr * sg.len * H0 / h);
+  return { f, w, h, sill:o.sillZ, head:o.headZ, uc:sg.len / 2, area:w * h, glass:o.wwr * sg.len * H0 };
 }
 /** The finish buttons, grouped by colour class; set() gets the key, or null
     when the chosen one is pressed again. */
@@ -2585,6 +2837,14 @@ function buildSite(host) {
      azimuth of the main (glazed) facade, clockwise from north. */
   host.appendChild(section('Plan geometry — stretch it, turn it',
     'The solid plan is yours; the green dashed plan is the Olgyay optimum for ' + K.code));
+  /* The workbench, as on Ventilation: the plan's tools on the left, the model
+     in the middle with its readings under it, sizes, sun and colour on the
+     right — every decision taken beside the model, never scrolled away from
+     it. The notes follow below. */
+  const bench = host.appendChild(el('div', { class:'bench' }));
+  const rail = bench.appendChild(el('div', { class:'rail' }));
+  const stage = bench.appendChild(el('div', { class:'stage' }));
+  const props = bench.appendChild(el('div', { class:'props' }));
   host.appendChild(hint('ori-lab',
     'Olgyay put the most sun on the facade in the underheated period and the least in the overheated one: New York–New Jersey came out <b>17° east of south</b>, Phoenix <b>25° east of south</b>, heat weighted four-to-one (1963, p. 58). For form, the square is never the optimum, north–south elongation is worse than the square, and the optimum always lies somewhere along east–west — 1:1.6 adopted for New York, 1:1.3 for Phoenix (p. 88), with east–west elongation “definitely desirable” in the temperate zone (p. 90). The green form interpolates those anchors for <b>%1</b>; stretch and turn yours against it.',
     [K.code]));
@@ -2632,61 +2892,19 @@ function buildSite(host) {
     return { total:Math.round(0.6 * ori + 0.4 * form), ori:Math.round(ori), form:Math.round(form) };
   }
   /**
-   * Form factor of the whole volume: exterior envelope ÷ heated volume.
-   * Single-zone box carrying the pitched roof above: walls to the eaves,
-   * gable triangles, roof planes and ground floor, all exterior. The same
-   * ratio the REH calls factor de forma — stated here as pure geometry,
-   * with no limits attached.
+   * Form factor of the whole volume: exterior envelope ÷ heated volume, read
+   * off the one model of the plan and its roof that Roof and Ventilation also
+   * draw — walls up to the roof's own profile round the whole outline (a
+   * patio's walls included), every roof plane at its pitch, the ground floor.
+   * Single zone, everything exterior: the ratio the REH calls factor de forma,
+   * stated here as pure geometry with no limits attached.
    */
   const labFF = () => {
-    const H0 = G.fl * G.fh;
-    const th = (RF.n === 0 ? 0 : RF.th) * RAD;   // a flat roof pitches nothing
-    const span = (RF.n === 0 || RF.n === 1) ? G.D : G.D / 2;
-    const rise = span * Math.tan(th);
-    const slope = span / Math.cos(th);
-    const rl = Math.max(0, G.L / 2 - G.D / 2);   // hip ridge half-length, 0 for a pyramid
-    const wallEW = 2 * G.L * H0 + (RF.n === 2 || RF.n === 3 ? 0 : G.L * rise);
-    const wallNS = 2 * G.D * H0 + ((RF.n === 1 || RF.n === 2) ? G.D * rise : 0);
-    /* Hip roof by the prismoidal formula — exact for the hipped solid,
-       collapsing to the pyramid (L=D) and the gable (L>>D) at its ends. */
-    const roof = RF.n === 3 ? (G.L + 2 * rl + G.D) * slope
-      : (RF.n === 2 ? 2 * slope : slope) * G.L;
-    const roofVol = RF.n === 3 ? Math.max(0, rise * G.D * (3 * G.L - G.D) / 6) : G.L * G.D * rise / 2;
-    if (planOf().rects.length > 1) return labFFBroken(H0, th);
-    const A = wallEW + wallNS + roof + G.L * G.D;
-    const V = G.L * G.D * H0 + roofVol;
-    return { H:H0 + rise, V, A, ff:A / V };
+    const m = roofModel(G, RF), A = m.wallArea + m.roofArea + m.pl.area, V = m.pl.area * m.H0 + m.roofVol;
+    return { H:m.ridge, V, A, ff:A / V };
   };
-  /**
-   * The same ratio for a broken plan. Walls to the eaves run the whole
-   * perimeter of the outline and the roof covers the plan area over the
-   * cosine of the pitch — both exact whatever the form, since every slope
-   * shares the pitch. The roof space — its volume, and the gable or shed
-   * walls rising above the eaves — is taken piece by piece, each piece
-   * roofed along its own long side; where the pieces meet it is an estimate.
-   */
-  function labFFBroken(H0, th) {
-    const pl = planOf();
-    let roofVol = 0, roofWalls = 0, riseMax = 0;
-    pl.rects.forEach(r => {
-      const a = r[2] - r[0], b = r[3] - r[1], Lp = Math.max(a, b), Dp = Math.min(a, b);
-      const rise = ((RF.n === 0 || RF.n === 1) ? Dp : Dp / 2) * Math.tan(th);
-      riseMax = Math.max(riseMax, rise);
-      roofVol += RF.n === 3 ? Math.max(0, rise * Dp * (3 * Lp - Dp) / 6) : Lp * Dp * rise / 2;
-      roofWalls += RF.n === 2 ? Dp * rise : RF.n === 1 ? (Lp + Dp) * rise : 0;
-    });
-    const A = pl.perimeter * H0 + roofWalls + pl.area / Math.cos(th) + pl.area;
-    const V = pl.area * H0 + roofVol;
-    return { H:H0 + riseMax, V, A, ff:A / V };
-  }
-  /** The plan outline, rebuilt only when the plan itself changes. */
-  let planCache = null;
-  function planOf() {
-    fixWing(G);
-    const key = [G.L, G.D, G.form, G.wing && G.wing.w, G.wing && G.wing.e, G.wing && G.wing.side].join('|');
-    if (!planCache || planCache.key !== key) planCache = Object.assign(planOutline(planRects(G)), { key });
-    return planCache;
-  }
+  /** The plan outline, shared with every later tab. */
+  const planOf = () => planModel(G);
   /**
    * The sun the building takes off its own walls: every outline wall sampled
    * about every 0.75 m along and at three heights, the day's sun every half
@@ -2699,7 +2917,7 @@ function buildSite(host) {
   const shadeCache = {};
   function selfShade(doy) {
     const pl = planOf(), H0 = G.fl * G.fh;
-    if (pl.rects.length < 2) return 0;
+    if (pl.boxes.length < 2) return 0;
     const key = pl.key + '|' + G.rot + '|' + H0 + '|' + doy;
     if (key in shadeCache) return shadeCache[key];
     const a = (G.rot - 180) * RAD, ca = Math.cos(a), sa = Math.sin(a);
@@ -2723,7 +2941,7 @@ function buildSite(host) {
         const w = p.n[0] * d[0] + p.n[1] * d[1];
         if (w <= 0) return;
         tot += w;
-        if (pl.rects.some(r => rayHitsBox([p.x, p.y, p.z], d, r, H0))) lost += w;
+        if (pl.boxes.some(r => rayHitsBox([p.x, p.y, p.z], d, r, H0))) lost += w;
       });
     }
     return (shadeCache[key] = tot > 0 ? 100 * lost / tot : 0);
@@ -2731,43 +2949,37 @@ function buildSite(host) {
   const SUN_DEC = noonSun(355), SUN_JUN = noonSun(172);   // site constants, CSV only
 
   /* --- the windows, as set on Windows & Shading ----------------------------
-     The same rectangle as windowRect() there — area = WWR × facade width ×
-     wall height, sill and head as set, width capped at 92 % of the facade —
-     so the windows drawn here are the windows sized there. Facades keep
-     their local keys (S is the main facade, the one the black arrow leaves
-     from); the compass name is the way each one really faces once the plan
-     is turned. */
+     Every wall of the outline long enough takes a window — a wing's walls, a
+     notch's, a patio's — each sized by the WWR, sill and head its orientation
+     has on Windows & Shading (segWindow), so a broken plan spreads its glass
+     over the walls it really has. Walls keep their local keys (S faces the
+     same way as the main facade, the one the black arrow leaves from); the
+     compass name is the way each one really faces once the plan is turned. */
   const WIN_KEYS = ['S', 'N', 'E', 'W'];
   const WIN_NORM = { S:[0, -1], N:[0, 1], E:[1, 0], W:[-1, 0] };
-  const winOf = f => {
-    const o = OPEN && OPEN[f];
-    if (!o || !(o.wwr > 0)) return null;
-    const width = (f === 'S' || f === 'N') ? G.L : G.D;
-    const h = Math.max(0.3, o.headZ - o.sillZ), glass = o.wwr * width * G.fl * G.fh;
-    const w = Math.min(width * 0.92, glass / h);
-    /* glass is the area the WWR asks for; the drawn strip, capped at 92 % of
-       the facade, can hold less once the plan has more than one floor */
-    return { w, h, sill:o.sillZ, head:o.headZ, wwr:o.wwr, glass };
-  };
+  /** Every window on the plan, one per outline wall that can take one. */
+  const winList = () => planOf().segs.map(sg => ({ sg, w:segWindow(sg, G) })).filter(o => o.w);
+  /** The glass an orientation carries, summed over all its walls, m². */
+  const glassOf = f => winList().filter(o => o.w.f === f).reduce((a, o) => a + o.w.glass, 0);
   /** Azimuth a local facade faces once the plan is turned, clockwise from north. */
   const faceAz = f => (G.rot + { S:0, N:180, E:270, W:90 }[f]) % 360;
   const faceDir = f => COMPASS8[Math.round(faceAz(f) / 45) % 8];
   const EQ_AZ = lat < 0 ? 0 : 180;   // the equator-facing azimuth
   /**
-   * Where the glass points: every window an arrow out of its facade, as long
-   * as the glass its WWR asks for; the fit reads the sum against the equator — 100 due south
-   * (north below the equator), 50 east or west, 0 facing the pole. Null with
-   * no glass, or with glass so balanced on opposite sides that it points
-   * nowhere. The sizes are set on Windows & Shading; the plan's turn, here,
-   * decides where they look.
+   * Where the glass points: every orientation an arrow out of its walls, as
+   * long as the glass their WWR asks for; the fit reads the sum against the
+   * equator — 100 due south (north below the equator), 50 east or west, 0
+   * facing the pole. Null with no glass, or with glass so balanced on
+   * opposite sides that it points nowhere. The sizes are set on Windows &
+   * Shading; the plan's turn, here, decides where they look.
    */
   const winAim = () => {
     let vx = 0, vy = 0, tot = 0;
     WIN_KEYS.forEach(f => {
-      const w = winOf(f);
-      if (!w) return;
+      const g = glassOf(f);
+      if (!(g > 0)) return;
       const a = faceAz(f) * RAD;
-      vx += w.glass * Math.sin(a); vy += w.glass * Math.cos(a); tot += w.glass;
+      vx += g * Math.sin(a); vy += g * Math.cos(a); tot += g;
     });
     if (tot <= 0 || Math.hypot(vx, vy) < 0.05 * tot) return null;
     const az = (Math.atan2(vx, vy) / RAD + 360) % 360;
@@ -2785,25 +2997,36 @@ function buildSite(host) {
      lifts a point straight up the screen. */
   const ISO_C = Math.cos(30 * RAD), ISO_S = Math.sin(30 * RAD);
   /** How far the plan reaches in front of the main facade on its centre
-      line, as local y — the bar's face, or a T stem or L wing standing in
-      front of it. The black arrow and its knob start there. */
-  const frontOf = () => Math.min.apply(null, planOf().rects.filter(r => r[0] <= 1e-6 && r[2] >= -1e-6).map(r => r[1]));
+      line, as local y — the bar's face, a T stem or L wing standing in front
+      of it, or the back of a notch carved into it. The black arrow and its
+      knob start there. */
+  const frontOf = () => {
+    const bs = planOf().boxes.filter(r => r[0] <= 1e-6 && r[2] >= -1e-6);
+    return bs.length ? Math.min.apply(null, bs.map(r => r[1])) : -G.D / 2;
+  };
+  /** The black arrow's length: out of the plan's front and clear of all of
+      it, so the knob never lands in a recess. */
+  const knobReach = () => Math.max(2.5, 0.3 * Math.min(G.L, G.D)) + Math.max(0, frontOf() - planOf().bbox[1]);
   /** The vertex points, in local plan metres: the bar's corners that are
-      still corners of the outline, and each wing's free inner corner. */
+      still corners of the outline; the break's point — a wing's free inner
+      corner, or a notch's inner corner, one point that runs continuously from
+      the one to the other through the plain bar; and the patio's corner. */
   const vertexHandles = () => {
     const pl = planOf(), out = [];
     const isVertex = (x, y) => pl.segs.some(sg => (Math.abs(sg.a[0] - x) < 1e-3 && Math.abs(sg.a[1] - y) < 1e-3) || (Math.abs(sg.b[0] - x) < 1e-3 && Math.abs(sg.b[1] - y) < 1e-3));
     [[1, 1], [-1, 1], [-1, -1], [1, -1]].forEach(([sx, sy]) => {
       if (isVertex(sx * G.L / 2, sy * G.D / 2)) out.push({ id:'bar', x:sx * G.L / 2, y:sy * G.D / 2 });
     });
-    if (pl.rects.length > 1) {
-      const r = pl.rects[1], far = G.form === 'H' || G.wing.e >= 0 ? r[3] : r[1];
-      const x = G.form === 'T' ? r[2] : G.form === 'L' && G.wing.side < 0 ? r[2] : r[0];
-      out.push({ id:'wing', x, y:far });
+    if (G.form && G.form !== 'rect' && G.wing) {
+      const wg = G.wing, fc = G.form === 'H' ? 1 : wg.face;
+      const x = G.form === 'L' ? wg.side * (G.L / 2 - wg.w) : G.form === 'T' ? wg.w / 2 : G.L / 2 - wg.w;
+      out.push({ id:'wing', x, y:fc * (G.D / 2 + wg.e) });
       /* an H hides the bar's corners inside its wings: its outer corner
          stretches the bar and the wings' reach together */
-      if (G.form === 'H') out.push({ id:'barH', x:G.L / 2, y:G.D / 2 + Math.abs(G.wing.e) });
+      if (G.form === 'H' && wg.e > 0) out.push({ id:'barH', x:G.L / 2, y:G.D / 2 + wg.e });
     }
+    const pt = G.patio;
+    if (pt && pt.on && pt.ok !== false) out.push({ id:'patio', x:pt.cx + pt.ew / 2, y:pt.cy - pt.ed / 2 });
     return out;
   };
   const labFrame = (W, H) => {
@@ -2811,7 +3034,7 @@ function buildSite(host) {
     const A = G.L * G.D;
     const Li = Math.sqrt(A * OI.r), Di = Math.sqrt(A / OI.r);
     const arr = Math.max(2.5, 0.3 * Math.min(G.L, G.D));
-    const reach = Math.max.apply(null, planOf().rects.map(r => Math.max(Math.hypot(r[0], r[1]), Math.hypot(r[2], r[1]), Math.hypot(r[0], r[3]), Math.hypot(r[2], r[3]))));
+    const bb = planOf().bbox, reach = Math.max(Math.hypot(bb[0], bb[1]), Math.hypot(bb[2], bb[1]), Math.hypot(bb[0], bb[3]), Math.hypot(bb[2], bb[3]));
     const half = Math.max(reach, Math.hypot(Li, Di) / 2);
     const need = half + arr + 1.5;             // world footprint radius, metres
     const Hgt = G.fl * G.fh;                    // world height to clear above the ring
@@ -2832,17 +3055,17 @@ function buildSite(host) {
   const pillOri = el('span', { class:'pill ok' });
   const pillForm = el('span', { class:'pill ok' });
   const pillWin = el('span', { class:'pill ok' });
-  host.appendChild(el('div', { class:'limitrow' }, [pillOri, pillForm, pillWin]));
   let refreshCol = () => {};   // the wall-colour pill, set up with its section below
   let refreshShade = () => {};   // the plan-form pill, set up with the model below
-  /** Largest and smallest window, named by the way they face (ties joined). */
+  /** The orientations with the most and the least glass, named by the way
+      they face (ties joined). */
   function refreshWin() {
-    const ws = WIN_KEYS.map(f => ({ f, w:winOf(f) })).filter(o => o.w);
+    const ws = WIN_KEYS.map(f => ({ f, g:glassOf(f) })).filter(o => o.g > 0);
     if (!ws.length) { pillWin.className = 'pill empty'; pillWin.textContent = t('No windows yet — size them on Windows & Shading'); return; }
-    const amax = Math.max.apply(null, ws.map(o => o.w.glass)), amin = Math.min.apply(null, ws.map(o => o.w.glass));
-    const dirs = a => ws.filter(o => Math.abs(o.w.glass - a) <= 0.01 * amax).map(o => faceDir(o.f)).join('/');
-    let txt = t('Largest window faces') + ' ' + dirs(amax);
-    if (amax - amin > 0.01 * amax) txt += ' · ' + t('smallest faces') + ' ' + dirs(amin);
+    const amax = Math.max.apply(null, ws.map(o => o.g)), amin = Math.min.apply(null, ws.map(o => o.g));
+    const dirs = a => ws.filter(o => Math.abs(o.g - a) <= 0.01 * amax).map(o => faceDir(o.f)).join('/');
+    let txt = t('Most glass faces') + ' ' + dirs(amax);
+    if (amax - amin > 0.01 * amax) txt += ' · ' + t('least faces') + ' ' + dirs(amin);
     const aim = winAim(), south = lat < 0 ? 'north' : 'south';
     if (!aim) { pillWin.className = 'pill empty'; pillWin.textContent = txt + ' — ' + t('opposite windows are equal: make the ' + south + ' one larger'); }
     else if (aim.fit >= 80) { pillWin.className = 'pill ok'; pillWin.textContent = txt + ' — ' + t('the right way round'); }
@@ -2922,8 +3145,10 @@ function buildSite(host) {
     labDraw();
     toast('Snapped to the Olgyay optimum');
   }});
-  host.appendChild(controls([cL, cD, cR, cF, cFH, snap]));
-  host.appendChild(controls([segDay, cH, playBtn]));
+  props.appendChild(el('div', { class:'gh', text:'Plan' }));
+  props.appendChild(controls([cL, cD, cR, cF, cFH]));
+  props.appendChild(el('div', { class:'gh', text:'Sun' }));
+  props.appendChild(controls([segDay, cH, playBtn]));
 
   /* --- the wall colour, read as albedo against this site's summer ----------
      Colour sets how much sun the walls absorb. It is a summer decision: the
@@ -2935,10 +3160,9 @@ function buildSite(host) {
   const { T:sumT, w:sumW, band:sumBand } = summerOf(C, lat);
   /** 0–100 fit of the wall colour to this summer; null until one is chosen. */
   const albedoFit = () => albedoFitFor(G.col, sumW);
-  host.appendChild(section('Wall colour — albedo', 'How much of the sun the walls reflect, read against this site’s summer'));
-  host.appendChild(finishPicker(() => G.col, k => { G.col = k; labDraw(); }));
+  props.appendChild(el('div', { class:'gh', text:'Wall colour — albedo' }));
+  props.appendChild(finishPicker(() => G.col, k => { G.col = k; labDraw(); })).classList.add('fpick');
   const pillCol = el('span', { class:'pill empty' });
-  host.appendChild(el('div', { class:'limitrow' }, [pillCol]));
   host.appendChild(hint('site-albedo',
     'The wall colour decides how much of the sun the envelope absorbs. The finishes follow the three colour classes of the Portuguese thermal regulation — light α 0.4, medium 0.5, dark 0.8 (RCCTE Quadro V.5, carried into the REH by Despacho n.º 15793-K/2013) — and the albedo shown is the part reflected, 1 − α. Colour is a summer decision: the REH counts the sun absorbed by opaque walls only in the cooling season, and light surfaces are the standard warm-climate advice (Lechner; Gonçalves &amp; Graça). So <b>Albedo fit</b> weighs every step above the light class by this site’s summer — June to September averages <b>%1 °C</b> here, a <b>%2</b> summer — with no weight at 17 °C or below and full weight at 23 °C or above. The box beneath it gives the albedo itself and names the summer it is read against. Within a class the regulation gives one value; a fresh lime wash reflects more than a cream paint. The 80/50 colour bands are this application’s teaching cuts. The walls take the colour in every 3D view; the roof keeps its own finish.',
     [fmt(sumT, 1), t(sumBand)]));
@@ -2951,9 +3175,9 @@ function buildSite(host) {
     else { pillCol.className = 'pill bad'; pillCol.textContent = head + t('the summer here will overheat these walls'); }
   };
 
-  labPanel = makePanel(host, {
+  labPanel = makePanel(stage, {
     title: 'Your plan against the optimum',
-    note: 'Isometric view, tilted from the south-west. Drag the plan to stretch it, drag the black knob to turn it, drive the sun through its day below. The windows are the ones sized on Windows & Shading.',
+    note: 'Isometric view, tilted from the south-west. Drag the plan to stretch it, the black knob to turn it, the black points to break it; drive the sun from the Sun controls. The windows are the ones sized on Windows & Shading, spread over every wall.',
     heightFn: w => w < 600 ? Math.round(w * 1.2 + 122) : Math.round(w / 1.5),
     render(ctx, W, H) {
       const GREEN = '#16A34A', BLUE = '#2563EB', narrow = W < 600;
@@ -3042,8 +3266,8 @@ function buildSite(host) {
       const cornersOf = r => [[r[0], r[1]], [r[2], r[1]], [r[2], r[3]], [r[0], r[3]]];
       /* every piece throws its own shadow; one path, filled once, so where
          they overlap the ground does not darken twice */
-      const partHulls = pl.rects.map(r => { const c = cornersOf(r).map(pt => rot(pt[0], pt[1], beta)); return hull(c.concat(c.map(p => [p[0] + ox, p[1] + oy]))); });
-      const scs = pl.rects.reduce((acc, r) => acc.concat(cornersOf(r).map(pt => rot(pt[0], pt[1], beta))), []);
+      const partHulls = pl.boxes.map(r => { const c = cornersOf(r).map(pt => rot(pt[0], pt[1], beta)); return hull(c.concat(c.map(p => [p[0] + ox, p[1] + oy]))); });
+      const scs = pl.boxes.reduce((acc, r) => acc.concat(cornersOf(r).map(pt => rot(pt[0], pt[1], beta))), []);
       const hp = hull(scs.concat(scs.map(p => [p[0] + ox, p[1] + oy])));   // the whole shadow's reach, for its label
       ctx.save();
       ringPath(ring(R * 0.985, 0)); ctx.clip();
@@ -3055,7 +3279,7 @@ function buildSite(host) {
         desk.path(qs, true);
       });
       ctx.fillStyle = 'rgba(20,23,26,.13)'; ctx.fill('nonzero');
-      stroke(ctx, pl.rects.length > 1 ? 'rgba(20,23,26,.2)' : 'rgba(20,23,26,.35)', 1); ctx.stroke();
+      stroke(ctx, pl.boxes.length > 1 ? 'rgba(20,23,26,.2)' : 'rgba(20,23,26,.35)', 1); ctx.stroke();
       ctx.restore();
       let far = scs[0], best = -1e9;
       scs.forEach(p => { const d = p[0] * ox + p[1] * oy; if (d > best) { best = d; far = p; } });
@@ -3111,46 +3335,24 @@ function buildSite(host) {
         const ce = Math.cos(sun.alt * RAD), wx = Math.sin(sun.azi * RAD) * ce, wy = Math.cos(sun.azi * RAD) * ce, a = beta * RAD;
         return [wx * Math.cos(a) - wy * Math.sin(a), wx * Math.sin(a) + wy * Math.cos(a), Math.sin(sun.alt * RAD)];
       })();
-      /* where each bar facade's window sits: the longest stretch of that
-         facade still on the outline, the window keeping its own size */
       const faceSeen = f => { const q = rot(WIN_NORM[f][0], WIN_NORM[f][1], beta); return q[0] * camDir.x + q[1] * camDir.y; };
-      /** A point on local facade f: u along it from its middle, z up. */
-      const onFace = (f, u, z) => {
-        const l = f === 'S' ? [u, -G.D / 2] : f === 'N' ? [u, G.D / 2] : f === 'E' ? [G.L / 2, u] : [-G.L / 2, u];
-        return at(l[0], l[1], beta, z);
-      };
-      const faceLine = f => f === 'S' ? -G.D / 2 : f === 'N' ? G.D / 2 : f === 'E' ? G.L / 2 : -G.L / 2;
-      const onLine = (sg, f) => { const n = WIN_NORM[f], k = (f === 'S' || f === 'N') ? 1 : 0;
-        return sg.n[0] === n[0] && sg.n[1] === n[1] && Math.abs(sg.a[k] - faceLine(f)) < 1e-3; };
-      /** The longest stretch of a bar facade still on the outline, as [u0, u1]. */
-      const exposed = f => {
-        const along = (f === 'S' || f === 'N') ? 0 : 1;
-        let bestU = null;
-        pl.segs.forEach(sg => {
-          if (!onLine(sg, f)) return;
-          const u0 = Math.min(sg.a[along], sg.b[along]), u1 = Math.max(sg.a[along], sg.b[along]);
-          if (!bestU || u1 - u0 > bestU[1] - bestU[0]) bestU = [u0, u1];
-        });
-        return bestU;
-      };
-      const winAt = {};
-      WIN_KEYS.forEach(f => {
-        const w = winOf(f), sp = exposed(f);
-        if (w && sp) winAt[f] = { uc:(sp[0] + sp[1]) / 2, ww:Math.min(w.w, 0.92 * (sp[1] - sp[0])), sp, w };
-      });
-      const drawWindow = (f, hid) => {
-        const wa = winAt[f];
-        if (!wa) return;
-        const { uc, ww, w } = wa;
-        const q = [onFace(f, uc - ww / 2, w.sill), onFace(f, uc + ww / 2, w.sill), onFace(f, uc + ww / 2, w.head), onFace(f, uc - ww / 2, w.head)];
+      const segSeen = sg => { const q = rot(sg.n[0], sg.n[1], beta); return q[0] * camDir.x + q[1] * camDir.y > 1e-6; };
+      /** A point on an outline wall: u metres along it from its start, z up. */
+      const onSeg = (sg, u, z) => at(sg.a[0] + (sg.b[0] - sg.a[0]) * u / sg.len, sg.a[1] + (sg.b[1] - sg.a[1]) * u / sg.len, beta, z);
+      const wins = winList();
+      /** One wall's window: solid with its panes on a wall the camera sees,
+          dashed at its true place on one behind the volume. */
+      const drawWindow = (sg, w, hid) => {
+        const u0 = w.uc - w.w / 2, u1 = w.uc + w.w / 2;
+        const q = [onSeg(sg, u0, w.sill), onSeg(sg, u1, w.sill), onSeg(sg, u1, w.head), onSeg(sg, u0, w.head)];
         outline(q, true);
         ctx.fillStyle = hid ? 'rgba(37,99,235,.05)' : 'rgba(219,234,254,.92)'; ctx.fill();
         stroke(ctx, hid ? 'rgba(37,99,235,.6)' : BLUE, hid ? 1.1 : 1.4, hid ? [5, 4] : null); ctx.stroke();
         if (hid) return;
-        const n = Math.max(1, Math.round(ww / 1.2));   // one pane to about every 1.2 m
+        const n = Math.max(1, Math.round(w.w / 1.2));   // one pane to about every 1.2 m
         stroke(ctx, BLUE, 1);
         for (let k = 1; k < n; k++) {
-          const u = uc - ww / 2 + k * ww / n, a = onFace(f, u, w.sill), b = onFace(f, u, w.head);
+          const u = u0 + k * w.w / n, a = onSeg(sg, u, w.sill), b = onSeg(sg, u, w.head);
           seg(ctx, a[0], a[1], b[0], b[1]); desk.line(a[0], a[1], b[0], b[1]);
         }
       };
@@ -3161,7 +3363,7 @@ function buildSite(host) {
         const nU = Math.max(4, Math.ceil(w.sg.len / 0.25));
         const shadedAt = (tm, z) => {
           const px0 = w.sg.a[0] + (w.sg.b[0] - w.sg.a[0]) * tm + w.sg.n[0] * 0.05, py0 = w.sg.a[1] + (w.sg.b[1] - w.sg.a[1]) * tm + w.sg.n[1] * 0.05;
-          return pl.rects.some(r => rayHitsBox([px0, py0, z], sunL, r, hgt));
+          return pl.boxes.some(r => rayHitsBox([px0, py0, z], sunL, r, hgt));
         };
         const tops = [];
         for (let i = 0; i < nU; i++) {
@@ -3202,13 +3404,9 @@ function buildSite(host) {
             stroke(ctx, CH.ink, 1.4); ctx.stroke();
             /* the wall's own window, before any nearer wall covers it and
                under the shade that falls on it */
-            WIN_KEYS.forEach(f => {
-              const wa = winAt[f];
-              if (!wa || !onLine(w.sg, f)) return;
-              const k = (f === 'S' || f === 'N') ? 0 : 1, u0 = Math.min(w.sg.a[k], w.sg.b[k]), u1 = Math.max(w.sg.a[k], w.sg.b[k]);
-              if (wa.uc >= u0 - 1e-3 && wa.uc <= u1 + 1e-3) drawWindow(f, false);
-            });
-            if (pl.rects.length > 1 && sun.alt > 0.5 && w.sg.n[0] * sunL[0] + w.sg.n[1] * sunL[1] > 0) castShade(w, hgt);
+            const wn = wins.find(o => o.sg === w.sg);
+            if (wn) drawWindow(w.sg, wn.w, false);
+            if (pl.boxes.length > 1 && sun.alt > 0.5 && w.sg.n[0] * sunL[0] + w.sg.n[1] * sunL[1] > 0) castShade(w, hgt);
           });
         ctx.beginPath();
         pl.cells.forEach(c => {
@@ -3225,9 +3423,8 @@ function buildSite(host) {
       /* The windows, as sized on Windows & Shading: the ones on walls facing
          the camera went on with their walls; the ones behind show dashed at
          their true place, as on Windows & Shading, so no window vanishes
-         behind the volume. Where a wing meets the bar a window keeps its
-         size and moves to the longest stretch of that wall still outside. */
-      WIN_KEYS.forEach(f => { if (faceSeen(f) <= 1e-6) drawWindow(f, true); });
+         behind the volume. */
+      wins.forEach(o => { if (!segSeen(o.sg)) drawWindow(o.sg, o.w, true); });
 
       /* Dimension lines on the two sides of the plan's overall extent that
          face the camera: extension lines, the line 0.9 m out, architect's
@@ -3255,14 +3452,14 @@ function buildSite(host) {
       dimLine(fL); dimLine(fD);
 
       // facade-normal arrows, at ground level so they clear the box
-      const normalArrow = (L, D, beta, color, dashed, tag) => {
-        const mq = rot(0, -D / 2, beta), nq = rot(0, -1, beta);
-        const a = proj(mq[0], mq[1], 0), b = proj(mq[0] + nq[0] * arr, mq[1] + nq[1] * arr, 0);
+      const normalArrow = (L, D, beta, color, dashed, len) => {
+        const mq = rot(0, -D / 2, beta), nq = rot(0, -1, beta), k = len || arr;
+        const a = proj(mq[0], mq[1], 0), b = proj(mq[0] + nq[0] * k, mq[1] + nq[1] * k, 0);
         arrow(a[0], a[1], b[0], b[1], color, dashed ? [6, 4] : null);
         return { a, b };
       };
       const ga = normalArrow(Li, Di, OI.az - 180, GREEN, true);
-      const sa = normalArrow(G.L, -2 * frontOf(), beta, CH.ink, false);   // from the plan's front, wings included
+      const sa = normalArrow(G.L, -2 * frontOf(), beta, CH.ink, false, knobReach());   // from the plan's front, wings and recesses included
       // the rotation knob: a black dot on the student's arrow-tip
       ctx.fillStyle = '#fff';
       ctx.beginPath(); ctx.arc(sa.b[0], sa.b[1], 9, 0, 6.284); ctx.fill();
@@ -3270,8 +3467,8 @@ function buildSite(host) {
       ctx.beginPath(); ctx.arc(sa.b[0], sa.b[1], 5.5, 0, 6.284); ctx.fill();
       desk.block(sa.b[0] - 11, sa.b[1] - 11, sa.b[0] + 11, sa.b[1] + 11);
       /* the vertex points: black dots on the plan's corners at the eaves —
-         the bar's to stretch it, each wing's free inner corner to size the
-         wing and swing it in front of or behind the bar */
+         the bar's to stretch it, the break's to size a wing or carve a
+         recess, the patio's to open it wider or deeper */
       const hvs = vertexHandles().map(h => Object.assign({ q:at(h.x, h.y, beta, Hgt) }, h));
       hvs.forEach(h => {
         ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(h.q[0], h.q[1], 7.5, 0, 6.284); ctx.fill();
@@ -3331,29 +3528,46 @@ function buildSite(host) {
         const txt = fmt(d.len, 1) + ' m';
         desk.place(txt, desk.beside(txt, FM(10), d.A, d.B, mid, FR, 3, 2), CH.ink, FM(10));
       });
-      /* Each window's tag: the way that facade really faces, then the window
-         itself in metres. Walls facing the camera carry it beside their
-         dimension line; walls behind, beside their eave line. */
-      const onBox = { S:Math.abs(bb[1] + G.D / 2) < 1e-3, N:Math.abs(bb[3] - G.D / 2) < 1e-3, E:Math.abs(bb[2] - G.L / 2) < 1e-3, W:Math.abs(bb[0] + G.L / 2) < 1e-3 };
+      /* Each orientation's tag: the way those walls really face, then their
+         windows in metres, on the longest outside wall of that orientation.
+         A wall facing the camera carries it beside the dimension line when
+         it has one, or beside its foot; a wall behind, beside its eave. */
+      const pt0 = G.patio, patioOn = pt0 && pt0.on && pt0.ok !== false;
+      const inPatio = sg => patioOn && Math.abs((sg.a[0] + sg.b[0]) / 2 - pt0.cx) <= pt0.ew / 2 + 1e-3 && Math.abs((sg.a[1] + sg.b[1]) / 2 - pt0.cy) <= pt0.ed / 2 + 1e-3;
+      const onDim = (sg, f) => f === 'S' ? Math.abs(sg.a[1] - bb[1]) < 1e-3 : f === 'N' ? Math.abs(sg.a[1] - bb[3]) < 1e-3
+        : f === 'E' ? Math.abs(sg.a[0] - bb[2]) < 1e-3 : Math.abs(sg.a[0] - bb[0]) < 1e-3;
       WIN_KEYS.forEach(f => {
-        const w = winOf(f), wa = winAt[f], sp = exposed(f);
-        if (!sp) return;   // a facade the wings have swallowed whole
-        const txt = faceDir(f) + ' · ' + (w && wa ? t('window') + ' ' + fmt(wa.ww, 1) + ' × ' + fmt(w.h, 1) + ' m · ' + fmt(w.wwr * 100, 0) + ' %' : t('no window'));
-        const font = F(10, '600'), col = w && wa ? BLUE : CH.muted;
-        const hid = faceSeen(f) <= 1e-6, zt = hid ? Hgt : 0;
-        const d = onBox[f] ? dims.find(o => o.f === f) : null;
+        const segsF = pl.segs.filter(sg => segFace(sg) === f);
+        if (!segsF.length) return;
+        const outer = segsF.filter(sg => !inPatio(sg)), pool = outer.length ? outer : segsF;
+        const sg = pool.reduce((p, q) => q.len > p.len ? q : p);
+        const ws = wins.filter(o => o.w.f === f);
+        const what = !ws.length ? t('no window')
+          : ws.length === 1 ? t('window') + ' ' + fmt(ws[0].w.w, 1) + ' × ' + fmt(ws[0].w.h, 1) + ' m'
+          : ws.length <= 3 ? ws.length + ' ' + t('windows') + ' ' + ws.map(o => fmt(o.w.w, 1)).join(' + ') + ' × ' + fmt(ws[0].w.h, 1) + ' m'
+          : ws.length + ' ' + t('windows') + ' · ' + fmt(ws.reduce((acc, o) => acc + o.w.area, 0), 1) + ' m²';
+        const txt = faceDir(f) + ' · ' + what + (ws.length ? ' · ' + fmt(OPEN[f].wwr * 100, 0) + ' %' : '');
+        const font = F(10, '600'), col = ws.length ? BLUE : CH.muted;
+        const hid = !segSeen(sg), zt = hid ? Hgt : 0;
+        const d = onDim(sg, f) ? dims.find(o => o.f === f) : null;
         const cands = (d ? desk.beside(txt, font, d.A, d.B, mid, FR, 3, 3) : [])
-          .concat(desk.beside(txt, font, onFace(f, sp[0], zt), onFace(f, sp[1], zt), hid ? midTop : mid, FR, hid ? 4 : 12, 3));
+          .concat(desk.beside(txt, font, onSeg(sg, 0, zt), onSeg(sg, sg.len, zt), hid ? midTop : mid, FR, hid ? 4 : 12, 3));
         desk.place(txt, cands, col, font);
       });
-      /* the wing's own size, beside its point */
-      if (G.form && G.form !== 'rect' && G.wing) {
-        const h = hvs.find(o => o.id === 'wing');
-        if (h) {
-          const txt = t('wing') + ' ' + fmt(G.wing.w, 1) + ' × ' + fmt(Math.abs(G.wing.e), 1) + ' m';
-          desk.place(txt, [[h.q[0] + 12, h.q[1] - 10, 'left'], [h.q[0] - 12, h.q[1] - 10, 'right'], [h.q[0] + 12, h.q[1] + 10, 'left'],
-            [h.q[0] - 12, h.q[1] + 10, 'right'], [h.q[0], h.q[1] - 18, 'center'], [h.q[0], h.q[1] + 18, 'center']], CH.ink, FM(10, '600'));
-        }
+      /* the break's own size beside its point — a wing out, or the recess
+         carved in — and the patio's beside its corner */
+      const aroundPt = q => [[q[0] + 12, q[1] - 10, 'left'], [q[0] - 12, q[1] - 10, 'right'], [q[0] + 12, q[1] + 10, 'left'],
+        [q[0] - 12, q[1] + 10, 'right'], [q[0], q[1] - 18, 'center'], [q[0], q[1] + 18, 'center']];
+      if (G.form && G.form !== 'rect' && G.wing && Math.abs(G.wing.e) >= 0.5) {
+        const h = hvs.find(o => o.id === 'wing'), wg = G.wing, a = Math.abs(wg.e);
+        const txt = wg.e > 0 ? (G.form === 'H' ? '4 ' + t('wings') + ' ' : t('wing') + ' ') + fmt(wg.w, 1) + ' × ' + fmt(a, 1) + ' m'
+          : G.form === 'L' ? t('recess') + ' ' + fmt(G.L - wg.w, 1) + ' × ' + fmt(a, 1) + ' m'
+          : '2 ' + t('recesses') + ' ' + fmt(G.form === 'T' ? (G.L - wg.w) / 2 : G.L - 2 * wg.w, 1) + ' × ' + fmt(a, 1) + ' m';
+        if (h) desk.place(txt, aroundPt(h.q), CH.ink, FM(10, '600'));
+      }
+      if (patioOn) {
+        const h = hvs.find(o => o.id === 'patio');
+        if (h) desk.place(t('patio') + ' ' + fmt(pt0.ew, 1) + ' × ' + fmt(pt0.ed, 1) + ' m', aroundPt(h.q), CH.ink, FM(10, '600'));
       }
       {
         const ux = ga.b[0] - ga.a[0], uy = ga.b[1] - ga.a[1], ul = Math.hypot(ux, uy) || 1;
@@ -3401,12 +3615,15 @@ function buildSite(host) {
       ['Wall albedo (1 − α)', finishOf(G.col) ? +(1 - FINISH_ALPHA[finishOf(G.col).cls]).toFixed(2) : ''],
       ['Summer mean, Jun–Sep (°C)', +sumT.toFixed(1)],
       ['Albedo fit (0–100)', albedoFit() === null ? '' : albedoFit()]]
-      .concat(WIN_KEYS.map(f => { const w = winOf(f);
-        return ['Window ' + f + (f === 'S' ? ' (main facade)' : '') + ' — faces ' + COMPASS8_EN[Math.round(faceAz(f) / 45) % 8] + ', w × h (m)',
-          w ? +w.w.toFixed(2) + ' × ' + +w.h.toFixed(2) : 'none']; }))
+      .concat(WIN_KEYS.map(f => { const ws = winList().filter(o => o.w.f === f);
+        return ['Windows ' + f + (f === 'S' ? ' (main facade side)' : '') + ' — face ' + COMPASS8_EN[Math.round(faceAz(f) / 45) % 8] + ', w × h (m)',
+          ws.length ? ws.map(o => +o.w.w.toFixed(2) + ' × ' + +o.w.h.toFixed(2)).join(' + ') : 'none']; }))
+      .concat(WIN_KEYS.map(f => ['Glass ' + f + ' asked by its WWR (m²)', +glassOf(f).toFixed(2)]))
       .concat([['Window fit (0–100)', winAim() ? winAim().fit : ''],
       ['Plan form', G.form || 'rect'],
-      ['Wing width × reach (m)', G.wing && G.form !== 'rect' ? G.wing.w + ' × ' + G.wing.e + (G.form === 'L' ? (G.wing.side > 0 ? ' (east end)' : ' (west end)') : '') : ''],
+      ['Break', G.wing && G.form !== 'rect' && Math.abs(G.wing.e) >= 0.5 ? (G.wing.e > 0 ? 'extended' : 'carved') + ' ' + G.wing.w + ' × ' + Math.abs(G.wing.e)
+        + (G.form === 'L' ? (G.wing.side > 0 ? ', east end' : ', west end') : '') + (G.form !== 'H' ? (G.wing.face > 0 ? ', back' : ', main facade') : '') : ''],
+      ['Patio w × d (m)', G.patio && G.patio.on && G.patio.ok !== false ? G.patio.ew + ' × ' + G.patio.ed : ''],
       ['Plan area (m²)', +planOf().area.toFixed(1)],
       ['Outline perimeter (m)', +planOf().perimeter.toFixed(1)],
       ['Own shade on the walls, 21 Dec (%)', +selfShade(355).toFixed(1)],
@@ -3426,45 +3643,81 @@ function buildSite(host) {
       ['Köppen–Geiger', STATE.clim.k.code]]));
     }
   });
-  /* --- break the volume: the plan form, on a bar right above the model ---
-     Each form starts from wings sized to the bar; the black points then
-     reshape them on the model itself. */
+  /* --- the rail: break the volume, mirror it, open a patio ----------------
+     A break works one long side of the bar: out past it as a wing, or into
+     it as a recess — the same black point runs from the one to the other
+     through the plain bar. Each form starts sized to the bar; the points on
+     the model then reshape it. */
   const formDefaults = {
-    L:() => ({ w:clamp(Math.round(G.L * 0.35), 3, 6), e:Math.round(G.D * 0.75), side:1 }),
-    T:() => ({ w:clamp(Math.round(G.L * 0.3), 3, 5), e:Math.round(G.D * 0.75), side:1 }),
-    H:() => ({ w:clamp(Math.round(G.L * 0.25), 3, 4), e:Math.round(G.D * 0.5), side:1 })
+    L:k => ({ w:clamp(Math.round(G.L * 0.35), 3, 6), e:Math.round(G.D * (k > 0 ? 0.75 : 0.5)) * k, side:1, face:1 }),
+    T:k => ({ w:clamp(Math.round(G.L * 0.3), 3, 5), e:Math.round(G.D * (k > 0 ? 0.75 : 0.4)) * k, side:1, face:1 }),
+    H:k => ({ w:clamp(Math.round(G.L * 0.25), 3, 4), e:Math.round(G.D * (k > 0 ? 0.5 : 0.3)) * k, side:1, face:1 })
   };
-  const mirrorBtn = el('button', { class:'btn small', text:'Mirror the L', onclick:() => { if (G.wing) { G.wing.side = -G.wing.side; labDraw(); } } });
-  const cForm = segCtl('Break the volume', [{ value:'rect', label:'▭' }, { value:'L', label:'L' }, { value:'T', label:'T' }, { value:'H', label:'H' }],
-    G.form || 'rect', v => {
-      G.form = v;
-      G.wing = v === 'rect' ? null : formDefaults[v]();
-      fixWing(G);
-      mirrorBtn.hidden = v !== 'L';
+  let modeSign = G.wing && G.wing.e < 0 ? -1 : 1;
+  const segPress = (ctl, i) => ctl.querySelectorAll('button').forEach((b, k) => b.setAttribute('aria-pressed', k === i ? 'true' : 'false'));
+  const cMode = segCtl(null, [{ value:1, label:t('Extend'), title:t('A wing out past the bar') }, { value:-1, label:t('Carve'), title:t('A recess cut into the bar') }],
+    modeSign, v => {
+      modeSign = v;
+      if (G.wing) { const a = Math.abs(G.wing.e) || 3; G.wing.e = v > 0 ? a : -Math.min(a, Math.round(G.D / 2)); fixWing(G); }
       labDraw();
     });
-  mirrorBtn.hidden = G.form !== 'L';
-  labPanel.body.insertBefore(el('div', { class:'controls', style:'margin:0 0 8px' },
-    [cForm, mirrorBtn, el('span', { class:'hint', text:t('Drag the black points on the model to reshape the plan') })]), labPanel.body.firstChild);
+  /** The Extend/Carve switch follows the point when a drag carries it across the bar's face. */
+  const syncMode = () => { if (G.wing && Math.abs(G.wing.e) >= 0.5) { modeSign = G.wing.e < 0 ? -1 : 1; segPress(cMode, modeSign > 0 ? 0 : 1); } };
+  const mirrorX = el('button', { class:'btn small', text:'⇆ ' + t('Other end'), title:t('Move the L to the other end of the bar'),
+    onclick:() => { if (G.wing) { G.wing.side = -G.wing.side; labDraw(); } } });
+  const mirrorY = el('button', { class:'btn small', text:'⇅ ' + t('Other side'), title:t('Move the break to the other long side of the bar'),
+    onclick:() => { if (G.wing) { G.wing.face = -G.wing.face; labDraw(); } } });
+  const syncFormTools = () => {
+    const f = G.form || 'rect';
+    cMode.style.display = f === 'rect' ? 'none' : '';
+    mirrorX.hidden = f !== 'L';
+    mirrorY.hidden = f !== 'L' && f !== 'T';
+  };
+  const cForm = segCtl(null, [{ value:'rect', label:'▭', title:t('The plain bar') }, { value:'L', label:'L' }, { value:'T', label:'T' }, { value:'H', label:'H' }],
+    G.form || 'rect', v => {
+      G.form = v;
+      G.wing = v === 'rect' ? null : formDefaults[v](modeSign);
+      fixWing(G);
+      syncFormTools();
+      labDraw();
+    });
+  const pt = G.patio || (G.patio = { on:false, w:4, d:3, cx:0, cy:0 });
+  const patioNote = el('span', { class:'hint' });
+  const cPatio = checkCtl(t('Open a central patio'), pt.on, v => {
+    pt.on = v;
+    if (v) { pt.w = Math.max(2, Math.round(G.L * 0.45)); pt.d = Math.max(2, Math.round(G.D * 0.4)); }
+    labDraw();
+  });
+  rail.appendChild(el('div', { class:'gh', text:'Break the volume' }));
+  rail.appendChild(el('div', { class:'rgroup' }, [cForm, cMode, mirrorX, mirrorY]));
+  rail.appendChild(el('div', { class:'gh', text:'Patio' }));
+  rail.appendChild(el('div', { class:'rgroup' }, [cPatio, patioNote]));
+  rail.appendChild(el('div', { class:'gh', text:'Optimum' }));
+  rail.appendChild(el('div', { class:'rgroup' }, [snap]));
+  rail.appendChild(el('div', { class:'keys', text:t('Drag the black points on the model: a corner stretches the bar, the break’s point sizes a wing or carves a recess, the patio’s point opens it wider or deeper.') }));
+  syncFormTools();
+  /* the readings, under the model: what each decision does, in words */
   const pillShade = el('span', { class:'pill empty' });
-  host.appendChild(el('div', { class:'limitrow' }, [pillShade]));
+  stage.appendChild(el('div', { class:'limitrow readings' }, [pillOri, pillForm, pillWin, pillShade, pillCol]));
   refreshShade = () => {
     const pl = planOf();
-    if (pl.rects.length < 2) { pillShade.className = 'pill empty'; pillShade.textContent = t('A plain bar casts no shade on itself — break the volume to test an L, T or H'); return; }
+    patioNote.textContent = pt.on && pt.ok === false ? t('No room for a patio: it needs 2 m of building round it and 2 m clear of any recess — widen or deepen the bar') : '';
+    if (pl.boxes.length < 2) { pillShade.className = 'pill empty'; pillShade.textContent = t('A plain bar casts no shade on itself — break the volume or open a patio'); return; }
     const w = Math.round(selfShade(355)), su = Math.round(selfShade(172));
+    const name = (G.form && G.form !== 'rect' && G.wing && Math.abs(G.wing.e) >= 0.5 ? G.form + (G.wing.e < 0 ? ' ' + t('carved') : '') : t('Bar')) + (pt.on && pt.ok !== false ? ' + ' + t('patio') : '');
     pillShade.className = 'pill ' + (w <= 5 ? 'ok' : w <= 15 ? 'empty' : 'bad');
-    pillShade.textContent = G.form + ' · ' + t('its wings take') + ' ' + w + ' % ' + t('of the winter sun off its walls and give') + ' ' + su + ' % ' + t('summer shade') +
+    pillShade.textContent = name + ' · ' + t('takes') + ' ' + w + ' % ' + t('of the winter sun off its own walls, gives') + ' ' + su + ' % ' + t('summer shade') +
       ' · FF ' + fmt(labFF().ff, 2) + ' · ' + fmt(pl.area, 0) + ' m²';
   };
   refreshShade();
   host.appendChild(hint('site-form',
-    'Break the volume with the buttons above the model: an <b>L</b> adds a wing at one end, a <b>T</b> one at the middle, an <b>H</b> one at each end reaching both ways. The black points on the model are its vertices — drag the bar’s corners to stretch it, and a wing’s free corner to size the wing and swing it behind the bar or in front of the main facade; <b>Mirror the L</b> moves its wing to the other end. A broken plan changes two things the badges read at once. <b>Own shade · winter %</b> is the share of the 21 December sun on the walls that the building takes off itself — every wall sampled every 0.75 m at three heights, the sun every half hour, each sample weighed by how squarely the sun meets it, and counted lost when the ray back to the sun meets any wing (eaves height; pitched roofs shade a little more). The same test on 21 June gives the summer shade in the pill: wings that shade an east or west wall in summer earn it, wings that shade the main facade in winter cost it. <b>Form factor</b> is recalculated for the whole outline — walls to the eaves round its perimeter, the roof over its area at the pitch set on Roof, the roof space estimated wing by wing — so a break almost always raises it: more envelope for the same volume. The Olgyay fit still reads the bar. Roof and Windows &amp; Shading keep working on the bar; Ventilation draws the wings as boxes to the eaves — they shade the garden and keep planting off their footprint, while its airflow scores still read the bar — and the wings go into the 3D export.'));
+    'Break the volume with the tools left of the model. <b>L</b> works one end of the bar, <b>T</b> its middle, <b>H</b> both ends on both long sides. <b>Extend</b> adds the wing out past the bar; <b>Carve</b> cuts the same shape into it as a recess, so the bar itself becomes the L, T or H. The break’s black point is one continuous reach: drag it outward and the wing grows, back to the facade and the plain bar returns, further in and the recess deepens — it never jumps to the other side. <b>⇆ Other end</b> and <b>⇅ Other side</b> mirror the break to the opposite end of the bar or to its opposite long side. <b>Open a central patio</b> cuts a courtyard out of the middle; its corner point opens it wider or deeper, always leaving 2 m of building round it and 2 m clear of any recess. Every wall of the outline — a wing’s, a recess’s, a patio’s — takes the window its orientation has on Windows &amp; Shading, so a break redistributes the glass instead of hiding it. A worked plan changes what the badges read. <b>Own shade · winter %</b> is the share of the 21 December sun on the walls that the building takes off itself — every wall sampled every 0.75 m at three heights, the sun every half hour, each sample weighed by how squarely the sun meets it, and counted lost when the ray back to the sun meets any part of the plan (eaves height; pitched roofs shade a little more). The same test on 21 June gives the summer shade in the reading under the model: a break or a patio that shades east and west walls in summer earns it, one that shades the main facade in winter costs it. <b>Form factor</b> is taken from the whole volume — every wall up to the roof’s own profile along it, every roof plane at the pitch set on Roof, the ground floor — so a break or a patio almost always raises it: more envelope for the same volume. The Olgyay fit still reads the bar’s length, depth and turn. The CAD export writes this volume as drawn; Roof, Windows &amp; Shading and Ventilation are being moved onto it tab by tab — until then they read the bar, and Ventilation adds the extended wings.'));
   host.appendChild(hint('ori-score',
     'The badge is a didactic index, not an energy prediction: 60 % orientation — full marks on the green normal, zero at 90° off — plus 40 % form — closeness to the 1:X elongation, discounted for square, diagonal and north–south plans. Two plans can share a score and behave differently; read it with the pills.'));
   host.appendChild(hint('ori-height',
     'The two boxes extrude the plan — floors above ground times an editable floor height. The sun below it is driven, not decorative: pick 21 December, 20 March or 21 June, drag the solar hour — or press play — and the shadow follows the trajectory, long and northern in the December morning, short and tight at the June noon. The December noon shadow stays the governing case for spacing. Height does not move the fit badge, which only knows orientation and plan form.'));
   host.appendChild(hint('site-windows',
-    'The windows on the model are the ones sized on <b>Windows &amp; Shading</b> — the same width, sill and head, each set by its facade’s window-to-wall ratio — so turning the plan here turns them with it. Each blue tag names the way that window really faces once the plan is turned, then its width × height and the facade’s WWR; on Windows &amp; Shading the facades keep the names they have with the main facade to the south. The rule to read them by: <b>the larger the window, the more it should face south; the smaller, the more it faces north</b> (north and south swap below the equator). South glass collects the low winter sun and is the easiest to shade from the high summer sun; north glass gives even, diffuse light but gains almost no winter sun while it loses heat (Lechner; Gonçalves &amp; Graça). <b>Window fit</b> reads it: every window counts as an arrow out of its facade, as long as the glass its WWR asks for, and the fit is 100 when their sum points due south, 50 east or west, 0 north. The sizes change on Windows &amp; Shading; the plan’s turn, here, decides where they look. Windows &amp; Shading draws each window as one strip on the ground floor, no wider than 92 % of its facade — on two or three floors the strips can reach that limit and look alike while their WWR, and the fit, still differ.'));
+    'The windows on the model are the ones sized on <b>Windows &amp; Shading</b> — the same width, sill and head, each set by its facade’s window-to-wall ratio — so turning the plan here turns them with it. Each blue tag names the way that window really faces once the plan is turned, then its width × height and the facade’s WWR; on Windows &amp; Shading the facades keep the names they have with the main facade to the south. The rule to read them by: <b>the larger the window, the more it should face south; the smaller, the more it faces north</b> (north and south swap below the equator). South glass collects the low winter sun and is the easiest to shade from the high summer sun; north glass gives even, diffuse light but gains almost no winter sun while it loses heat (Lechner; Gonçalves &amp; Graça). <b>Window fit</b> reads it: every window counts as an arrow out of its facade, as long as the glass its WWR asks for, and the fit is 100 when their sum points due south, 50 east or west, 0 north. The sizes change on Windows &amp; Shading; the plan’s turn, here, decides where they look. Windows &amp; Shading draws each window as one strip on the ground floor, no wider than 92 % of its facade — on two or three floors the strips can reach that limit and look alike while their WWR, and the fit, still differ. On a broken plan every wall at least 1.5 m long carries its orientation’s window, sized from its own area, and the tag counts the windows facing that way with their widths; <b>Window fit</b> then adds all the glass of each orientation.'));
   host.appendChild(hint('ori-ff',
     'Form factor FF = exterior envelope ÷ heated volume, in m⁻¹ — walls to the eaves, gable triangles, roof planes and ground floor over the volume they enclose, one single zone, everything exterior. Lower is more compact: the round shepherd shelters of Monchique are the vernacular extreme (Gonçalves & Graça). It is the same ratio the REH calls <i>factor de forma</i>, stated here as pure geometry with no limits attached — Construction Advisor takes it from there. The badge paints it green at or below 0.7 (compact), amber to 1.1 (moderate) and red above (dispersed): didactic bands, not limits. It does not move the fit badge.'));
 
@@ -3493,8 +3746,7 @@ function buildSite(host) {
   /** Student knob in plan metres: facade midpoint plus the normal times arr. */
   const knobPlan = () => {
     const a = (G.rot - 180) * RAD, c = Math.cos(a), q = Math.sin(a);
-    const arr = Math.max(2.5, 0.3 * Math.min(G.L, G.D));
-    const fy = frontOf();
+    const fy = frontOf(), arr = knobReach();
     return { x:fy * q + (-q) * arr, y:fy * c + (-c) * arr };
   };
   /** 'rotate' on the knob, 'stretch' anywhere on the body's visible walls, null elsewhere. */
@@ -3511,10 +3763,11 @@ function buildSite(host) {
       const hx = F.cx + (wx - wy) * ISO_C * F.s, hy = F.cy - (wx + wy) * ISO_S * F.s - Hh * F.s;
       if (Math.hypot(px - hx, py - hy) <= 12) return 'vertex:' + h.id;
     }
+    const bb = planOf().bbox;
     for (const z of [0, G.fl * G.fh]) {
       const p = toPlanZ(px, py, z);
       const l = toLocal(p.x, p.y);
-      if (Math.abs(l.u) <= G.L / 2 + 2.5 && Math.abs(l.v) <= G.D / 2 + 2.5) return 'stretch';
+      if (l.u >= bb[0] - 2.5 && l.u <= bb[2] + 2.5 && l.v >= bb[1] - 2.5 && l.v <= bb[3] + 2.5) return 'stretch';
     }
     return null;
   };
@@ -3561,15 +3814,23 @@ function buildSite(host) {
         syncCtl(cD, G.D, v => fmt(v, 1) + ' m');
       } else if (drag.id === 'barH') {
         G.L = half(clamp(2 * Math.abs(l.u), 6, 24));
-        G.wing.e = Math.max(2, Math.abs(l.v) - G.D / 2);
+        G.wing.e = Math.max(0.5, Math.abs(l.v) - G.D / 2);
         syncCtl(cL, G.L, v => fmt(v, 1) + ' m');
+      } else if (drag.id === 'patio') {
+        G.patio.w = Math.min(2 * Math.abs(l.u - G.patio.cx), G.L - 4);
+        G.patio.d = Math.min(2 * Math.abs(l.v - G.patio.cy), G.D - 4);
+        fixPatio(G);
       } else {
+        /* one point, one continuous reach: past the bar's face it is a
+           wing, inside it a recess, on it the plain bar — it never jumps to
+           the other side (⇅ does that) */
         const wg = G.wing;
-        const reach = l.v >= 0 ? Math.max(2, l.v - G.D / 2) : -Math.max(2, -l.v - G.D / 2);
         if (G.form === 'L') wg.w = G.L / 2 - wg.side * l.u;
         else if (G.form === 'T') wg.w = 2 * Math.abs(l.u);
         else wg.w = G.L / 2 - Math.abs(l.u);
-        wg.e = G.form === 'H' ? Math.abs(reach) : reach;
+        wg.e = G.form === 'H' ? Math.abs(l.v) - G.D / 2 : wg.face * l.v - G.D / 2;
+        fixWing(G);
+        syncMode();
       }
       fixWing(G);
     } else {
@@ -4994,7 +5255,7 @@ function buildVentilation(host) {
   if (!G) { host.appendChild(el('p', { text:t('Define the site first — go to the Site tab.') })); return; }
   /** The plan's reach from the centre along x and y — the bar's half sizes,
       or more where Site has broken the volume into wings. */
-  const reachXY = () => { const rs = planRects(G); return [Math.max.apply(null, rs.map(r => Math.max(-r[0], r[2]))), Math.max.apply(null, rs.map(r => Math.max(-r[1], r[3])))]; };
+  const reachXY = () => { const bb = planModel(G).bbox; return [Math.max(-bb[0], bb[2]), Math.max(-bb[1], bb[3])]; };
   /* OPEN is global, set by the Openings tab; initialise if null */
   if (!OPEN) OPEN = {
     S:{wwr:0.25, sillZ:0.9, headZ:2.1, ovD:0, ovN:1, finD:0, finN:0, finSide:'both'},
@@ -6449,7 +6710,7 @@ function buildVentilation(host) {
 
     /* ---- sun shadow of the whole volume on the garden ---- */
     let shadowTag = null;
-    const wingRects = planRects(G).slice(1);   // the wings a volume break adds on Site
+    const wingRects = planModel(G).parts.pos.slice(1);   // the wings a volume break adds on Site
     const sun = sunPos(SH.doy, SH.h, lat, lon, tz);
     const topZ = y => RF.n === 0 ? H0 : RF.n === 1 ? H0 + (y + G.D/2) * Math.tan(roofTh) : RF.n === 3 ? H0 : H0 + Math.max(0, G.D/2 - Math.abs(y)) * Math.tan(roofTh);
     if (showShadow && sun.alt > 0.5) {
@@ -6816,7 +7077,7 @@ function buildVentilation(host) {
     const X = (sx - FR.cx) / (ISO_C * FR.s), Y = (FR.cy - sy) / (ISO_S * FR.s);
     return { x: camS * (X + Y) / 2, y: camS * (Y - X) / 2 };
   };
-  const onBuilding = (x, y) => planRects(G).some(r => x >= r[0] - 0.3 && x <= r[2] + 0.3 && y >= r[1] - 0.3 && y <= r[3] + 0.3);
+  const onBuilding = (x, y) => planModel(G).boxes.some(r => x >= r[0] - 0.3 && x <= r[2] + 0.3 && y >= r[1] - 0.3 && y <= r[3] + 0.3);
   const distSeg = (px, py, ax, ay, bx, by) => {
     const dx = bx - ax, dy = by - ay, L2 = dx * dx + dy * dy;
     let u = L2 ? ((px - ax) * dx + (py - ay) * dy) / L2 : 0;
@@ -7170,11 +7431,8 @@ function buildRefs() {
     metres, wound counter-clockwise seen from outside. */
 function exportModel() {
   const G = MASS, RF = ROOF;
-  const H0 = G.fl * G.fh, tn = Math.tan((RF.n === 0 ? 0 : RF.th) * RAD);
+  const H0 = G.fl * G.fh;
   const L = G.L, D = G.D;
-  const ridge = RF.n === 1 ? H0 + D * tn : RF.n >= 2 ? H0 + D / 2 * tn : H0;
-  const rl = Math.max(0, L / 2 - D / 2);
-  const topZ = y => RF.n === 0 || RF.n === 3 ? H0 : RF.n === 1 ? H0 + (y + D / 2) * tn : H0 + Math.max(0, D / 2 - Math.abs(y)) * tn;
   const b = (G.rot - 180) * RAD;   // the same turn the Site tab draws
   const turn = p => [p[0] * Math.cos(b) + p[1] * Math.sin(b), -p[0] * Math.sin(b) + p[1] * Math.cos(b), p[2]];
   const newell = poly => {
@@ -7191,6 +7449,8 @@ function exportModel() {
   const add = (kind, name, layer, faces, extra) => {
     const out = [];
     faces.forEach(([poly, n]) => {
+      poly = poly.filter((p, i) => { const q = poly[(i + poly.length - 1) % poly.length]; return Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]) > 1e-6; });
+      if (poly.length < 3) return;
       const nw = newell(poly);
       if (Math.hypot(nw[0], nw[1], nw[2]) < 1e-6) return;
       out.push((nw[0] * n[0] + nw[1] * n[1] + nw[2] * n[2] < 0 ? poly.slice().reverse() : poly).map(turn));
@@ -7220,151 +7480,71 @@ function exportModel() {
     return faces;
   };
 
-  /* walls with their window cut out, glazing, overhangs and fins */
-  const FN = { S:[0,-1,0], N:[0,1,0], E:[1,0,0], W:[-1,0,0] };
+  /* The building, from the one model the Site, Roof and Ventilation tabs
+     draw: walls round the whole outline — a wing's, a recess's, a patio's —
+     each rising to the roof's own profile along it, its window cut out with
+     the shading set for its orientation; every roof plane as the roof model
+     cuts it; the ground floor under the plan. */
   const FNAME = { S:'South', N:'North', E:'East', W:'West' };
-  const fp = (f, u, v) => f === 'S' ? [u, -D / 2, v] : f === 'N' ? [u, D / 2, v] : f === 'E' ? [L / 2, u, v] : [-L / 2, u, v];
-  const off = (p, n, d) => [p[0] + n[0] * d, p[1] + n[1] * d, p[2]];
   const up = [0, 0, 1];
-  const rects = planRects(G);
-  /** A window with its shading, on facade f of the bar, centred at uc along
-      it and ww wide — the same devices, by the same rules, whatever the plan. */
-  const windowAndShading = (f, uc, ww, v0, v1, o) => {
-    const n = FN[f], u0 = uc - ww / 2, u1 = uc + ww / 2;
-    const rect = (a0, a1, b0, b1) => [[fp(f, a0, b0), fp(f, a1, b0), fp(f, a1, b1), fp(f, a0, b1)], n];
-    add('window', FNAME[f] + ' window', 'AA-GLAZING', [rect(u0, u1, v0, v1)], { width:ww, height:v1 - v0, wwr:o.wwr, facade:f });
+  const RM = roofModel(G, RF), pl = RM.pl;
+  /** A window with its shading on a wall: P(u, v) a point on the wall, u
+      along it, v up; n its outward normal — the same devices, by the same
+      rules, on every wall. */
+  const windowAndShading = (P, n, along, uc, ww, v0, v1, o, f, tag) => {
+    const u0 = uc - ww / 2, u1 = uc + ww / 2;
+    const off = (p, d) => [p[0] + n[0] * d, p[1] + n[1] * d, p[2]];
+    add('window', tag + ' window', 'AA-GLAZING', [[[P(u0, v0), P(u1, v0), P(u1, v1), P(u0, v1)], n]], { width:ww, height:v1 - v0, wwr:o.wwr, facade:f });
     if (o.ovD > 0) {
       const vs = o.ovN <= 1 ? [v1] : Array.from({ length:o.ovN }, (_, i) => v0 + (v1 - v0) * (i / (o.ovN - 1)));
-      vs.forEach((vt, i) => add('shading', FNAME[f] + (o.ovN > 1 ? ' louvre ' + (i + 1) : ' overhang'), 'AA-SHADING',
-        [[[fp(f, u0, vt), fp(f, u1, vt), off(fp(f, u1, vt), n, o.ovD), off(fp(f, u0, vt), n, o.ovD)], [0, 0, 1]]],
+      vs.forEach((vt, i) => add('shading', tag + (o.ovN > 1 ? ' louvre ' + (i + 1) : ' overhang'), 'AA-SHADING',
+        [[[P(u0, vt), P(u1, vt), off(P(u1, vt), o.ovD), off(P(u0, vt), o.ovD)], up]],
         { device:o.ovN > 1 ? 'Louvre' : 'Overhang', depth:o.ovD }));
     }
     if (o.finN > 0 && o.finD > 0) {
       const lo = o.finSide === 'right' ? uc : u0, hi = o.finSide === 'left' ? uc : u1;
       const us = o.finN === 1 ? [o.finSide === 'both' ? (lo + hi) / 2 : (o.finSide === 'right' ? hi : lo)]
         : Array.from({ length:o.finN }, (_, i) => lo + (hi - lo) * (i / (o.finN - 1)));
-      const side = f === 'S' || f === 'N' ? [1, 0, 0] : [0, 1, 0];
-      us.forEach((uF, i) => add('shading', FNAME[f] + ' fin ' + (i + 1), 'AA-SHADING',
-        [[[fp(f, uF, v0), off(fp(f, uF, v0), n, o.finD), off(fp(f, uF, v1), n, o.finD), fp(f, uF, v1)], side]],
+      us.forEach((uF, i) => add('shading', tag + ' fin ' + (i + 1), 'AA-SHADING',
+        [[[P(uF, v0), off(P(uF, v0), o.finD), off(P(uF, v1), o.finD), P(uF, v1)], along]],
         { device:'Fin', depth:o.finD }));
     }
   };
-  if (rects.length < 2) {
-    ['S', 'N', 'E', 'W'].forEach(f => {
-      const W = f === 'S' || f === 'N' ? L : D, n = FN[f], o = OPEN[f];
-      const top = u => f === 'S' ? topZ(-D / 2) : f === 'N' ? topZ(D / 2) : topZ(u);
-      const crest = (f === 'E' || f === 'W') ? [W / 2, 0, -W / 2] : [W / 2, -W / 2];
-      const rect = (u0, u1, v0, v1) => [[fp(f, u0, v0), fp(f, u1, v0), fp(f, u1, v1), fp(f, u0, v1)], n];
-      const sill = o.sillZ != null ? o.sillZ : 0.9, h = Math.max(0.3, (o.headZ != null ? o.headZ : 2.1) - sill);
-      const w = Math.min(W * 0.92, (o.wwr || 0) * W * H0 / h);
-      const faces = [];
-      if (!(w > 0.01)) faces.push([[fp(f, -W / 2, 0), fp(f, W / 2, 0)].concat(crest.map(u => fp(f, u, top(u)))), n]);
-      else {
-        const u0 = -w / 2, u1 = w / 2, v0 = sill, v1 = Math.min(sill + h, H0);
-        faces.push(rect(-W / 2, W / 2, 0, v0), rect(-W / 2, u0, v0, v1), rect(u1, W / 2, v0, v1));
-        faces.push([[fp(f, -W / 2, v1), fp(f, W / 2, v1)].concat(crest.map(u => fp(f, u, top(u)))), n]);
-        add('window', FNAME[f] + ' window', 'AA-GLAZING', [rect(u0, u1, v0, v1)],
-          { width:w, height:v1 - v0, wwr:o.wwr, facade:f });
-        if (o.ovD > 0) {
-          const vs = o.ovN <= 1 ? [v1] : Array.from({ length:o.ovN }, (_, i) => v0 + (v1 - v0) * (i / (o.ovN - 1)));
-          vs.forEach((vt, i) => add('shading', FNAME[f] + (o.ovN > 1 ? ' louvre ' + (i + 1) : ' overhang'), 'AA-SHADING',
-            [[[fp(f, u0, vt), fp(f, u1, vt), off(fp(f, u1, vt), n, o.ovD), off(fp(f, u0, vt), n, o.ovD)], [0, 0, 1]]],
-            { device:o.ovN > 1 ? 'Louvre' : 'Overhang', depth:o.ovD }));
-        }
-        if (o.finN > 0 && o.finD > 0) {
-          const lo = o.finSide === 'right' ? 0 : u0, hi = o.finSide === 'left' ? 0 : u1;
-          const us = o.finN === 1 ? [o.finSide === 'both' ? (lo + hi) / 2 : (o.finSide === 'right' ? hi : lo)]
-            : Array.from({ length:o.finN }, (_, i) => lo + (hi - lo) * (i / (o.finN - 1)));
-          const side = f === 'S' || f === 'N' ? [1, 0, 0] : [0, 1, 0];
-          us.forEach((uF, i) => add('shading', FNAME[f] + ' fin ' + (i + 1), 'AA-SHADING',
-            [[[fp(f, uF, v0), off(fp(f, uF, v0), n, o.finD), off(fp(f, uF, v1), n, o.finD), fp(f, uF, v1)], side]],
-            { device:'Fin', depth:o.finD }));
-        }
-      }
-      add('wall', FNAME[f] + ' wall', 'AA-WALLS', faces, { facade:f, finish:finishOf(G.col) });
-    });
-  
-    /* roof planes and the ground floor */
-    const up = [0, 0, 1];
-    const roofFaces = RF.n === 0 ? [[[[-L/2,-D/2,H0],[L/2,-D/2,H0],[L/2,D/2,H0],[-L/2,D/2,H0]], up]]
-      : RF.n === 1 ? [[[[-L/2,-D/2,H0],[L/2,-D/2,H0],[L/2,D/2,ridge],[-L/2,D/2,ridge]], [0,-1,1]]]
-      : RF.n === 2 ? [[[[-L/2,-D/2,H0],[L/2,-D/2,H0],[L/2,0,ridge],[-L/2,0,ridge]], [0,-1,1]],
-                      [[[L/2,D/2,H0],[-L/2,D/2,H0],[-L/2,0,ridge],[L/2,0,ridge]], [0,1,1]]]
-      : [[[[-L/2,-D/2,H0],[L/2,-D/2,H0]].concat(rl > 0 ? [[rl,0,ridge],[-rl,0,ridge]] : [[0,0,ridge]]), [0,-1,1]],
-         [[[L/2,D/2,H0],[-L/2,D/2,H0]].concat(rl > 0 ? [[-rl,0,ridge],[rl,0,ridge]] : [[0,0,ridge]]), [0,1,1]],
-         [[[L/2,-D/2,H0],[L/2,D/2,H0],[rl,0,ridge]], [1,0,1]], [[[-L/2,D/2,H0],[-L/2,-D/2,H0],[-rl,0,ridge]], [-1,0,1]]];
-    add('roof', ['Flat', 'Shed', 'Gable', 'Hip'][RF.n] + ' roof', 'AA-ROOF', roofFaces,
-      { roofType:['FLAT_ROOF', 'SHED_ROOF', 'GABLE_ROOF', 'HIP_ROOF'][RF.n], pitch:RF.n === 0 ? 0 : RF.th });
-    add('slab', 'Ground floor', 'AA-FLOOR', [[[[-L/2,-D/2,0],[L/2,-D/2,0],[L/2,D/2,0],[-L/2,D/2,0]], [0,0,-1]]]);
-  
-  } else {
-    /* A broken plan: walls to the eaves round the outline, each bar
-       facade's window on the longest stretch of that facade still outside
-       (as the Site tab draws it), the Roof tab's roof over every piece along
-       its own long side, and one ground floor under them all. */
-    const pl = planOutline(rects);
-    const lineOf = { S:[1, -D / 2], N:[1, D / 2], E:[0, L / 2], W:[0, -L / 2] };
-    const onLine = (sg, f) => sg.n[0] === FN[f][0] && sg.n[1] === FN[f][1] && Math.abs(sg.a[lineOf[f][0]] - lineOf[f][1]) < 1e-3;
-    const winAt = {};
-    ['S', 'N', 'E', 'W'].forEach(f => {
-      const o = OPEN[f], along = (f === 'S' || f === 'N') ? 0 : 1;
-      let sp = null;
-      pl.segs.forEach(sg => { if (!onLine(sg, f)) return;
-        const u0 = Math.min(sg.a[along], sg.b[along]), u1 = Math.max(sg.a[along], sg.b[along]);
-        if (!sp || u1 - u0 > sp[1] - sp[0]) sp = [u0, u1]; });
-      const W0 = f === 'S' || f === 'N' ? L : D;
-      const sill = o.sillZ != null ? o.sillZ : 0.9, h = Math.max(0.3, (o.headZ != null ? o.headZ : 2.1) - sill);
-      const w = Math.min(W0 * 0.92, (o.wwr || 0) * W0 * H0 / h);
-      if (sp && w > 0.01) winAt[f] = { uc:(sp[0] + sp[1]) / 2, ww:Math.min(w, 0.92 * (sp[1] - sp[0])), v0:sill, v1:Math.min(sill + h, H0) };
-    });
-    pl.segs.forEach((sg, i) => {
-      const n = [sg.n[0], sg.n[1], 0], along = sg.n[1] !== 0 ? 0 : 1;
-      const P = (u, v) => along === 0 ? [u, sg.a[1], v] : [sg.a[0], u, v];
-      const u0 = Math.min(sg.a[along], sg.b[along]), u1 = Math.max(sg.a[along], sg.b[along]);
-      const rect = (a0, a1, b0, b1) => [[P(a0, b0), P(a1, b0), P(a1, b1), P(a0, b1)], n];
-      const f = ['S', 'N', 'E', 'W'].find(k => onLine(sg, k) && winAt[k] && winAt[k].uc >= u0 - 1e-3 && winAt[k].uc <= u1 + 1e-3);
-      const faces = [];
-      if (!f) faces.push(rect(u0, u1, 0, H0));
-      else {
-        const wa = winAt[f], w0 = wa.uc - wa.ww / 2, w1 = wa.uc + wa.ww / 2;
-        faces.push(rect(u0, u1, 0, wa.v0), rect(u0, w0, wa.v0, wa.v1), rect(w1, u1, wa.v0, wa.v1), rect(u0, u1, wa.v1, H0));
-        windowAndShading(f, wa.uc, wa.ww, wa.v0, wa.v1, OPEN[f]);
-      }
-      const facing = COMPASS8_EN[Math.round(((G.rot + (sg.n[1] < 0 ? 0 : sg.n[1] > 0 ? 180 : sg.n[0] > 0 ? 270 : 90)) % 360) / 45) % 8];
-      add('wall', (f ? FNAME[f] + ' wall' : 'Wall ' + (i + 1)) + ' (faces ' + facing + ')', 'AA-WALLS', faces, { facade:f || null, finish:finishOf(G.col) });
-    });
-    /* the roof over each piece, ridge along its long side; gable and shed
-       walls rise with it — where the pieces meet their roofs intersect, as
-       a massing model's do */
-    rects.forEach((r, k) => {
-      const alongX = (r[2] - r[0]) >= (r[3] - r[1]);
-      const cx = (r[0] + r[2]) / 2, cy = (r[1] + r[3]) / 2;
-      const Lp = alongX ? r[2] - r[0] : r[3] - r[1], Dp = alongX ? r[3] - r[1] : r[2] - r[0];
-      const M = (a, b, z) => alongX ? [cx + a, cy + b, z] : [cx + b, cy + a, z];
-      const Nm = (na, nb, nz) => alongX ? [na, nb, nz] : [nb, na, nz];
-      const rise = (RF.n <= 1 ? Dp : Dp / 2) * tn, rg = H0 + rise, rq = Math.max(0, Lp / 2 - Dp / 2);
-      const F = (pts, nrm) => [pts.map(q => M(q[0], q[1], q[2])), Nm(nrm[0], nrm[1], nrm[2])];
-      const name = k === 0 ? 'Bar' : 'Wing ' + k;
-      let roofF = [], gab = [];
-      if (RF.n === 0) roofF = [F([[-Lp/2,-Dp/2,H0],[Lp/2,-Dp/2,H0],[Lp/2,Dp/2,H0],[-Lp/2,Dp/2,H0]], [0,0,1])];
-      else if (RF.n === 1) {
-        roofF = [F([[-Lp/2,-Dp/2,H0],[Lp/2,-Dp/2,H0],[Lp/2,Dp/2,rg],[-Lp/2,Dp/2,rg]], [0,-1,1])];
-        gab = [F([[-Lp/2,Dp/2,H0],[Lp/2,Dp/2,H0],[Lp/2,Dp/2,rg],[-Lp/2,Dp/2,rg]], [0,1,0]),
-               F([[Lp/2,-Dp/2,H0],[Lp/2,Dp/2,H0],[Lp/2,Dp/2,rg]], [1,0,0]), F([[-Lp/2,-Dp/2,H0],[-Lp/2,Dp/2,H0],[-Lp/2,Dp/2,rg]], [-1,0,0])];
-      } else if (RF.n === 2) {
-        roofF = [F([[-Lp/2,-Dp/2,H0],[Lp/2,-Dp/2,H0],[Lp/2,0,rg],[-Lp/2,0,rg]], [0,-1,1]), F([[Lp/2,Dp/2,H0],[-Lp/2,Dp/2,H0],[-Lp/2,0,rg],[Lp/2,0,rg]], [0,1,1])];
-        gab = [F([[Lp/2,-Dp/2,H0],[Lp/2,Dp/2,H0],[Lp/2,0,rg]], [1,0,0]), F([[-Lp/2,-Dp/2,H0],[-Lp/2,Dp/2,H0],[-Lp/2,0,rg]], [-1,0,0])];
-      } else {
-        roofF = [F([[-Lp/2,-Dp/2,H0],[Lp/2,-Dp/2,H0]].concat(rq > 0 ? [[rq,0,rg],[-rq,0,rg]] : [[0,0,rg]]), [0,-1,1]),
-                 F([[Lp/2,Dp/2,H0],[-Lp/2,Dp/2,H0]].concat(rq > 0 ? [[-rq,0,rg],[rq,0,rg]] : [[0,0,rg]]), [0,1,1]),
-                 F([[Lp/2,-Dp/2,H0],[Lp/2,Dp/2,H0],[rq,0,rg]], [1,0,1]), F([[-Lp/2,Dp/2,H0],[-Lp/2,-Dp/2,H0],[-rq,0,rg]], [-1,0,1])];
-      }
-      add('roof', name + ' — ' + ['flat', 'shed', 'gable', 'hip'][RF.n] + ' roof', 'AA-ROOF', roofF,
-        { roofType:['FLAT_ROOF', 'SHED_ROOF', 'GABLE_ROOF', 'HIP_ROOF'][RF.n], pitch:RF.n === 0 ? 0 : RF.th });
-      if (gab.length) add('wall', name + ' — ' + (RF.n === 1 ? 'shed walls' : 'gables'), 'AA-WALLS', gab, { finish:finishOf(G.col) });
-    });
-    add('slab', 'Ground floor', 'AA-FLOOR', pl.cells.map(c => [[[c[0], c[1], 0], [c[2], c[1], 0], [c[2], c[3], 0], [c[0], c[3], 0]], [0, 0, -1]]));
-  }
+  const count = { S:0, N:0, E:0, W:0 }, total = { S:0, N:0, E:0, W:0 };
+  RM.walls.forEach(wl => { total[segFace(wl.sg)]++; });
+  RM.walls.forEach(wl => {
+    const sg = wl.sg, f = segFace(sg), n = [sg.n[0], sg.n[1], 0], along = [(sg.b[0] - sg.a[0]) / sg.len, (sg.b[1] - sg.a[1]) / sg.len, 0];
+    const P = (u, v) => [sg.a[0] + along[0] * u, sg.a[1] + along[1] * u, v];
+    const rect = (a0, a1, b0, b1) => [[P(a0, b0), P(a1, b0), P(a1, b1), P(a0, b1)], n];
+    const tag = FNAME[f] + (total[f] > 1 ? ' ' + (++count[f]) : '');
+    const wn = segWindow(sg, G), faces = [];
+    const v0 = wn ? wn.sill : H0, v1 = wn ? Math.min(wn.head, H0) : H0;
+    if (wn && v1 > v0 + 0.01) {
+      const u0 = wn.uc - wn.w / 2, u1 = wn.uc + wn.w / 2;
+      faces.push(rect(0, sg.len, 0, v0), rect(0, u0, v0, v1), rect(u1, sg.len, v0, v1), rect(0, sg.len, v1, H0));
+      windowAndShading(P, n, along, wn.uc, wn.w, v0, v1, OPEN[f], f, tag);
+    } else faces.push(rect(0, sg.len, 0, H0));
+    /* above the eaves the wall follows the roof: one strip per step of its
+       profile — a gable's triangle, a shed's high wall, a valley's notch */
+    for (let k = 1; k < wl.prof.length; k++) {
+      const q0 = wl.prof[k - 1], q1 = wl.prof[k];
+      if (q0[1] - H0 > 1e-4 || q1[1] - H0 > 1e-4) faces.push([[P(q0[0], H0), P(q1[0], H0), P(q1[0], q1[1]), P(q0[0], q0[1])], n]);
+    }
+    const facing = COMPASS8_EN[Math.round(((G.rot + { S:0, N:180, E:270, W:90 }[f]) % 360) / 45) % 8];
+    add('wall', tag + ' wall (faces ' + facing + ')', 'AA-WALLS', faces, { facade:f, finish:finishOf(G.col) });
+  });
+  if (RM.steps.length) add('wall', 'Roof step walls', 'AA-WALLS', RM.steps.reduce((acc, st) => {
+    const P = (u, z) => st.ax === 'x' ? [st.a[0], st.a[1] + u, z] : [st.a[0] + u, st.a[1], z], n = [st.n[0], st.n[1], 0];
+    for (let k = 1; k < st.prof.length; k++) {
+      const q0 = st.prof[k - 1], q1 = st.prof[k];
+      acc.push([[P(q0[0], q0[1]), P(q1[0], q1[1]), P(q1[0], q1[2]), P(q0[0], q0[2])], n]);
+    }
+    return acc;
+  }, []), { finish:finishOf(G.col) });
+  add('roof', ['Flat', 'Shed', 'Gable', 'Hip'][RF.n] + ' roof', 'AA-ROOF',
+    RM.pieces.map(pc => [pc.poly.map(q => [q[0], q[1], RM.zOf(pc.f, q[0], q[1])]), [-RM.t * pc.f.a, -RM.t * pc.f.b, 1]]),
+    { roofType:['FLAT_ROOF', 'SHED_ROOF', 'GABLE_ROOF', 'HIP_ROOF'][RF.n], pitch:RF.n === 0 ? 0 : RF.th });
+  add('slab', 'Ground floor', 'AA-FLOOR', pl.cells.map(c => [[[c[0], c[1], 0], [c[2], c[1], 0], [c[2], c[3], 0], [c[0], c[3], 0]], [0, 0, -1]]));
 
   /* the collector field chosen on Roof, module by module, as it sits on the
      slope over the main facade or racked on a flat roof */
@@ -7380,11 +7560,17 @@ function exportModel() {
 
   /* the attached sunspace, a glazed box on its facade */
   if (SUNSP && SUNSP.on) {
-    const f = SUNSP.face, n = FN[f], W = (f === 'S' || f === 'N' ? L : D) * SUNSP.widthFrac, hS = Math.min(H0, 3), d = SUNSP.depth;
-    const a = fp(f, -W / 2, 0), c = fp(f, W / 2, 0), a2 = off(a, n, d), c2 = off(c, n, d), z = p => [p[0], p[1], hS];
-    const side = f === 'S' || f === 'N' ? [1, 0, 0] : [0, 1, 0];
-    add('sunspace', 'Sunspace', 'AA-SUNSPACE', [[[a2, c2, z(c2), z(a2)], n], [[a, a2, z(a2), z(a)], side.map(x => -x)],
-      [[c, c2, z(c2), z(c)], side], [[z(a), z(c), z(c2), z(a2)], up]], { depth:d });
+    /* on the outermost wall of its orientation, the longest if several */
+    const f = SUNSP.face, reach = sg => sg.n[0] * (sg.a[0] + sg.b[0]) / 2 + sg.n[1] * (sg.a[1] + sg.b[1]) / 2;
+    const sg = pl.segs.filter(q => segFace(q) === f).reduce((p, q) => !p || reach(q) > reach(p) + 1e-6 || (Math.abs(reach(q) - reach(p)) < 1e-6 && q.len > p.len) ? q : p, null);
+    if (sg) {
+      const n = [sg.n[0], sg.n[1], 0], side = [(sg.b[0] - sg.a[0]) / sg.len, (sg.b[1] - sg.a[1]) / sg.len, 0];
+      const W = sg.len * SUNSP.widthFrac, hS = Math.min(H0, 3), d = SUNSP.depth, m = [(sg.a[0] + sg.b[0]) / 2, (sg.a[1] + sg.b[1]) / 2];
+      const a = [m[0] - side[0] * W / 2, m[1] - side[1] * W / 2, 0], c = [m[0] + side[0] * W / 2, m[1] + side[1] * W / 2, 0];
+      const off = p => [p[0] + n[0] * d, p[1] + n[1] * d, p[2]], a2 = off(a), c2 = off(c), z = p => [p[0], p[1], hS];
+      add('sunspace', 'Sunspace', 'AA-SUNSPACE', [[[a2, c2, z(c2), z(a2)], n], [[a, a2, z(a2), z(a)], side.map(x => -x)],
+        [[c, c2, z(c2), z(c)], side], [[z(a), z(c), z(c2), z(a2)], up]], { depth:d });
+    }
   }
 
   /* detached walls and planting from Ventilation */
@@ -7519,8 +7705,9 @@ function toDecisionsJSON() {
       koppen:STATE.clim.k.code, normalsSource:STATE.clim.source || null },
     decisions:{
       plan:{ length:MASS.L, depth:MASS.D, mainFacadeAzimuth:MASS.rot, floors:MASS.fl, floorHeight:MASS.fh,
-        form:MASS.form || 'rect', wing:MASS.form && MASS.form !== 'rect' && MASS.wing ? Object.assign({}, MASS.wing) : null,
-        wallColour:colourOf(fin) },
+        form:MASS.form || 'rect', wing:MASS.form && MASS.form !== 'rect' && MASS.wing ? Object.assign({ mode:MASS.wing.e < 0 ? 'carved' : 'extended' }, MASS.wing) : null,
+        patio:MASS.patio && MASS.patio.on && MASS.patio.ok !== false ? { width:MASS.patio.ew, depth:MASS.patio.ed } : null,
+        planArea:+planModel(MASS).area.toFixed(1), wallColour:colourOf(fin) },
       roof:{ type:['flat', 'shed', 'gable', 'hip'][ROOF.n], pitch:ROOF.n === 0 ? 0 : ROOF.th, roofColour:colourOf(rfin),
         solar:ROOF.sol && ROOF.sol.tech !== 'none' ? { technology:ROOF.sol.tech === 'pv' ? 'photovoltaic panels' : 'flat-plate thermal collectors', columns:ROOF.sol.cols, rows:ROOF.sol.rows } : null },
       openings:OPEN, sunspace:SUNSP, roofWindows:RWIN,
@@ -8017,7 +8204,7 @@ function mountApp(site, clim, keepTab, keepModel) {
   for (const k in SCORES) delete SCORES[k];
   if (!(keepModel && MASS)) {   // a language switch keeps the student's model; a new site starts afresh
   SCENE.veg.length = 0; SCENE.walls.length = 0;
-  MASS = { L:12, D:8, rot:180, fl:1, fh:3.0, col:null, form:'rect', wing:null };
+  MASS = { L:12, D:8, rot:180, fl:1, fh:3.0, col:null, form:'rect', wing:null, patio:{ on:false, w:4, d:3, cx:0, cy:0 } };
   ROOF = { n:2, th:Math.round(Math.abs(site.lat)), col:null, sol:{ tech:'none', cols:4, rows:2 } };
   /* One entry per local facade (S/N/E/W, matching the Roof tab's convention
      of true-south regardless of the plan's chosen rotation), each holding
@@ -8410,8 +8597,6 @@ Object.assign(PT, {
   "Snap to the Olgyay optimum": "Acertar pelo óptimo de Olgyay",
   "Snapped to the Olgyay optimum": "Acertado pelo óptimo de Olgyay",
   "Your plan against the optimum": "A sua planta contra o óptimo",
-  "Isometric view, tilted from the south-west. Drag the plan to stretch it, drag the black knob to turn it, drive the sun through its day below. The windows are the ones sized on Windows & Shading.":
-    "Vista isométrica, inclinada a partir de sudoeste. Arraste a planta para a esticar, arraste o botão preto para a rodar, conduza o sol ao longo do seu dia abaixo. As janelas são as dimensionadas em Janelas e Sombreamento.",
   "Sun day": "Dia de sol",
   "Solar time": "Hora solar",
   "Play the day": "Reproduzir o dia",
@@ -8622,6 +8807,34 @@ Object.assign(PT, {
   "summer shade": "de sombra no verão",
   "Own shade · winter %": "Sombra própria · inverno %",
   "wing": "ala",
+  "wings": "alas",
+  "recess": "recuo",
+  "recesses": "recuos",
+  "Extend": "Estender",
+  "Carve": "Escavar",
+  "A wing out past the bar": "Uma ala para fora da barra",
+  "A recess cut into the bar": "Um recuo escavado na barra",
+  "Other end": "Outra ponta",
+  "Other side": "Outro lado",
+  "Move the L to the other end of the bar": "Passar o L para a outra ponta da barra",
+  "Move the break to the other long side of the bar": "Passar a quebra para o outro lado comprido da barra",
+  "The plain bar": "A barra simples",
+  "Open a central patio": "Abrir um pátio central",
+  "Patio": "Pátio",
+  "patio": "pátio",
+  "Optimum": "Óptimo",
+  "Plan": "Planta",
+  "Bar": "Barra",
+  "carved": "escavado",
+  "takes": "retira",
+  "of the winter sun off its own walls, gives": "do sol de inverno às próprias paredes, dá",
+  "A plain bar casts no shade on itself — break the volume or open a patio": "Uma barra simples não se sombreia a si própria — quebre o volume ou abra um pátio",
+  "No room for a patio: it needs 2 m of building round it and 2 m clear of any recess — widen or deepen the bar": "Sem espaço para um pátio: precisa de 2 m de edifício à volta e 2 m livres de qualquer recuo — alargue ou aprofunde a barra",
+  "Drag the black points on the model: a corner stretches the bar, the break’s point sizes a wing or carves a recess, the patio’s point opens it wider or deeper.": "Arraste os pontos pretos no modelo: um canto estica a barra, o ponto da quebra dimensiona uma ala ou escava um recuo, o ponto do pátio abre-o mais largo ou mais fundo.",
+  "Isometric view, tilted from the south-west. Drag the plan to stretch it, the black knob to turn it, the black points to break it; drive the sun from the Sun controls. The windows are the ones sized on Windows & Shading, spread over every wall.": "Vista isométrica, inclinada a partir de sudoeste. Arraste a planta para a esticar, o botão preto para a rodar, os pontos pretos para a quebrar; conduza o sol pelos comandos do Sol. As janelas são as dimensionadas em Janelas e Sombreamento, distribuídas por todas as paredes.",
+  "Most glass faces": "Mais vidro virado a",
+  "least faces": "menos virado a",
+  "windows": "janelas",
   /* the Ventilation workbench */
   "Tools": "Ferramentas",
   "Selection": "Selecção",
@@ -8724,11 +8937,11 @@ Object.assign(PT_HINT, {
   'roof-solar':
     'Escolha <b>painéis fotovoltaicos</b> ou <b>colectores térmicos</b> por cima do modelo e dimensione o campo — pelas colunas e filas, ou arrastando o ponto âmbar no seu canto sobre a cobertura. Os módulos assentam na vertente sobre a fachada principal, pelo que ficam virados para a orientação definida no separador Local; numa cobertura plana ficam em filas sobre estrutura, à inclinação óptima, espaçadas para que o sol do meio-dia de 21 de Dezembro passe por cima da fila da frente. O sol no plano dos colectores é lido da irradiação horizontal do próprio local — radiação de onda curta diária 1991–2020 da reanálise ERA5 (Hersbach et al., 2020), via Open-Meteo — levada para o plano inclinado mês a mês pelo método de Duffie &amp; Beckman: a separação mensal em directa e difusa de Erbs, Klein &amp; Duffie, a razão da directa no dia médio de cada mês (Klein), o céu isotrópico e 20 % de reflexão do solo. A <b>% do óptimo</b> compara a produção à inclinação da cobertura com a da melhor inclinação para essa tecnologia neste local, encontrada grau a grau. FV: módulos de cerca de 20 % de rendimento (0,20 kWp por m²) e um índice de desempenho de 0,80 (IEC 61724-1) dão a electricidade. Térmico: um colector plano lido pela curva de rendimento da EN ISO 9806 com coeficientes típicos (η0 0,78, a1 3,5, a2 0,015), a uma temperatura média do fluido de 50 °C contra a temperatura do ar de cada mês, dá o calor que consegue captar — mais do que uma casa consome no verão, pelo que a fracção solar de um sistema real é menor. A ficha técnica de um módulo ou colector real substitui estes valores. Sem os dados do local, os números assentam num índice de limpidez assumido de 0,55 e dizem-no.',
   'site-form':
-    'Quebre o volume com os botões por cima do modelo: um <b>L</b> acrescenta uma ala numa ponta, um <b>T</b> uma ao meio, um <b>H</b> uma em cada ponta, para os dois lados. Os pontos pretos no modelo são os seus vértices — arraste os cantos da barra para a esticar, e o canto livre de uma ala para a dimensionar e a rodar para trás da barra ou para a frente da fachada principal; <b>Espelhar o L</b> passa a sua ala para a outra ponta. Uma planta quebrada muda duas coisas que as caixas lêem ao mesmo tempo. <b>Sombra própria · inverno %</b> é a parte do sol de 21 de Dezembro nas paredes que o edifício retira a si próprio — cada parede amostrada a cada 0,75 m em três alturas, o sol a cada meia hora, cada amostra pesada por quão de frente o sol a atinge, e contada como perdida quando o raio de volta ao sol encontra uma ala (altura do beirado; coberturas inclinadas sombreiam um pouco mais). O mesmo teste a 21 de Junho dá a sombra de verão no indicador: alas que sombreiam uma parede a nascente ou a poente no verão ganham com isso, alas que sombreiam a fachada principal no inverno pagam por isso. O <b>fator de forma</b> é recalculado para todo o contorno — paredes até ao beirado em todo o perímetro, a cobertura sobre a sua área com a inclinação definida em Cobertura, o desvão estimado ala a ala — pelo que uma quebra quase sempre o aumenta: mais envolvente para o mesmo volume. O ajuste a Olgyay continua a ler a barra. Cobertura e Janelas e Sombreamento continuam a trabalhar sobre a barra; a Ventilação desenha as alas como volumes até ao beirado — sombreiam o jardim e afastam delas a plantação, enquanto as pontuações de escoamento continuam a ler a barra — e as alas entram na exportação 3D.',
+    'Quebre o volume com as ferramentas à esquerda do modelo. O <b>L</b> trabalha uma ponta da barra, o <b>T</b> o meio, o <b>H</b> as duas pontas dos dois lados compridos. <b>Estender</b> acrescenta a ala para fora da barra; <b>Escavar</b> recorta a mesma forma dentro dela como um recuo, pelo que é a própria barra que se torna o L, o T ou o H. O ponto preto da quebra é um alcance contínuo: arrastado para fora a ala cresce, de volta à fachada regressa a barra simples, mais para dentro o recuo aprofunda-se — nunca salta para o outro lado. <b>⇆ Outra ponta</b> e <b>⇅ Outro lado</b> espelham a quebra para a ponta oposta da barra ou para o seu lado comprido oposto. <b>Abrir um pátio central</b> recorta um pátio no meio; o ponto do seu canto abre-o mais largo ou mais fundo, deixando sempre 2 m de edifício à volta e 2 m livres de qualquer recuo. Todas as paredes do contorno — de uma ala, de um recuo, de um pátio — recebem a janela que a sua orientação tem em Janelas e Sombreamento, pelo que uma quebra redistribui o vidro em vez de o esconder. Uma planta trabalhada muda o que as caixas lêem. <b>Sombra própria · inverno %</b> é a parte do sol de 21 de Dezembro nas paredes que o edifício retira a si próprio — cada parede amostrada a cada 0,75 m em três alturas, o sol a cada meia hora, cada amostra pesada por quão de frente o sol a atinge, e contada como perdida quando o raio de volta ao sol encontra alguma parte da planta (altura do beirado; coberturas inclinadas sombreiam um pouco mais). O mesmo teste a 21 de Junho dá a sombra de verão na leitura por baixo do modelo: uma quebra ou um pátio que sombreia paredes a nascente e a poente no verão ganha com isso, um que sombreia a fachada principal no inverno paga por isso. O <b>fator de forma</b> é tirado de todo o volume — cada parede até ao perfil da própria cobertura, cada plano de cobertura com a inclinação definida em Cobertura, o piso térreo — pelo que uma quebra ou um pátio quase sempre o aumenta: mais envolvente para o mesmo volume. O ajuste a Olgyay continua a ler o comprimento, a profundidade e a rotação da barra. A exportação CAD escreve este volume tal como está desenhado; Cobertura, Janelas e Sombreamento e Ventilação estão a passar para ele separador a separador — até lá lêem a barra, e a Ventilação acrescenta as alas estendidas.',
   'roof-albedo':
     'A cor da cobertura decide quanto do sol a cobertura absorve. Segue as mesmas três classes de cor das paredes no separador Local — clara α 0,4, média 0,5, escura 0,8 (RCCTE, Quadro V.5, retomado no REH pelo Despacho n.º 15793-K/2013) — e o albedo indicado é a parte reflectida, 1 − α. De toda a envolvente, a cobertura é a que recebe mais de frente o sol alto de Verão, pelo que a sua cor pesa na estação de arrefecimento pelo menos tanto como a das paredes; superfícies claras são o conselho corrente para climas quentes (Lechner; Gonçalves &amp; Graça). O <b>Ajuste albedo</b> lê-a exactamente como as paredes, contra o verão deste local — de Junho a Setembro a média é <b>%1 °C</b>, um verão <b>%2</b> — sem peso a 17 °C ou menos e com peso total a 23 °C ou mais; a caixa de baixo dá o próprio albedo. Esta aplicação lê uma telha cerâmica pelo seu tom: uma telha pálida ou envelhecida como vermelho-claro, uma telha carregada como vermelho-escuro. A cobertura toma a cor em todas as vistas 3D.',
   'site-windows':
-    'As janelas do modelo são as dimensionadas em <b>Janelas e Sombreamento</b> — a mesma largura, peitoril e padieira, cada uma dada pela razão vão/parede da sua fachada — pelo que rodar aqui a planta roda-as com ela. Cada etiqueta azul indica para onde essa janela fica realmente virada depois de rodada a planta, depois a largura × altura e a razão vão/parede da fachada; em Janelas e Sombreamento as fachadas mantêm os nomes que têm com a fachada principal a sul. A regra para as ler: <b>quanto maior a janela, mais deve estar virada a sul; quanto menor, mais fica virada a norte</b> (norte e sul trocam abaixo do equador). O vidro a sul recolhe o sol baixo de Inverno e é o mais fácil de sombrear do sol alto de Verão; o vidro a norte dá luz difusa e uniforme, mas quase não recebe sol de Inverno enquanto perde calor (Lechner; Gonçalves &amp; Graça). O <b>Ajuste vãos</b> lê-a: cada janela conta como uma seta que sai da sua fachada, tão longa quanto o vidro que a sua razão vão/parede pede, e o ajuste é 100 quando a soma aponta a sul, 50 a nascente ou poente, 0 a norte. As dimensões mudam-se em Janelas e Sombreamento; a rotação da planta, aqui, decide para onde olham. Janelas e Sombreamento desenha cada janela como uma faixa única no piso térreo, com no máximo 92 % da fachada — com dois ou três pisos as faixas podem atingir esse limite e parecer iguais, embora a razão vão/parede, e o ajuste, continuem diferentes.',
+    'As janelas do modelo são as dimensionadas em <b>Janelas e Sombreamento</b> — a mesma largura, peitoril e padieira, cada uma dada pela razão vão/parede da sua fachada — pelo que rodar aqui a planta roda-as com ela. Cada etiqueta azul indica para onde essa janela fica realmente virada depois de rodada a planta, depois a largura × altura e a razão vão/parede da fachada; em Janelas e Sombreamento as fachadas mantêm os nomes que têm com a fachada principal a sul. A regra para as ler: <b>quanto maior a janela, mais deve estar virada a sul; quanto menor, mais fica virada a norte</b> (norte e sul trocam abaixo do equador). O vidro a sul recolhe o sol baixo de Inverno e é o mais fácil de sombrear do sol alto de Verão; o vidro a norte dá luz difusa e uniforme, mas quase não recebe sol de Inverno enquanto perde calor (Lechner; Gonçalves &amp; Graça). O <b>Ajuste vãos</b> lê-a: cada janela conta como uma seta que sai da sua fachada, tão longa quanto o vidro que a sua razão vão/parede pede, e o ajuste é 100 quando a soma aponta a sul, 50 a nascente ou poente, 0 a norte. As dimensões mudam-se em Janelas e Sombreamento; a rotação da planta, aqui, decide para onde olham. Janelas e Sombreamento desenha cada janela como uma faixa única no piso térreo, com no máximo 92 % da fachada — com dois ou três pisos as faixas podem atingir esse limite e parecer iguais, embora a razão vão/parede, e o ajuste, continuem diferentes. Numa planta quebrada cada parede com pelo menos 1,5 m recebe a janela da sua orientação, dimensionada pela sua própria área, e a etiqueta conta as janelas viradas para esse lado com as suas larguras; o <b>Ajuste vãos</b> soma então todo o vidro de cada orientação.',
   'clim-method':
     'A classificação é a de Köppen–Geiger tal como Peel, Finlayson e McMahon (2007) a enunciam — a formalização que escreve cada critério como uma desigualdade e não como uma descrição. Nada aqui foi consultado: o código <b>%1</b> foi calculado a partir das normais que introduziu, e o quadro abaixo mostra que grandeza decidiu cada letra. O semestre de Verão vai de Abril a Setembro no hemisfério norte e de Outubro a Março no sul, o que é uma convenção da classificação e não uma estação.',
   'clim-threshold':
