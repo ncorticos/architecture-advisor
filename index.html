@@ -617,7 +617,7 @@ footer{border-top:1px solid var(--line); margin-top:26px; background:var(--wash)
 /* ------------------------------------------------------------ 0. IDENTITY -- */
 const APP = {
   name:        'Architecture Advisor',
-  version:     '1.69.0',
+  version:     '1.70.0',
   author:      'Nuno Dinis Cortiços',
   institution: 'Lisbon School of Architecture, Universidade de Lisboa',
   builtWith:   'Claude Opus 5 (Anthropic)',
@@ -1658,15 +1658,54 @@ const FINISHES = [
   { key:'darkblue',   en:'dark blue',   pt:'azul-escuro',     hex:'#1F2F5A', cls:'dark' }
 ];
 const finishOf = key => FINISHES.find(f => f.key === key) || null;
-/** A wall's fill in every 3D view: the finish chosen on Site, shaded by
-    face (k), or the neutral grey at its usual strength when none is. */
-function wallFill(grey, k) {
-  const f = MASS && finishOf(MASS.col);
+/** This site's summer as the colour choices read it: the June-to-September
+    mean of the normals (December to March south of the equator), its weight —
+    none at 17 °C or below, full at 23 °C or above — and its band. */
+function summerOf(C, lat) {
+  const T = (lat < 0 ? [11, 0, 1, 2] : [5, 6, 7, 8]).reduce((a, i) => a + C.t[i], 0) / 4;
+  return { T, w:clamp((T - 17) / 6, 0, 1), band:T >= 22 ? 'hot' : T >= 19 ? 'warm' : 'cool' };
+}
+/** 0–100 fit of a finish to that summer — every step above the light class
+    weighed by the summer's weight; null until a finish is chosen. */
+const albedoFitFor = (key, w) => {
+  const f = finishOf(key);
+  return f ? Math.round(clamp(100 * (1 - w * (FINISH_ALPHA[f.cls] - 0.4) / 0.4), 0, 100)) : null;
+};
+/** The finish buttons, grouped by colour class; set() gets the key, or null
+    when the chosen one is pressed again. */
+function finishPicker(get, set) {
+  const row = el('div', { class:'controls', style:'flex-wrap:wrap;gap:4px' });
+  const btns = [];
+  const sync = () => btns.forEach(b => b.classList.toggle('solid', b.dataset.col === get()));
+  ['light', 'medium', 'dark'].forEach(cls => {
+    row.appendChild(el('span', { class:'hint', text:t({ light:'Light', medium:'Medium', dark:'Dark' }[cls]) + ' · α ' + fmt(FINISH_ALPHA[cls], 1) }));
+    FINISHES.filter(f => f.cls === cls).forEach(f => {
+      const b = el('button', { class:'btn small', 'data-col':f.key,
+        title:f.pt + ' — α ' + fmt(FINISH_ALPHA[cls], 1) + ' · ' + t('albedo') + ' ' + fmt(1 - FINISH_ALPHA[cls], 1) });
+      b.appendChild(el('span', { style:'display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-2px;border:1px solid rgba(20,23,26,.35);background:' + f.hex }));
+      b.appendChild(document.createTextNode(LANG === 'pt' ? f.pt : f.en));
+      b.onclick = () => { set(get() === f.key ? null : f.key); sync(); };
+      row.appendChild(b);
+      btns.push(b);
+    });
+  });
+  sync();
+  return row;
+}
+/** A finish's fill, shaded by face (k), or the neutral grey at its usual
+    strength when no finish is chosen. */
+function finishFill(key, grey, k, alpha) {
+  const f = finishOf(key);
   if (!f) return 'rgba(20,23,26,' + grey + ')';
   const h = f.hex.replace('#', '');
   const v = [0, 2, 4].map(i => Math.round(clamp(parseInt(h.slice(i, i + 2), 16) * (k || 1), 0, 255)));
-  return 'rgba(' + v.join(',') + ',0.62)';
+  return 'rgba(' + v.join(',') + ',' + alpha + ')';
 }
+/** A wall's fill in every 3D view: the finish chosen on Site. */
+const wallFill = (grey, k) => finishFill(MASS && MASS.col, grey, k, 0.62);
+/** A roof's fill in every 3D view: the finish chosen on Roof, a little more
+    solid than the walls so the slopes read as one covering. */
+const roofFill = (grey, k) => finishFill(ROOF && ROOF.col, grey, k, 0.74);
 
 /* ============================================ 5. THE SITE ENGINE ==
    A site here is a position, an altitude and a year of monthly normals.
@@ -2521,32 +2560,11 @@ function buildSite(host) {
      weighs each step above the light class by how hot this summer is — the
      June-to-September mean of the normals (December to March south of the
      equator): no weight at 17 °C or below, full weight at 23 °C or above. */
-  const sumIdx = lat < 0 ? [11, 0, 1, 2] : [5, 6, 7, 8];
-  const sumT = sumIdx.reduce((a, i) => a + C.t[i], 0) / 4;
-  const sumW = clamp((sumT - 17) / 6, 0, 1);
-  const sumBand = sumT >= 22 ? 'hot' : sumT >= 19 ? 'warm' : 'cool';
+  const { T:sumT, w:sumW, band:sumBand } = summerOf(C, lat);
   /** 0–100 fit of the wall colour to this summer; null until one is chosen. */
-  const albedoFit = () => {
-    const f = finishOf(G.col);
-    return f ? Math.round(clamp(100 * (1 - sumW * (FINISH_ALPHA[f.cls] - 0.4) / 0.4), 0, 100)) : null;
-  };
+  const albedoFit = () => albedoFitFor(G.col, sumW);
   host.appendChild(section('Wall colour — albedo', 'How much of the sun the walls reflect, read against this site’s summer'));
-  const colRow = host.appendChild(el('div', { class:'controls', style:'flex-wrap:wrap;gap:4px' }));
-  const colBtns = [];
-  const syncCol = () => colBtns.forEach(b => b.classList.toggle('solid', b.dataset.col === G.col));
-  ['light', 'medium', 'dark'].forEach(cls => {
-    colRow.appendChild(el('span', { class:'hint', text:t({ light:'Light', medium:'Medium', dark:'Dark' }[cls]) + ' · α ' + fmt(FINISH_ALPHA[cls], 1) }));
-    FINISHES.filter(f => f.cls === cls).forEach(f => {
-      const b = el('button', { class:'btn small', 'data-col':f.key,
-        title:f.pt + ' — α ' + fmt(FINISH_ALPHA[cls], 1) + ' · ' + t('albedo') + ' ' + fmt(1 - FINISH_ALPHA[cls], 1) });
-      b.appendChild(el('span', { style:'display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-2px;border:1px solid rgba(20,23,26,.35);background:' + f.hex }));
-      b.appendChild(document.createTextNode(LANG === 'pt' ? f.pt : f.en));
-      b.onclick = () => { G.col = G.col === f.key ? null : f.key; syncCol(); labDraw(); };
-      colRow.appendChild(b);
-      colBtns.push(b);
-    });
-  });
-  syncCol();
+  host.appendChild(finishPicker(() => G.col, k => { G.col = k; labDraw(); }));
   const pillCol = el('span', { class:'pill empty' });
   host.appendChild(el('div', { class:'limitrow' }, [pillCol]));
   host.appendChild(hint('site-albedo',
@@ -2720,7 +2738,7 @@ function buildSite(host) {
           stroke(ctx, CH.ink, 1.4); ctx.stroke();
         }
         outline(topS, true);
-        ctx.fillStyle = 'rgba(20,23,26,.05)'; ctx.fill();
+        ctx.fillStyle = roofFill(0.05, 1); ctx.fill();
         stroke(ctx, CH.ink, 2); ctx.stroke();
       };
       drawBox(G.L, G.D, beta, Hgt);
@@ -3059,7 +3077,12 @@ function buildRoof(host) {
       physics behind the Galloway–Lechner rule. A flat roof reads as a
       horizontal collector. */
   const roofCatch = () => Math.round(100 * clamp(Math.sin((seasonAlt + (RF.n === 0 ? 0 : RF.th)) * RAD), 0, 1));
-  SCORES.roof = () => ({ 'Solar pitch fit /100':roofFit(), [season.key + ' sun %']:roofCatch(), 'Site target pitch (°)':+target.toFixed(1) });
+  /* The roof colour, read exactly as the wall colour is on Site: its class
+     α, the albedo 1 − α, and a fit to this site's summer. */
+  const { T:sumT, w:sumW, band:sumBand } = summerOf(C, lat);
+  const roofAlbFit = () => albedoFitFor(RF.col, sumW);
+  SCORES.roof = () => ({ 'Solar pitch fit /100':roofFit(), [season.key + ' sun %']:roofCatch(), 'Site target pitch (°)':+target.toFixed(1),
+    'Roof albedo fit /100':roofAlbFit(), 'Roof albedo':finishOf(RF.col) ? +(1 - FINISH_ALPHA[finishOf(RF.col).cls]).toFixed(2) : null });
   const seasonName = () => LANG === 'pt' ? { Winter:'Inverno', Summer:'Verão', Equinox:'equinócio' }[season.key] : season.key;
   host.appendChild(section('Pitched roof — catch the low sun',
     'South slope as a solar collector; the same geometry explains deep winter glass'));
@@ -3083,9 +3106,25 @@ function buildRoof(host) {
   host.appendChild(hint('roof-score',
     'The two corner boxes read the pitch the way Galloway and Lechner set the ideals. <b>Solar pitch fit</b> measures your pitch against this site’s own target, <b>%1°</b>: the winter figure (%2°) and the summer figure (%3°) weighted by the Climate balance of %4 heating months (mean below 18 °C) to %5 cooling months (above 22 °C). It gives 100 on the target and 0 at 30° off, the whole gap between the seasonal ideals. <b>%6 sun</b> is the share of that season’s noon beam the south slope meets squarely — the cosine of the incidence angle, so a flat roof reads what a horizontal collector would. It changes slowly near the ideal: 10° off costs under 2 %. The 80/50 and 95/85 colour bands are this application’s teaching cuts, not numbers from the sources. A flat roof has no pitch to judge: its collectors take their own frame.',
     [fmt(target, 0), fmt(idealW, 0), fmt(idealS, 0), Hm, Cm, seasonName()]));
+  host.appendChild(section('Roof colour — albedo', 'How much of the sun the roof reflects, read against this site’s summer'));
+  host.appendChild(finishPicker(() => RF.col, k => { RF.col = k; roofDraw(); }));
+  const pillRoofCol = el('span', { class:'pill empty' });
+  host.appendChild(el('div', { class:'limitrow' }, [pillRoofCol]));
+  host.appendChild(hint('roof-albedo',
+    'The roof colour decides how much of the sun the roof absorbs. It takes the same three colour classes as the walls on Site — light α 0.4, medium 0.5, dark 0.8 (RCCTE Quadro V.5, carried into the REH by Despacho n.º 15793-K/2013) — and the albedo shown is the part reflected, 1 − α. Of the whole envelope the roof meets the high summer sun most squarely, so its colour weighs on the cooling season at least as much as the walls’ do; light surfaces are the standard warm-climate advice (Lechner; Gonçalves &amp; Graça). <b>Albedo fit</b> reads it exactly as the walls are read, against this site’s summer — June to September averages <b>%1 °C</b> here, a <b>%2</b> summer — with no weight at 17 °C or below and full weight at 23 °C or above; the box beneath it gives the albedo itself. This application reads a ceramic tile by its tone: a pale or weathered tile as light red, a deep one as dark red. The roof takes the colour in every 3D view.',
+    [fmt(sumT, 1), t(sumBand)]));
+  function refreshRoofCol() {
+    const f = finishOf(RF.col), sc = roofAlbFit();
+    if (!f) { pillRoofCol.className = 'pill empty'; pillRoofCol.textContent = t('Pick a roof colour to read its albedo here'); return; }
+    const head = t({ light:'Light', medium:'Medium', dark:'Dark' }[f.cls]) + ' · ' + t('albedo') + ' ' + fmt(1 - FINISH_ALPHA[f.cls], 2) + ' — ';
+    if (sc >= 80) { pillRoofCol.className = 'pill ok'; pillRoofCol.textContent = head + t(sumW < 0.3 ? 'the summer here is cool, colour is a minor call' : 'suits the summer here'); }
+    else if (sc >= 50) { pillRoofCol.className = 'pill empty'; pillRoofCol.textContent = head + t('lighten it for the summer here'); }
+    else { pillRoofCol.className = 'pill bad'; pillRoofCol.textContent = head + t('the summer here will overheat this roof'); }
+  }
   /* The pill and the corner box read the same score, so the page never
      gives two verdicts on one pitch. */
   function refreshRoof() {
+    refreshRoofCol();
     if (RF.n === 0) { pillRoof.className = 'pill empty'; pillRoof.textContent = t('Flat — frame the collectors, insulate for summer'); return; }
     const sc = roofFit();
     if (sc >= 80) { pillRoof.className = 'pill ok'; pillRoof.textContent = t('Near this site’s solar pitch'); }
@@ -3107,7 +3146,8 @@ function buildRoof(host) {
     const fanTop = H0 + span * Math.tan(idealW * RAD);   // winter is always the steepest ideal marker
     const margin = 3;                          // room for the sun rays
     const half = G.L / 2 + G.D / 2 + margin;
-    const top = 14, bottom = H - 34;
+    const narrow = W < 600;   // phone width: the badges run in a row across the top
+    const top = narrow ? 74 : 14, bottom = H - 34;
     const availV = Math.max(40, bottom - top);
     const sByW = (W / 2 - 16) / (half * ISO_C);
     const sByH = availV / (half * ISO_S * 2 + Math.max(ridge, fanTop));
@@ -3122,16 +3162,18 @@ function buildRoof(host) {
   roofPanel = makePanel(host, {
     title: 'The roof in three dimensions',
     note: 'Isometric view, matching the Site tab — the plan comes from there. Drag the black handle to re-pitch the roof; the green gauge shows each ideal pitch — from the east ridge end on a hip roof, the eave corner otherwise — drag until the slope runs parallel to the season ray. The lines behind the ridge are the hidden north eave and east rake, closed by the east eave.',
-    aspect: 1.7,
+    heightFn: w => w < 600 ? Math.round(w * 0.95 + 70) : Math.round(w / 1.7),
     render(ctx, W, H) {
-      const FR = roofFrame(W, H);
+      const FR = roofFrame(W, H), narrow = W < 600;
       const { H0, th, ridge } = FR;
+      const desk = labelDesk(ctx, W, H);   // numbers are placed last, beside their lines
       const proj = (x, y, z) => projF(FR, x, y, z);
       const poly = (pts3, fill, strokeColor, width, dash) => {
         const p = pts3.map(q => proj(q[0], q[1], q[2]));
         ctx.beginPath();
         p.forEach((q, i) => i ? ctx.lineTo(q[0], q[1]) : ctx.moveTo(q[0], q[1]));
         ctx.closePath();
+        if (strokeColor) desk.path(p, true);
         if (fill) { ctx.fillStyle = fill; ctx.fill(); }
         if (strokeColor) { stroke(ctx, strokeColor, width || 1.4, dash || null); ctx.stroke(); }
       };
@@ -3161,13 +3203,13 @@ function buildRoof(host) {
       // the roof surface(s) a south-west viewer can see
       if (RF.n === 0) {
         poly([[-G.L/2,-G.D/2,H0], [G.L/2,-G.D/2,H0], [G.L/2,G.D/2,H0], [-G.L/2,G.D/2,H0]],
-             'rgba(20,23,26,.05)', CH.ink, 2);
+             roofFill(0.05, 1), CH.ink, 2);
       } else if (RF.n === 1) {
         poly([[-G.L/2,-G.D/2,H0], [G.L/2,-G.D/2,H0], [G.L/2,G.D/2,ridge], [-G.L/2,G.D/2,ridge]],
-             'rgba(20,23,26,.05)', CH.ink, 2);
+             roofFill(0.05, 1), CH.ink, 2);
       } else if (RF.n === 2) {
         poly([[-G.L/2,-G.D/2,H0], [G.L/2,-G.D/2,H0], [G.L/2,0,ridge], [-G.L/2,0,ridge]],
-             'rgba(20,23,26,.05)', CH.ink, 2);
+             roofFill(0.05, 1), CH.ink, 2);
         // the ridge line itself, since the north-facing half stays hidden
         const r0 = proj(-G.L/2, 0, ridge), r1 = proj(G.L/2, 0, ridge);
         stroke(ctx, CH.ink, 1.6); seg(ctx, r0[0], r0[1], r1[0], r1[1]);
@@ -3183,9 +3225,9 @@ function buildRoof(host) {
         // shortened by half the depth at each end (a pyramid when L<=D)
         const rl = Math.max(0, G.L / 2 - G.D / 2);
         poly([[-G.L/2,-G.D/2,H0], [G.L/2,-G.D/2,H0], [rl,0,ridge], [-rl,0,ridge]],
-             'rgba(20,23,26,.05)', CH.ink, 2);
+             roofFill(0.05, 1), CH.ink, 2);
         poly([[-G.L/2,-G.D/2,H0], [-G.L/2,G.D/2,H0], [-rl,0,ridge]],
-             'rgba(20,23,26,.08)', CH.ink, 1.4);
+             roofFill(0.08, 0.88), CH.ink, 1.4);
         const q0 = proj(-rl, 0, ridge), q1 = proj(rl, 0, ridge);
         stroke(ctx, CH.ink, 1.6); seg(ctx, q0[0], q0[1], q1[0], q1[1]);
         // hidden upper contour, same convention: the north eave plus the
@@ -3199,8 +3241,11 @@ function buildRoof(host) {
         const hee0 = proj(G.L/2, -G.D/2, H0), hee1 = proj(G.L/2, G.D/2, H0);
         stroke(ctx, CH.ink, 1.4); seg(ctx, hee0[0], hee0[1], hee1[0], hee1[1]);
       }
-      const ridgeMid = proj(0, (RF.n === 2 || RF.n === 3) ? 0 : G.D / 2, ridge);
-      label(ctx, fmt(ridge, 1) + ' m', ridgeMid[0] + 7, ridgeMid[1] - 9, CH.ink2, FM(10), 'left', 'middle');
+      // the ridge (or top edge) the height label will sit beside
+      const ridgeY = (RF.n === 2 || RF.n === 3) ? 0 : G.D / 2;
+      const ridgeHalf = RF.n === 3 ? Math.max(0, G.L / 2 - G.D / 2) : G.L / 2;
+      const ridgeA = proj(-ridgeHalf, ridgeY, ridge), ridgeB = proj(ridgeHalf, ridgeY, ridge);
+      desk.line(ridgeA[0], ridgeA[1], ridgeB[0], ridgeB[1]);
 
       // the ideal-pitch gauge grows out of the east ridge-end vertex on a
       // hip roof, the eave corner on every other type. Each ray is that
@@ -3217,6 +3262,7 @@ function buildRoof(host) {
       const gO = RF.n === 3 ? proj(rlH, 0, ridge) : proj(fanSgn * G.L / 2, -G.D / 2, H0);
       const gOx = gO[0], gOy = gO[1];
       let hitTag = null;
+      const gaugeTags = [];
       [{ a:idealW, tag:'winter' }, { a:idealS, tag:'summer' }, { a:idealB, tag:'year' }].forEach(gd => {
         const idealZ = H0 + span * Math.tan(gd.a * RAD);
         const p1 = RF.n === 3 ? proj(rlH, span, ridge + span * Math.tan(gd.a * RAD))
@@ -3225,9 +3271,10 @@ function buildRoof(host) {
         if (hit) hitTag = gd.tag;
         if (hit) stroke(ctx, '#16A34A', 2.6); else stroke(ctx, '#16A34A', 1.4, [5, 4]);
         seg(ctx, gOx, gOy, p1[0], p1[1]);
+        desk.line(gOx, gOy, p1[0], p1[1]);
         ctx.fillStyle = '#16A34A';
         ctx.beginPath(); ctx.arc(p1[0], p1[1], hit ? 4 : 2.5, 0, 6.284); ctx.fill();
-        label(ctx, t(gd.tag) + ' ' + fmt(gd.a, 0) + '°', p1[0] - fanSgn * 5, p1[1], '#15803d', F(9), fanSgn > 0 ? 'right' : 'left', 'middle');
+        gaugeTags.push({ txt:t(gd.tag) + ' ' + fmt(gd.a, 0) + '°', p:p1 });
       });
 
       // the pitch handle: the one point on the model that drags — a white
@@ -3237,27 +3284,58 @@ function buildRoof(host) {
       ctx.beginPath(); ctx.arc(handle[0], handle[1], 8, 0, 6.284); ctx.fill();
       ctx.fillStyle = CH.ink;
       ctx.beginPath(); ctx.arc(handle[0], handle[1], 4.5, 0, 6.284); ctx.fill();
+      desk.block(handle[0] - 10, handle[1] - 10, handle[0] + 10, handle[1] + 10);
 
       // live readout
       const coll = RF.n === 3 ? (G.L + 2 * Math.max(0, G.L / 2 - G.D / 2)) / 2 * span / Math.cos(th) : span / Math.cos(th) * G.L;
       label(ctx, 'θ ' + fmt(RF.n === 0 ? 0 : RF.th, 0) + '° · ' + t('South collector') + ' ' + fmt(coll, 0) + ' m² · '
-        + t('ridge') + ' ' + fmt(ridge, 1) + ' m' + (hitTag ? ' · = ' + t(hitTag) + ' ideal' : '')
-        + ' · ' + t('site target') + ' ' + fmt(target, 0) + '°',
-        8, 12, CH.ink2, FM(11), 'left', 'middle');
+        + t('ridge') + ' ' + fmt(ridge, 1) + ' m' + (narrow ? '' : (hitTag ? ' · = ' + t(hitTag) + ' ideal' : '')
+        + ' · ' + t('site target') + ' ' + fmt(target, 0) + '°'),
+        8, narrow ? 62 : 12, CH.ink2, FM(narrow ? 9.5 : 11), 'left', 'middle');
 
       // corner boxes — the same convention as Site, Windows & Shading and
       // Ventilation: the pitch's fit to this site's target, and the sun its
       // south slope catches in the season that matters here
-      const badge = (y, value, col, caption) => {
+      const bw = narrow ? Math.min(84, (W - 8 - 12) / 4) : 84, bh = narrow ? 46 : 52;
+      const badge = (i, value, col, caption) => {
+        const bx = narrow ? 4 + i * (bw + 4) : W - 92, by = narrow ? 4 : 6 + i * 58;
         ctx.fillStyle = '#fff';
-        ctx.fillRect(W - 92, y, 84, 52);
-        stroke(ctx, col, 1.5); ctx.strokeRect(W - 92, y, 84, 52);
-        label(ctx, value === null ? '–' : String(value), W - 50, y + 25, col, FM(24), 'center', 'middle');
-        label(ctx, caption, W - 50, y + 44, CH.muted, F(9), 'center', 'middle');
+        ctx.fillRect(bx, by, bw, bh);
+        stroke(ctx, col, 1.5); ctx.strokeRect(bx, by, bw, bh);
+        label(ctx, value === null ? '–' : String(value), bx + bw / 2, by + (narrow ? 19 : 25), col, FM(narrow ? 18 : 24), 'center', 'middle');
+        let cs = narrow ? 8 : 9;   // longer captions shrink to stay inside the box
+        ctx.font = F(cs);
+        while (cs > 6 && ctx.measureText(t(caption)).width > bw - 6) { cs -= 0.5; ctx.font = F(cs); }
+        label(ctx, caption, bx + bw / 2, by + (narrow ? 37 : 44), CH.muted, F(cs), 'center', 'middle');
       };
       const fitV = roofFit(), catchV = roofCatch();
-      badge(6, fitV, fitV === null ? CH.faint : fitV >= 80 ? '#16A34A' : fitV >= 50 ? '#D97706' : '#DC2626', t('Solar pitch fit /100'));
-      badge(64, catchV, catchV >= 95 ? '#16A34A' : catchV >= 85 ? '#D97706' : '#DC2626', t(season.key + ' sun %'));
+      badge(0, fitV, fitV === null ? CH.faint : fitV >= 80 ? '#16A34A' : fitV >= 50 ? '#D97706' : '#DC2626', t('Solar pitch fit /100'));
+      badge(1, catchV, catchV >= 95 ? '#16A34A' : catchV >= 85 ? '#D97706' : '#DC2626', t(season.key + ' sun %'));
+      // the roof colour: its fit to this summer, then the albedo it reads as
+      const raf = roofAlbFit(), rfin = finishOf(RF.col);
+      const racol = raf === null ? CH.faint : raf >= 80 ? '#16A34A' : raf >= 50 ? '#D97706' : '#DC2626';
+      badge(2, raf, racol, t('Albedo fit') + ' /100');
+      badge(3, rfin ? fmt(1 - FINISH_ALPHA[rfin.cls], 2) : null, racol, t('Albedo · ' + sumBand + ' summer'));
+      for (let i = 0; i < 4; i++) {
+        const bx = narrow ? 4 + i * (bw + 4) : W - 92, by = narrow ? 4 : 6 + i * 58;
+        desk.block(bx - 2, by - 2, bx + bw + 2, by + bh + 2);
+      }
+      desk.block(0, 0, 12 + W * 0.55, narrow ? 72 : 22);   // the readout line
+
+      /* --- the numbers, last, each beside its line and on its own pad ------ */
+      {
+        const txt = t('ridge') + ' ' + fmt(ridge, 1) + ' m', from = proj(0, -G.D / 2, H0);
+        const cands = Math.hypot(ridgeB[0] - ridgeA[0], ridgeB[1] - ridgeA[1]) > 20
+          ? desk.beside(txt, FM(10), ridgeA, ridgeB, from, [0.5, 0.35, 0.65, 0.2, 0.8], 4, 2)
+          : [[ridgeA[0], ridgeA[1] - 14, 'center'], [ridgeA[0] + 10, ridgeA[1] - 6, 'left'], [ridgeA[0] - 10, ridgeA[1] - 6, 'right']];
+        desk.place(txt, cands, CH.ink2, FM(10));
+      }
+      gaugeTags.forEach(g => {
+        const sg = fanSgn > 0 ? -1 : 1;   // the side away from the fan
+        desk.place(g.txt, [[g.p[0] + sg * 7, g.p[1], sg > 0 ? 'left' : 'right'], [g.p[0] - sg * 7, g.p[1], sg > 0 ? 'right' : 'left'],
+          [g.p[0], g.p[1] - 11, 'center'], [g.p[0], g.p[1] + 11, 'center'],
+          [g.p[0] + sg * 7, g.p[1] - 10, sg > 0 ? 'left' : 'right'], [g.p[0] + sg * 7, g.p[1] + 10, sg > 0 ? 'left' : 'right']], '#15803d', F(9));
+      });
     },
     csv: () => {
       const sp = (RF.n === 2 || RF.n === 3) ? G.D / 2 : G.D;
@@ -3274,6 +3352,11 @@ function buildRoof(host) {
       [season.key + ' noon sun on the south slope (%)', roofCatch()],
       ['South collector area (m²)', RF.n === 3 ? +(((G.L + 2 * Math.max(0, G.L / 2 - G.D / 2)) / 2 * sp / Math.cos(thE * RAD))).toFixed(1) : +((sp / Math.cos(thE * RAD)) * G.L).toFixed(1)],
       ['Ridge height (m)', +rg.toFixed(1)],
+      ['Roof colour', finishOf(RF.col) ? finishOf(RF.col).en + ' (' + finishOf(RF.col).cls + ')' : 'not chosen'],
+      ['Roof solar absorptance α', finishOf(RF.col) ? FINISH_ALPHA[finishOf(RF.col).cls] : ''],
+      ['Roof albedo (1 − α)', finishOf(RF.col) ? +(1 - FINISH_ALPHA[finishOf(RF.col).cls]).toFixed(2) : ''],
+      ['Summer mean, Jun–Sep (°C)', +sumT.toFixed(1)],
+      ['Roof albedo fit (0–100)', roofAlbFit() === null ? '' : roofAlbFit()],
       ['Köppen–Geiger', STATE.clim.k.code]]);
     }
   });
@@ -3800,22 +3883,22 @@ function buildOpenings(host) {
       poly(sidePts, wallFill(0.08, 1), CH.ink, 1.4);
 
       if (RF.n === 0) {
-        poly([[-G.L/2,-G.D/2,H0],[G.L/2,-G.D/2,H0],[G.L/2,G.D/2,H0],[-G.L/2,G.D/2,H0]], 'rgba(20,23,26,.05)', CH.ink, 2);
+        poly([[-G.L/2,-G.D/2,H0],[G.L/2,-G.D/2,H0],[G.L/2,G.D/2,H0],[-G.L/2,G.D/2,H0]], roofFill(0.05, 1), CH.ink, 2);
       } else if (RF.n === 1) {
-        poly([[-G.L/2,-G.D/2,H0],[G.L/2,-G.D/2,H0],[G.L/2,G.D/2,ridge],[-G.L/2,G.D/2,ridge]], 'rgba(20,23,26,.05)', CH.ink, 2);
+        poly([[-G.L/2,-G.D/2,H0],[G.L/2,-G.D/2,H0],[G.L/2,G.D/2,ridge],[-G.L/2,G.D/2,ridge]], roofFill(0.05, 1), CH.ink, 2);
       } else if (RF.n === 2) {
-        poly([[-G.L/2,frontY,H0],[G.L/2,frontY,H0],[G.L/2,0,ridge],[-G.L/2,0,ridge]], 'rgba(20,23,26,.05)', CH.ink, 2);
+        poly([[-G.L/2,frontY,H0],[G.L/2,frontY,H0],[G.L/2,0,ridge],[-G.L/2,0,ridge]], roofFill(0.05, 1), CH.ink, 2);
         const r0 = proj(-G.L/2, 0, ridge), r1 = proj(G.L/2, 0, ridge);
         stroke(ctx, CH.ink, 1.6); seg(ctx, r0[0], r0[1], r1[0], r1[1]);
       } else {
         // hip: trapezoid facing the camera's corner slope, triangle closing
         // the side, ridge shortened exactly as on the Roof tab
         if (camS === 1) {
-          poly([[-G.L/2,-G.D/2,H0],[G.L/2,-G.D/2,H0],[hipRl,0,ridge],[-hipRl,0,ridge]], 'rgba(20,23,26,.05)', CH.ink, 2);
-          poly([[-G.L/2,-G.D/2,H0],[-G.L/2,G.D/2,H0],[-hipRl,0,ridge]], 'rgba(20,23,26,.08)', CH.ink, 1.4);
+          poly([[-G.L/2,-G.D/2,H0],[G.L/2,-G.D/2,H0],[hipRl,0,ridge],[-hipRl,0,ridge]], roofFill(0.05, 1), CH.ink, 2);
+          poly([[-G.L/2,-G.D/2,H0],[-G.L/2,G.D/2,H0],[-hipRl,0,ridge]], roofFill(0.08, 0.88), CH.ink, 1.4);
         } else {
-          poly([[G.L/2,G.D/2,H0],[-G.L/2,G.D/2,H0],[-hipRl,0,ridge],[hipRl,0,ridge]], 'rgba(20,23,26,.05)', CH.ink, 2);
-          poly([[G.L/2,-G.D/2,H0],[G.L/2,G.D/2,H0],[hipRl,0,ridge]], 'rgba(20,23,26,.08)', CH.ink, 1.4);
+          poly([[G.L/2,G.D/2,H0],[-G.L/2,G.D/2,H0],[-hipRl,0,ridge],[hipRl,0,ridge]], roofFill(0.05, 1), CH.ink, 2);
+          poly([[G.L/2,-G.D/2,H0],[G.L/2,G.D/2,H0],[hipRl,0,ridge]], roofFill(0.08, 0.88), CH.ink, 1.4);
         }
         const q0 = proj(-hipRl, 0, ridge), q1 = proj(hipRl, 0, ridge);
         stroke(ctx, CH.ink, 1.6); seg(ctx, q0[0], q0[1], q1[0], q1[1]);
@@ -5668,12 +5751,12 @@ function buildVentilation(host) {
 
     /* ---- roof from Roof tab: both slopes so the stack height reads ---- */
     if (RF.n === 0) {
-      poly([[-G.L/2,-G.D/2,H0], [G.L/2,-G.D/2,H0], [G.L/2,G.D/2,H0], [-G.L/2,G.D/2,H0]], 'rgba(20,23,26,.05)', CH.ink, 2);
+      poly([[-G.L/2,-G.D/2,H0], [G.L/2,-G.D/2,H0], [G.L/2,G.D/2,H0], [-G.L/2,G.D/2,H0]], roofFill(0.05, 1), CH.ink, 2);
     } else if (RF.n === 1) {
-      poly([[-G.L/2,-G.D/2,H0], [G.L/2,-G.D/2,H0], [G.L/2,G.D/2,ridge], [-G.L/2,G.D/2,ridge]], 'rgba(20,23,26,.05)', CH.ink, 2);
+      poly([[-G.L/2,-G.D/2,H0], [G.L/2,-G.D/2,H0], [G.L/2,G.D/2,ridge], [-G.L/2,G.D/2,ridge]], roofFill(0.05, 1), CH.ink, 2);
     } else if (RF.n === 2) {
-      const drawRoofN = () => poly([[-G.L/2,G.D/2,H0], [G.L/2,G.D/2,H0], [G.L/2,0,ridge], [-G.L/2,0,ridge]], 'rgba(20,23,26,.04)', CH.ink, 1.6);
-      const drawRoofS = () => poly([[-G.L/2,-G.D/2,H0], [G.L/2,-G.D/2,H0], [G.L/2,0,ridge], [-G.L/2,0,ridge]], 'rgba(20,23,26,.06)', CH.ink, 2);
+      const drawRoofN = () => poly([[-G.L/2,G.D/2,H0], [G.L/2,G.D/2,H0], [G.L/2,0,ridge], [-G.L/2,0,ridge]], roofFill(0.04, 0.82), CH.ink, 1.6);
+      const drawRoofS = () => poly([[-G.L/2,-G.D/2,H0], [G.L/2,-G.D/2,H0], [G.L/2,0,ridge], [-G.L/2,0,ridge]], roofFill(0.06, 1), CH.ink, 2);
       if (camS === 1) { drawRoofN(); drawRoofS(); } else { drawRoofS(); drawRoofN(); }
       const r0 = proj(-G.L/2, 0, ridge), r1 = proj(G.L/2, 0, ridge);
       stroke(ctx, CH.ink, 1.6); seg(ctx, r0[0], r0[1], r1[0], r1[1]);
@@ -5681,10 +5764,10 @@ function buildVentilation(host) {
       // hip: both trapezoids plus both end triangles, far pair first so the
       // near faces overlap them exactly as the gable slopes do
       const rl = Math.max(0, G.L / 2 - G.D / 2);
-      const trapS = () => poly([[-G.L/2,-G.D/2,H0], [G.L/2,-G.D/2,H0], [rl,0,ridge], [-rl,0,ridge]], 'rgba(20,23,26,.06)', CH.ink, 2);
-      const trapN = () => poly([[-G.L/2,G.D/2,H0], [G.L/2,G.D/2,H0], [rl,0,ridge], [-rl,0,ridge]], 'rgba(20,23,26,.04)', CH.ink, 1.6);
-      const triE = () => poly([[G.L/2,-G.D/2,H0], [G.L/2,G.D/2,H0], [rl,0,ridge]], 'rgba(20,23,26,.05)', CH.ink, 1.2);
-      const triW = () => poly([[-G.L/2,-G.D/2,H0], [-G.L/2,G.D/2,H0], [-rl,0,ridge]], 'rgba(20,23,26,.08)', CH.ink, 1.4);
+      const trapS = () => poly([[-G.L/2,-G.D/2,H0], [G.L/2,-G.D/2,H0], [rl,0,ridge], [-rl,0,ridge]], roofFill(0.06, 1), CH.ink, 2);
+      const trapN = () => poly([[-G.L/2,G.D/2,H0], [G.L/2,G.D/2,H0], [rl,0,ridge], [-rl,0,ridge]], roofFill(0.04, 0.82), CH.ink, 1.6);
+      const triE = () => poly([[G.L/2,-G.D/2,H0], [G.L/2,G.D/2,H0], [rl,0,ridge]], roofFill(0.05, 0.9), CH.ink, 1.2);
+      const triW = () => poly([[-G.L/2,-G.D/2,H0], [-G.L/2,G.D/2,H0], [-rl,0,ridge]], roofFill(0.08, 0.88), CH.ink, 1.4);
       if (camS === 1) { trapN(); triE(); triW(); trapS(); } else { trapS(); triW(); triE(); trapN(); }
       const q0 = proj(-rl, 0, ridge), q1 = proj(rl, 0, ridge);
       stroke(ctx, CH.ink, 1.6); seg(ctx, q0[0], q0[1], q1[0], q1[1]);
@@ -6431,7 +6514,8 @@ function toIFC(els) {
 
 /** Every decision and every score the tabs have registered, as JSON. */
 function toDecisionsJSON() {
-  const S = STATE.site, fin = finishOf(MASS.col);
+  const S = STATE.site, fin = finishOf(MASS.col), rfin = finishOf(ROOF.col);
+  const colourOf = f => f ? { name:f.en, pt:f.pt, class:f.cls, absorptance:FINISH_ALPHA[f.cls], albedo:+(1 - FINISH_ALPHA[f.cls]).toFixed(2) } : null;
   const scores = {};
   for (const k in SCORES) { try { scores[k] = SCORES[k](); } catch (err) { scores[k] = null; } }
   ['site', 'roof', 'openings', 'ventilation'].forEach(k => { if (!(k in scores)) scores[k] = 'open this tab to score it'; });
@@ -6441,8 +6525,8 @@ function toDecisionsJSON() {
       koppen:STATE.clim.k.code, normalsSource:STATE.clim.source || null },
     decisions:{
       plan:{ length:MASS.L, depth:MASS.D, mainFacadeAzimuth:MASS.rot, floors:MASS.fl, floorHeight:MASS.fh,
-        wallColour:fin ? { name:fin.en, pt:fin.pt, class:fin.cls, absorptance:FINISH_ALPHA[fin.cls], albedo:+(1 - FINISH_ALPHA[fin.cls]).toFixed(2) } : null },
-      roof:{ type:['flat', 'shed', 'gable', 'hip'][ROOF.n], pitch:ROOF.n === 0 ? 0 : ROOF.th },
+        wallColour:colourOf(fin) },
+      roof:{ type:['flat', 'shed', 'gable', 'hip'][ROOF.n], pitch:ROOF.n === 0 ? 0 : ROOF.th, roofColour:colourOf(rfin) },
       openings:OPEN, sunspace:SUNSP, roofWindows:RWIN,
       planting:SCENE.veg.map(v => { const q = SCENE.plant ? SCENE.plant(v) : null;
         return { species:q ? q.name : v.type, sci:q ? q.sci : null, x:v.x, y:v.y, height:v.height, trunk:v.trunk, canopy:v.canopy, density:v.density }; }),
@@ -6938,7 +7022,7 @@ function mountApp(site, clim, keepTab, keepModel) {
   if (!(keepModel && MASS)) {   // a language switch keeps the student's model; a new site starts afresh
   SCENE.veg.length = 0; SCENE.walls.length = 0;
   MASS = { L:12, D:8, rot:180, fl:1, fh:3.0, col:null };
-  ROOF = { n:2, th:Math.round(Math.abs(site.lat)) };
+  ROOF = { n:2, th:Math.round(Math.abs(site.lat)), col:null };
   /* One entry per local facade (S/N/E/W, matching the Roof tab's convention
      of true-south regardless of the plan's chosen rotation), each holding
      the window and its shading devices. wwr is a fraction of that facade's
@@ -7500,6 +7584,10 @@ Object.assign(PT, {
   "the summer here is cool, colour is a minor call": "o verão aqui é fresco, a cor pesa pouco",
   "lighten it for the summer here": "aclare-a para o verão deste local",
   "the summer here will overheat these walls": "o verão deste local vai sobreaquecer estas paredes",
+  "Roof colour — albedo": "Cor da cobertura — albedo",
+  "How much of the sun the roof reflects, read against this site’s summer": "Quanto do sol a cobertura reflecte, lido contra o verão deste local",
+  "Pick a roof colour to read its albedo here": "Escolha uma cor de cobertura para ler aqui o seu albedo",
+  "the summer here will overheat this roof": "o verão deste local vai sobreaquecer esta cobertura",
   /* planting on Ventilation: the regional palette and its species */
   "Native planting for": "Plantação autóctone para",
   "sources for this region only": "fontes apenas desta região",
@@ -7551,6 +7639,8 @@ Object.assign(PT, {
 
 /* --- the long captions, keyed by identifier ----------------------------- */
 Object.assign(PT_HINT, {
+  'roof-albedo':
+    'A cor da cobertura decide quanto do sol a cobertura absorve. Segue as mesmas três classes de cor das paredes no separador Local — clara α 0,4, média 0,5, escura 0,8 (RCCTE, Quadro V.5, retomado no REH pelo Despacho n.º 15793-K/2013) — e o albedo indicado é a parte reflectida, 1 − α. De toda a envolvente, a cobertura é a que recebe mais de frente o sol alto de Verão, pelo que a sua cor pesa na estação de arrefecimento pelo menos tanto como a das paredes; superfícies claras são o conselho corrente para climas quentes (Lechner; Gonçalves &amp; Graça). O <b>Ajuste albedo</b> lê-a exactamente como as paredes, contra o verão deste local — de Junho a Setembro a média é <b>%1 °C</b>, um verão <b>%2</b> — sem peso a 17 °C ou menos e com peso total a 23 °C ou mais; a caixa de baixo dá o próprio albedo. Esta aplicação lê uma telha cerâmica pelo seu tom: uma telha pálida ou envelhecida como vermelho-claro, uma telha carregada como vermelho-escuro. A cobertura toma a cor em todas as vistas 3D.',
   'site-windows':
     'As janelas do modelo são as dimensionadas em <b>Janelas e Sombreamento</b> — a mesma largura, peitoril e padieira, cada uma dada pela razão vão/parede da sua fachada — pelo que rodar aqui a planta roda-as com ela. Cada etiqueta azul indica para onde essa janela fica realmente virada depois de rodada a planta, depois a largura × altura e a razão vão/parede da fachada; em Janelas e Sombreamento as fachadas mantêm os nomes que têm com a fachada principal a sul. A regra para as ler: <b>quanto maior a janela, mais deve estar virada a sul; quanto menor, mais fica virada a norte</b> (norte e sul trocam abaixo do equador). O vidro a sul recolhe o sol baixo de Inverno e é o mais fácil de sombrear do sol alto de Verão; o vidro a norte dá luz difusa e uniforme, mas quase não recebe sol de Inverno enquanto perde calor (Lechner; Gonçalves &amp; Graça). O <b>Ajuste vãos</b> lê-a: cada janela conta como uma seta que sai da sua fachada, tão longa quanto o vidro que a sua razão vão/parede pede, e o ajuste é 100 quando a soma aponta a sul, 50 a nascente ou poente, 0 a norte. As dimensões mudam-se em Janelas e Sombreamento; a rotação da planta, aqui, decide para onde olham. Janelas e Sombreamento desenha cada janela como uma faixa única no piso térreo, com no máximo 92 % da fachada — com dois ou três pisos as faixas podem atingir esse limite e parecer iguais, embora a razão vão/parede, e o ajuste, continuem diferentes.',
   'clim-method':
