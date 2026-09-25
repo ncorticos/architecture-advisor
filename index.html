@@ -81,6 +81,14 @@ nav.tabs{border-bottom:1px solid var(--line); background:#fff}
 .tab:hover{color:var(--ink2)}
 .tab[aria-selected="true"]{color:var(--ink); border-bottom-color:var(--ink); font-weight:600}
 .tab .n{font-family:var(--mono); font-size:10px; color:var(--faint); margin-right:6px}
+.tab.cadbtn{margin-left:auto; color:var(--ink2); font-weight:600}
+.cadmenu{position:absolute; right:24px; z-index:40; background:#fff; border:1px solid var(--line); border-radius:10px;
+  box-shadow:0 10px 30px rgba(20,23,26,.12); padding:14px 16px; width:min(440px, calc(100vw - 32px)); margin-top:4px}
+.cadmenu h5{margin:0 0 8px; font-size:12px; color:var(--ink)}
+.cadmenu .row{display:flex; gap:10px; align-items:center; padding:6px 0; border-top:1px solid var(--line)}
+.cadmenu .row .btn{min-width:64px}
+.cadmenu .row span{font-size:11.5px; color:var(--muted); line-height:1.4}
+.cadmenu p{margin:8px 0 0; font-size:11px; color:var(--faint); line-height:1.45}
 
 /* ---------- Layout ---------- */
 main{max-width:1680px; margin:0 auto; padding:0 24px 44px}
@@ -609,7 +617,7 @@ footer{border-top:1px solid var(--line); margin-top:26px; background:var(--wash)
 /* ------------------------------------------------------------ 0. IDENTITY -- */
 const APP = {
   name:        'Architecture Advisor',
-  version:     '1.67.0',
+  version:     '1.68.0',
   author:      'Nuno Dinis Cortiços',
   institution: 'Lisbon School of Architecture, Universidade de Lisboa',
   builtWith:   'Claude Opus 5 (Anthropic)',
@@ -969,6 +977,12 @@ let PANELS = [];
    footprint — so both tabs read and write the same two objects, reset
    fresh each time a site is mounted. */
 let MASS = null, ROOF = null, OPEN = null, SUNSP = null, RWIN = null;
+/* Planting and detached walls live here, not inside Ventilation, so the CAD
+   export can read them and a language switch keeps them; SCENE.plant is set
+   by Ventilation to describe a plant's solid for export. Each tab registers
+   its live corner scores in SCORES as it builds. */
+const SCENE = { veg:[], walls:[], plant:null };
+const SCORES = {};
 /**
  * Build a titled panel that owns one canvas. `o.render(ctx, W, H)` draws in CSS
  * pixels; the panel handles device-pixel scaling, resize and 3× PNG export, so
@@ -2233,6 +2247,8 @@ function buildSite(host) {
     return { H:H0 + rise, V, A, ff:A / V };
   };
   const SUN_DEC = noonSun(355), SUN_JUN = noonSun(172);   // site constants, CSV only
+  SCORES.site = () => ({ 'Olgyay fit /100':labScore().total, 'Form factor':+labFF().ff.toFixed(2),
+    'Albedo fit /100':albedoFit(), 'Wall albedo':finishOf(G.col) ? +(1 - FINISH_ALPHA[finishOf(G.col).cls]).toFixed(2) : null });
   /** Frame shared by the render and the pointer handlers; the shadow is clipped to the ring. */
   /* Isometric camera: the ground plane is viewed from the south-west at a
      30° tilt, so a world offset (x east, y north, z up) projects as
@@ -2755,6 +2771,7 @@ function buildRoof(host) {
       physics behind the Galloway–Lechner rule. A flat roof reads as a
       horizontal collector. */
   const roofCatch = () => Math.round(100 * clamp(Math.sin((seasonAlt + (RF.n === 0 ? 0 : RF.th)) * RAD), 0, 1));
+  SCORES.roof = () => ({ 'Solar pitch fit /100':roofFit(), [season.key + ' sun %']:roofCatch(), 'Site target pitch (°)':+target.toFixed(1) });
   const seasonName = () => LANG === 'pt' ? { Winter:'Inverno', Summer:'Verão', Equinox:'equinócio' }[season.key] : season.key;
   host.appendChild(section('Pitched roof — catch the low sun',
     'South slope as a solar collector; the same geometry explains deep winter glass'));
@@ -3132,6 +3149,8 @@ function buildOpenings(host) {
     return 100;
   }
   const overallScore = () => FACES.reduce((s, f) => s + facadeScore(f), 0) / FACES.length;
+  SCORES.openings = () => ({ 'WWR fit /100':Math.round(overallScore()),
+    'Shading fit /100 by facade':Object.fromEntries(FACES.map(f => [f, shadingScore(f) === null ? null : Math.round(shadingScore(f))])) });
 
   host.appendChild(section('Window sizing — WWR', 'Glazing area as a fraction of the facade’s own wall area'));
   { const [wwrLo0, wwrHi0] = wwrRange(curFace);
@@ -3897,8 +3916,8 @@ function buildVentilation(host) {
   /* ---- terrain, wind + planting state (world x east / y north, metres) ---- */
   let terrainKey = 'flat', windKey = 'moderate';
   let showShadow = true, showAir = true;
-  const VEGETATION = [];          // {type, height, density, x, y}
-  const WALLS = [];               // {x, y, along:'x'|'y', height, length}
+  const VEGETATION = SCENE.veg;   // {type, height, density, x, y} — shared, see SCENE
+  const WALLS = SCENE.walls;      // {x, y, along:'x'|'y', height, length}
   /* Monthly wind, direction FROM in degrees plus speed at 10 m: the pattern
      the blue arrows draw and the pair scores are weighted by. Set per month
      below; default north at 3 m/s until judged. */
@@ -4695,6 +4714,19 @@ function buildVentilation(host) {
     }
   };
 
+  /** A plant as a simple solid for CAD: trunk to its top, crown as an
+      ellipsoid (centre zc, radii R and RZ) sized from the same numbers the
+      drawing uses. */
+  SCENE.plant = v => {
+    const q = specOf(v.type), form = crownFormOf(v);
+    const onGround = form === 'mound' || form === 'globe' || form === 'fountain' || form === 'fan';
+    const H = Math.max(0.3, v.height), T = onGround ? 0 : Math.min(trunkOf(v), H - 0.3);
+    const R = Math.max(0.25, canopyOf(v) * spreadOf(v));
+    const RZ = form === 'umbrella' ? Math.min((H - T) * 0.55, R * 0.6) / 2 : onGround ? H / 2 : (H - T) / 2;
+    return { name:q.pt, en:q.en, sci:q.sci, kind:q.kind, form, T, H, R, RZ, zc:H - RZ,
+      trunkTop:T > 0 ? Math.max(T, H - RZ * 1.4) : 0, wTrunk:(0.1 + 0.028 * H) * (q.tw || 1) };
+  };
+
   /* ---- site climate + altitude physics (live, read at draw time) ----
      Air density falls with altitude (barometric formula), so the same wind
      drives less pressure up high; the stack effect grows with the eave
@@ -4808,6 +4840,8 @@ function buildVentilation(host) {
      the four facades — vegetation and walls, exposure and gust-aware
      months all already inside winterScore. */
   const winterPosture = () => Math.round((winterScore('S') + winterScore('N') + winterScore('E') + winterScore('W')) / 4);
+  SCORES.ventilation = () => ({ 'Winter shelter /100':winterPosture(), 'Summer tunnel /100':summerScore(),
+    'Months read':monthSetName(MON3_EN), 'Planting':VEGETATION.length, 'Detached walls':WALLS.length });
   /* The Olgyay verdict in plain English for the CSV audit trail; the page
      shows the translated twin. Bands at 50 are this app's teaching cut. */
   const olgyayVerdict = (w, s) => w >= 50 && s >= 50 ? 'Sheltered winter, breathing summer — the Olgyay balance'
@@ -5864,6 +5898,304 @@ function buildRefs() {
     + ' <span style="color:var(--faint)">' + t(r[1]) + '</span>' })));
 }
 
+/* ============================================ 7. CAD EXPORT ==
+   The student's model as it stands — plan and orientation from Site, roof,
+   windows with their overhangs and fins, sunspace, detached walls and
+   planting — written for the tools the studio uses: IFC for Revit and
+   ArchiCAD, DXF 3D faces for SketchUp, Rhino, Revit and ArchiCAD, OBJ for
+   Rhino and Grasshopper; and every decision with its score as JSON.
+   Metres, z up, y north, the plan turned to the orientation set on Site.
+   Massing surfaces, not wall assemblies: the model a design starts from.
+   ================================================================ */
+
+/** The model as named elements, each a list of planar polygons in world
+    metres, wound counter-clockwise seen from outside. */
+function exportModel() {
+  const G = MASS, RF = ROOF;
+  const H0 = G.fl * G.fh, tn = Math.tan((RF.n === 0 ? 0 : RF.th) * RAD);
+  const L = G.L, D = G.D;
+  const ridge = RF.n === 1 ? H0 + D * tn : RF.n >= 2 ? H0 + D / 2 * tn : H0;
+  const rl = Math.max(0, L / 2 - D / 2);
+  const topZ = y => RF.n === 0 || RF.n === 3 ? H0 : RF.n === 1 ? H0 + (y + D / 2) * tn : H0 + Math.max(0, D / 2 - Math.abs(y)) * tn;
+  const b = (G.rot - 180) * RAD;   // the same turn the Site tab draws
+  const turn = p => [p[0] * Math.cos(b) + p[1] * Math.sin(b), -p[0] * Math.sin(b) + p[1] * Math.cos(b), p[2]];
+  const newell = poly => {
+    let x = 0, y = 0, z = 0;
+    for (let i = 0; i < poly.length; i++) {
+      const a = poly[i], c = poly[(i + 1) % poly.length];
+      x += (a[1] - c[1]) * (a[2] + c[2]); y += (a[2] - c[2]) * (a[0] + c[0]); z += (a[0] - c[0]) * (a[1] + c[1]);
+    }
+    return [x, y, z];
+  };
+  const els = [];
+  /** Add an element: faces as [polygon, outward normal] pairs; each is
+      rewound to face its normal, degenerate ones dropped, then turned. */
+  const add = (kind, name, layer, faces, extra) => {
+    const out = [];
+    faces.forEach(([poly, n]) => {
+      const nw = newell(poly);
+      if (Math.hypot(nw[0], nw[1], nw[2]) < 1e-6) return;
+      out.push((nw[0] * n[0] + nw[1] * n[1] + nw[2] * n[2] < 0 ? poly.slice().reverse() : poly).map(turn));
+    });
+    if (out.length) els.push(Object.assign({ kind, name, layer, faces:out }, extra || {}));
+  };
+  /** A solid box between two corners, six outward faces. */
+  const box = (x0, y0, z0, x1, y1, z1) => [
+    [[[x0,y0,z0],[x1,y0,z0],[x1,y1,z0],[x0,y1,z0]], [0,0,-1]], [[[x0,y0,z1],[x1,y0,z1],[x1,y1,z1],[x0,y1,z1]], [0,0,1]],
+    [[[x0,y0,z0],[x1,y0,z0],[x1,y0,z1],[x0,y0,z1]], [0,-1,0]], [[[x0,y1,z0],[x1,y1,z0],[x1,y1,z1],[x0,y1,z1]], [0,1,0]],
+    [[[x0,y0,z0],[x0,y1,z0],[x0,y1,z1],[x0,y0,z1]], [-1,0,0]], [[[x1,y0,z0],[x1,y1,z0],[x1,y1,z1],[x1,y0,z1]], [1,0,0]]];
+  /** A low-poly ellipsoid (8 around, 4 bands) for a crown. */
+  const ellipsoid = (cx, cy, cz, rx, rz) => {
+    const ring = k => { const phi = -Math.PI / 2 + k * Math.PI / 4;
+      return Array.from({ length:8 }, (_, j) => { const a = j * Math.PI / 4;
+        return [cx + rx * Math.cos(phi) * Math.cos(a), cy + rx * Math.cos(phi) * Math.sin(a), cz + rz * Math.sin(phi)]; }); };
+    const faces = [];
+    for (let k = 0; k < 4; k++) {
+      const lo = ring(k), hi = ring(k + 1);
+      for (let j = 0; j < 8; j++) {
+        const q = [lo[j], lo[(j + 1) % 8], hi[(j + 1) % 8], hi[j]];
+        const poly = k === 0 ? [lo[0], hi[(j + 1) % 8], hi[j]] : k === 3 ? [lo[j], lo[(j + 1) % 8], hi[0]] : q;
+        const m = poly.reduce((a, p) => [a[0] + p[0] / poly.length, a[1] + p[1] / poly.length, a[2] + p[2] / poly.length], [0, 0, 0]);
+        faces.push([poly, [m[0] - cx, m[1] - cy, m[2] - cz]]);
+      }
+    }
+    return faces;
+  };
+
+  /* walls with their window cut out, glazing, overhangs and fins */
+  const FN = { S:[0,-1,0], N:[0,1,0], E:[1,0,0], W:[-1,0,0] };
+  const FNAME = { S:'South', N:'North', E:'East', W:'West' };
+  const fp = (f, u, v) => f === 'S' ? [u, -D / 2, v] : f === 'N' ? [u, D / 2, v] : f === 'E' ? [L / 2, u, v] : [-L / 2, u, v];
+  const off = (p, n, d) => [p[0] + n[0] * d, p[1] + n[1] * d, p[2]];
+  ['S', 'N', 'E', 'W'].forEach(f => {
+    const W = f === 'S' || f === 'N' ? L : D, n = FN[f], o = OPEN[f];
+    const top = u => f === 'S' ? topZ(-D / 2) : f === 'N' ? topZ(D / 2) : topZ(u);
+    const crest = (f === 'E' || f === 'W') ? [W / 2, 0, -W / 2] : [W / 2, -W / 2];
+    const rect = (u0, u1, v0, v1) => [[fp(f, u0, v0), fp(f, u1, v0), fp(f, u1, v1), fp(f, u0, v1)], n];
+    const sill = o.sillZ != null ? o.sillZ : 0.9, h = Math.max(0.3, (o.headZ != null ? o.headZ : 2.1) - sill);
+    const w = Math.min(W * 0.92, (o.wwr || 0) * W * H0 / h);
+    const faces = [];
+    if (!(w > 0.01)) faces.push([[fp(f, -W / 2, 0), fp(f, W / 2, 0)].concat(crest.map(u => fp(f, u, top(u)))), n]);
+    else {
+      const u0 = -w / 2, u1 = w / 2, v0 = sill, v1 = Math.min(sill + h, H0);
+      faces.push(rect(-W / 2, W / 2, 0, v0), rect(-W / 2, u0, v0, v1), rect(u1, W / 2, v0, v1));
+      faces.push([[fp(f, -W / 2, v1), fp(f, W / 2, v1)].concat(crest.map(u => fp(f, u, top(u)))), n]);
+      add('window', FNAME[f] + ' window', 'AA-GLAZING', [rect(u0, u1, v0, v1)],
+        { width:w, height:v1 - v0, wwr:o.wwr, facade:f });
+      if (o.ovD > 0) {
+        const vs = o.ovN <= 1 ? [v1] : Array.from({ length:o.ovN }, (_, i) => v0 + (v1 - v0) * (i / (o.ovN - 1)));
+        vs.forEach((vt, i) => add('shading', FNAME[f] + (o.ovN > 1 ? ' louvre ' + (i + 1) : ' overhang'), 'AA-SHADING',
+          [[[fp(f, u0, vt), fp(f, u1, vt), off(fp(f, u1, vt), n, o.ovD), off(fp(f, u0, vt), n, o.ovD)], [0, 0, 1]]],
+          { device:o.ovN > 1 ? 'Louvre' : 'Overhang', depth:o.ovD }));
+      }
+      if (o.finN > 0 && o.finD > 0) {
+        const lo = o.finSide === 'right' ? 0 : u0, hi = o.finSide === 'left' ? 0 : u1;
+        const us = o.finN === 1 ? [o.finSide === 'both' ? (lo + hi) / 2 : (o.finSide === 'right' ? hi : lo)]
+          : Array.from({ length:o.finN }, (_, i) => lo + (hi - lo) * (i / (o.finN - 1)));
+        const side = f === 'S' || f === 'N' ? [1, 0, 0] : [0, 1, 0];
+        us.forEach((uF, i) => add('shading', FNAME[f] + ' fin ' + (i + 1), 'AA-SHADING',
+          [[[fp(f, uF, v0), off(fp(f, uF, v0), n, o.finD), off(fp(f, uF, v1), n, o.finD), fp(f, uF, v1)], side]],
+          { device:'Fin', depth:o.finD }));
+      }
+    }
+    add('wall', FNAME[f] + ' wall', 'AA-WALLS', faces, { facade:f, finish:finishOf(G.col) });
+  });
+
+  /* roof planes and the ground floor */
+  const up = [0, 0, 1];
+  const roofFaces = RF.n === 0 ? [[[[-L/2,-D/2,H0],[L/2,-D/2,H0],[L/2,D/2,H0],[-L/2,D/2,H0]], up]]
+    : RF.n === 1 ? [[[[-L/2,-D/2,H0],[L/2,-D/2,H0],[L/2,D/2,ridge],[-L/2,D/2,ridge]], [0,-1,1]]]
+    : RF.n === 2 ? [[[[-L/2,-D/2,H0],[L/2,-D/2,H0],[L/2,0,ridge],[-L/2,0,ridge]], [0,-1,1]],
+                    [[[L/2,D/2,H0],[-L/2,D/2,H0],[-L/2,0,ridge],[L/2,0,ridge]], [0,1,1]]]
+    : [[[[-L/2,-D/2,H0],[L/2,-D/2,H0]].concat(rl > 0 ? [[rl,0,ridge],[-rl,0,ridge]] : [[0,0,ridge]]), [0,-1,1]],
+       [[[L/2,D/2,H0],[-L/2,D/2,H0]].concat(rl > 0 ? [[-rl,0,ridge],[rl,0,ridge]] : [[0,0,ridge]]), [0,1,1]],
+       [[[L/2,-D/2,H0],[L/2,D/2,H0],[rl,0,ridge]], [1,0,1]], [[[-L/2,D/2,H0],[-L/2,-D/2,H0],[-rl,0,ridge]], [-1,0,1]]];
+  add('roof', ['Flat', 'Shed', 'Gable', 'Hip'][RF.n] + ' roof', 'AA-ROOF', roofFaces,
+    { roofType:['FLAT_ROOF', 'SHED_ROOF', 'GABLE_ROOF', 'HIP_ROOF'][RF.n], pitch:RF.n === 0 ? 0 : RF.th });
+  add('slab', 'Ground floor', 'AA-FLOOR', [[[[-L/2,-D/2,0],[L/2,-D/2,0],[L/2,D/2,0],[-L/2,D/2,0]], [0,0,-1]]]);
+
+  /* the attached sunspace, a glazed box on its facade */
+  if (SUNSP && SUNSP.on) {
+    const f = SUNSP.face, n = FN[f], W = (f === 'S' || f === 'N' ? L : D) * SUNSP.widthFrac, hS = Math.min(H0, 3), d = SUNSP.depth;
+    const a = fp(f, -W / 2, 0), c = fp(f, W / 2, 0), a2 = off(a, n, d), c2 = off(c, n, d), z = p => [p[0], p[1], hS];
+    const side = f === 'S' || f === 'N' ? [1, 0, 0] : [0, 1, 0];
+    add('sunspace', 'Sunspace', 'AA-SUNSPACE', [[[a2, c2, z(c2), z(a2)], n], [[a, a2, z(a2), z(a)], side.map(x => -x)],
+      [[c, c2, z(c2), z(c)], side], [[z(a), z(c), z(c2), z(a2)], up]], { depth:d });
+  }
+
+  /* detached walls and planting from Ventilation */
+  SCENE.walls.forEach((w, i) => {
+    const t2 = 0.1, hl = w.length / 2;
+    add('sitewall', 'Detached wall ' + (i + 1), 'AA-SITE-WALLS', w.along === 'y'
+      ? box(w.x - t2, w.y - hl, 0, w.x + t2, w.y + hl, w.height) : box(w.x - hl, w.y - t2, 0, w.x + hl, w.y + t2, w.height),
+      { height:w.height, length:w.length });
+  });
+  if (SCENE.plant) SCENE.veg.forEach((v, i) => {
+    const q = SCENE.plant(v), wt = q.wTrunk / 2;
+    const faces = q.trunkTop > 0.05 ? box(v.x - wt, v.y - wt, 0, v.x + wt, v.y + wt, q.trunkTop) : [];
+    add('plant', (i + 1) + ' ' + q.name + ' (' + q.sci + ')', 'AA-PLANTING', faces.concat(ellipsoid(v.x, v.y, q.zc, q.R, q.RZ)),
+      { species:q.name, sci:q.sci, plantKind:q.kind, height:v.height, trunk:q.T, crownRadius:+q.R.toFixed(2), density:v.density });
+  });
+
+  /* a north arrow on the ground, for the tools that do not read north */
+  const R0 = Math.hypot(L, D) / 2 + 3;
+  els.push({ kind:'north', name:'North', layer:'AA-NORTH',
+    faces:[[[-0.8, R0, 0.01], [0.8, R0, 0.01], [0, R0 + 2.4, 0.01]]] });
+  return els;
+}
+
+const cadNum = v => (Math.abs(v) < 5e-7 ? 0 : v).toFixed(6).replace(/\.?0+$/, '') || '0';
+const cadStem = () => slugify(sitePrefix() + 'architecture-advisor') || 'architecture-advisor';
+
+/** DXF, AutoCAD R12 flavour: one 3DFACE per triangle or quad, on layers. */
+function toDXF(els) {
+  const layers = { 'AA-WALLS':8, 'AA-GLAZING':5, 'AA-ROOF':1, 'AA-FLOOR':9, 'AA-SHADING':30, 'AA-SUNSPACE':4,
+    'AA-SITE-WALLS':6, 'AA-PLANTING':3, 'AA-NORTH':7 };
+  const o = ['0', 'SECTION', '2', 'HEADER', '9', '$ACADVER', '1', 'AC1009', '9', '$INSUNITS', '70', '6', '0', 'ENDSEC',
+    '0', 'SECTION', '2', 'TABLES', '0', 'TABLE', '2', 'LAYER', '70', String(Object.keys(layers).length)];
+  Object.keys(layers).forEach(n => o.push('0', 'LAYER', '2', n, '70', '0', '62', String(layers[n]), '6', 'CONTINUOUS'));
+  o.push('0', 'ENDTAB', '0', 'ENDSEC', '0', 'SECTION', '2', 'ENTITIES');
+  const face = (layer, q) => {
+    o.push('0', '3DFACE', '8', layer);
+    [0, 1, 2, 3].forEach(k => { const p = q[Math.min(k, q.length - 1)];
+      o.push(String(10 + k), cadNum(p[0]), String(20 + k), cadNum(p[1]), String(30 + k), cadNum(p[2])); });
+  };
+  els.forEach(e => e.faces.forEach(poly => {
+    if (poly.length <= 4) face(e.layer, poly);
+    else for (let k = 1; k < poly.length - 1; k++) face(e.layer, [poly[0], poly[k], poly[k + 1]]);
+  }));
+  o.push('0', 'ENDSEC', '0', 'EOF');
+  return o.join('\r\n') + '\r\n';
+}
+
+/** Wavefront OBJ: one object per element, grouped by layer, n-gon faces. */
+function toOBJ(els) {
+  const o = ['# ' + APP.name + ' ' + APP.version + ' — ' + (STATE.site.place || STATE.site.nuts),
+    '# metres, Z up, Y north; plan turned as set on Site'];
+  let base = 1;
+  els.forEach(e => {
+    o.push('o ' + e.name.replace(/\s+/g, '_'), 'g ' + e.layer);
+    const idx = [];
+    e.faces.forEach(poly => { idx.push(poly.map((p, k) => base + k)); poly.forEach(p => o.push('v ' + cadNum(p[0]) + ' ' + cadNum(p[1]) + ' ' + cadNum(p[2]))); base += poly.length; });
+    idx.forEach(f => o.push('f ' + f.join(' ')));
+  });
+  return o.join('\n') + '\n';
+}
+
+/** IFC4, tessellated: typed elements (walls, windows, roof, slab, shading
+    devices, sunspace, garden walls, vegetation) in a site–building–storey
+    tree, with the site's latitude, longitude and altitude. */
+function toIFC(els) {
+  const S = STATE.site, lines = [];
+  let id = 0;
+  const e = txt => { lines.push('#' + (++id) + '=' + txt + ';'); return '#' + id; };
+  const B64 = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz_$';
+  const guid = () => "'" + '0123'[Math.floor(Math.random() * 4)] + Array.from({ length:21 }, () => B64[Math.floor(Math.random() * 64)]).join('') + "'";
+  const str = v => "'" + String(v).replace(/\\/g, '\\\\').replace(/'/g, "''").replace(/[^\x20-\x7E]/g, ch => '\\X2\\' + ch.charCodeAt(0).toString(16).toUpperCase().padStart(4, '0') + '\\X0\\') + "'";
+  const real = v => { const s = cadNum(v); return s.includes('.') ? s : s + '.'; };
+  const dms = deg => { const a = Math.abs(deg), d = Math.floor(a), m = Math.floor((a - d) * 60), s = Math.floor(((a - d) * 60 - m) * 60);
+    const sg = deg < 0 ? -1 : 1; return '(' + [d, m, s, 0].map(x => sg * x).join(',') + ')'; };
+  const units = e('IFCUNITASSIGNMENT((' + [e('IFCSIUNIT(*,.LENGTHUNIT.,$,.METRE.)'), e('IFCSIUNIT(*,.AREAUNIT.,$,.SQUARE_METRE.)'),
+    e('IFCSIUNIT(*,.VOLUMEUNIT.,$,.CUBIC_METRE.)'), e('IFCSIUNIT(*,.PLANEANGLEUNIT.,$,.RADIAN.)')].join(',') + '))');
+  const origin = e('IFCCARTESIANPOINT((0.,0.,0.))');
+  const ax = e('IFCAXIS2PLACEMENT3D(' + origin + ',' + e('IFCDIRECTION((0.,0.,1.))') + ',' + e('IFCDIRECTION((1.,0.,0.))') + ')');
+  const ctx = e("IFCGEOMETRICREPRESENTATIONCONTEXT($,'Model',3,1.E-05," + ax + ',' + e('IFCDIRECTION((0.,1.))') + ')');
+  const body = e("IFCGEOMETRICREPRESENTATIONSUBCONTEXT('Body','Model',*,*,*,*," + ctx + ',$,.MODEL_VIEW.,$)');
+  const place = S.place || S.nuts;
+  const project = e('IFCPROJECT(' + guid() + ',$,' + str(APP.name + ' — ' + place) + ',$,$,$,$,(' + ctx + '),' + units + ')');
+  const pSite = e('IFCLOCALPLACEMENT($,' + ax + ')');
+  const site = e('IFCSITE(' + guid() + ',$,' + str(place) + ',$,$,' + pSite + ',$,' + str(S.nuts || '') + ',.ELEMENT.,' + dms(S.lat) + ',' + dms(S.lon) + ',' + real(S.alt || 0) + ',$,$)');
+  const pBld = e('IFCLOCALPLACEMENT(' + pSite + ',' + ax + ')');
+  const bld = e("IFCBUILDING(" + guid() + ",$,'Building',$,$," + pBld + ',$,$,.ELEMENT.,$,$,$)');
+  const pSt = e('IFCLOCALPLACEMENT(' + pBld + ',' + ax + ')');
+  const storey = e("IFCBUILDINGSTOREY(" + guid() + ",$,'Ground floor',$,$," + pSt + ',$,$,.ELEMENT.,0.)');
+  e('IFCRELAGGREGATES(' + guid() + ',$,$,$,' + project + ',(' + site + '))');
+  e('IFCRELAGGREGATES(' + guid() + ',$,$,$,' + site + ',(' + bld + '))');
+  e('IFCRELAGGREGATES(' + guid() + ',$,$,$,' + bld + ',(' + storey + '))');
+  const inStorey = [], onSite = [];
+  els.forEach(x => {
+    if (x.kind === 'north') return;   // IFC carries north in its context
+    const pts = [], tris = [];
+    x.faces.forEach(poly => { const b0 = pts.length; poly.forEach(p => pts.push(p));
+      for (let k = 1; k < poly.length - 1; k++) tris.push([b0 + 1, b0 + k + 1, b0 + k + 2]); });
+    const pl = e('IFCCARTESIANPOINTLIST3D((' + pts.map(p => '(' + p.map(real).join(',') + ')').join(',') + '))');
+    const fs = e('IFCTRIANGULATEDFACESET(' + pl + ',$,$,(' + tris.map(t => '(' + t.join(',') + ')').join(',') + '),$)');
+    const shape = e('IFCPRODUCTDEFINITIONSHAPE($,$,(' + e("IFCSHAPEREPRESENTATION(" + body + ",'Body','Tessellation',(" + fs + '))') + '))');
+    const onSiteKind = x.kind === 'plant' || x.kind === 'sitewall';
+    const pl2 = e('IFCLOCALPLACEMENT(' + (onSiteKind ? pSite : pSt) + ',' + ax + ')');
+    const head = guid() + ',$,' + str(x.name) + ',$,';
+    const ent = x.kind === 'wall' || x.kind === 'sitewall' ? e('IFCWALL(' + head + '$,' + pl2 + ',' + shape + ',$,.NOTDEFINED.)')
+      : x.kind === 'window' ? e('IFCWINDOW(' + head + '$,' + pl2 + ',' + shape + ',$,' + real(x.height) + ',' + real(x.width) + ',.WINDOW.,.NOTDEFINED.,$)')
+      : x.kind === 'roof' ? e('IFCROOF(' + head + '$,' + pl2 + ',' + shape + ',$,.' + x.roofType + '.)')
+      : x.kind === 'slab' ? e('IFCSLAB(' + head + '$,' + pl2 + ',' + shape + ',$,.FLOOR.)')
+      : x.kind === 'shading' ? e('IFCSHADINGDEVICE(' + head + str(x.device) + ',' + pl2 + ',' + shape + ',$,.USERDEFINED.)')
+      : x.kind === 'plant' ? e('IFCGEOGRAPHICELEMENT(' + head + str(x.plantKind === 'bush' ? 'Bush' : 'Tree') + ',' + pl2 + ',' + shape + ',$,.USERDEFINED.)')
+      : e('IFCBUILDINGELEMENTPROXY(' + head + "'Sunspace'," + pl2 + ',' + shape + ',$,.USERDEFINED.)');
+    (onSiteKind ? onSite : inStorey).push(ent);
+  });
+  if (inStorey.length) e('IFCRELCONTAINEDINSPATIALSTRUCTURE(' + guid() + ',$,$,$,(' + inStorey.join(',') + '),' + storey + ')');
+  if (onSite.length) e('IFCRELCONTAINEDINSPATIALSTRUCTURE(' + guid() + ',$,$,$,(' + onSite.join(',') + '),' + site + ')');
+  const stamp = new Date().toISOString().slice(0, 19);
+  return ['ISO-10303-21;', 'HEADER;', "FILE_DESCRIPTION(('ViewDefinition [ReferenceView]'),'2;1');",
+    'FILE_NAME(' + str(cadStem() + '.ifc') + ",'" + stamp + "',(''),(''),'','" + APP.name + ' ' + APP.version + "','');",
+    "FILE_SCHEMA(('IFC4'));", 'ENDSEC;', 'DATA;'].concat(lines, ['ENDSEC;', 'END-ISO-10303-21;']).join('\n') + '\n';
+}
+
+/** Every decision and every score the tabs have registered, as JSON. */
+function toDecisionsJSON() {
+  const S = STATE.site, fin = finishOf(MASS.col);
+  const scores = {};
+  for (const k in SCORES) { try { scores[k] = SCORES[k](); } catch (err) { scores[k] = null; } }
+  ['site', 'roof', 'openings', 'ventilation'].forEach(k => { if (!(k in scores)) scores[k] = 'open this tab to score it'; });
+  return JSON.stringify({
+    app:APP.name, version:APP.version, exported:new Date().toISOString(),
+    site:{ place:S.place, nuts:S.nuts, lat:S.lat, lon:S.lon, alt:S.alt, use:S.use, operation:S.operation,
+      koppen:STATE.clim.k.code, normalsSource:STATE.clim.source || null },
+    decisions:{
+      plan:{ length:MASS.L, depth:MASS.D, mainFacadeAzimuth:MASS.rot, floors:MASS.fl, floorHeight:MASS.fh,
+        wallColour:fin ? { name:fin.en, pt:fin.pt, class:fin.cls, absorptance:FINISH_ALPHA[fin.cls], albedo:+(1 - FINISH_ALPHA[fin.cls]).toFixed(2) } : null },
+      roof:{ type:['flat', 'shed', 'gable', 'hip'][ROOF.n], pitch:ROOF.n === 0 ? 0 : ROOF.th },
+      openings:OPEN, sunspace:SUNSP, roofWindows:RWIN,
+      planting:SCENE.veg.map(v => { const q = SCENE.plant ? SCENE.plant(v) : null;
+        return { species:q ? q.name : v.type, sci:q ? q.sci : null, x:v.x, y:v.y, height:v.height, trunk:v.trunk, canopy:v.canopy, density:v.density }; }),
+      detachedWalls:SCENE.walls
+    },
+    scores
+  }, null, 2);
+}
+
+function cadDownload(kind) {
+  if (!STATE.site || !MASS) return;
+  const els = exportModel(), stem = cadStem();
+  const pack = {
+    ifc:() => [toIFC(els), 'application/x-step', '.ifc'],
+    dxf:() => [toDXF(els), 'application/dxf', '.dxf'],
+    obj:() => [toOBJ(els), 'text/plain', '.obj'],
+    json:() => [toDecisionsJSON(), 'application/json', '-decisions.json']
+  }[kind]();
+  download(new Blob([pack[0]], { type:pack[1] + ';charset=utf-8' }), stem + pack[2]);
+  toast(t('Exported') + ' ' + stem + pack[2]);
+}
+
+/** The Export 3D menu under the tab bar: one line per format, the tools
+    each opens in, and what the model is. */
+function toggleCadMenu(ev) {
+  const old = $('#cadMenu');
+  if (old) { old.remove(); return; }
+  const m = el('div', { class:'cadmenu', id:'cadMenu' });
+  m.appendChild(el('h5', { text:'Take the model into CAD' }));
+  [['IFC', 'ifc', 'Revit, ArchiCAD — open the file directly; walls, windows, roof, shading and trees arrive as typed elements'],
+   ['DXF', 'dxf', 'SketchUp Pro, Rhino, Revit (Import CAD), ArchiCAD (Merge) — 3D faces on AA- layers'],
+   ['OBJ', 'obj', 'Rhino, then Grasshopper — one object per element, grouped by layer'],
+   ['JSON', 'json', 'Every decision and every score — the record for the studio, or parameters for Grasshopper']]
+    .forEach(([lab, k, note]) => m.appendChild(el('div', { class:'row' }, [
+      el('button', { class:'btn solid', type:'button', text:lab, onclick:() => cadDownload(k) }), el('span', { text:note })])));
+  m.appendChild(el('p', { text:'Metres, Z up, Y north, the plan turned as set on Site. Massing surfaces — walls, window cuts, roof, overhangs, fins, sunspace, detached walls and planting — not wall assemblies. Planting and walls come from Ventilation.' }));
+  $('#tabsNav').appendChild(m);
+  if (ev) ev.stopPropagation();
+}
+document.addEventListener('click', ev => { const m = $('#cadMenu'); if (m && !m.contains(ev.target)) m.remove(); });
+
 /* --- the setup screen ------------------------------------------------------ */
 const LS_LANG = 'arca-lang', LS_CLIM = 'arca-normals';
 
@@ -6307,13 +6639,16 @@ function initSetup() {
 }
 
 /* --- the application ------------------------------------------------------- */
-function mountApp(site, clim, keepTab) {
+function mountApp(site, clim, keepTab, keepModel) {
   STATE.site = site;
   if (clim) STATE.clim = Object.assign({}, clim, { k: koppen(clim.t, clim.p, site.lat < 0) });
   if (!STATE.clim) { toast('No climate has been entered'); return; }
 
   PANELS.forEach(p => { p.ro && p.ro.disconnect(); p.io && p.io.disconnect(); });
   PANELS = [];
+  for (const k in SCORES) delete SCORES[k];
+  if (!(keepModel && MASS)) {   // a language switch keeps the student's model; a new site starts afresh
+  SCENE.veg.length = 0; SCENE.walls.length = 0;
   MASS = { L:12, D:8, rot:180, fl:1, fh:3.0, col:null };
   ROOF = { n:2, th:Math.round(Math.abs(site.lat)) };
   /* One entry per local facade (S/N/E/W, matching the Roof tab's convention
@@ -6325,6 +6660,7 @@ function mountApp(site, clim, keepTab) {
   OPEN.S.wwr = 0.35;   // a defensible start, not a recommendation — the badge judges it live
   SUNSP = { on:false, face:'S', depth:2.2, widthFrac:0.6 };
   RWIN = { size:'78x140', s:0, n:0, e:0, w:0, sF:0.5, nF:0.5, eF:0.35, wF:0.35, fX:0 };
+  }
   const app = $('#app');
   app.innerHTML = '';
   app.hidden = false;
@@ -6345,6 +6681,7 @@ function mountApp(site, clim, keepTab) {
       html:'<span class="n">' + String(i + 1).padStart(2, '0') + '</span>' + t(tab.label),
       onclick: () => activate(tab.key) }));
   });
+  tl.appendChild(el('button', { class:'tab cadbtn', type:'button', text:'Export 3D ▾', onclick:toggleCadMenu }));
   activate(TABS.some(x => x.key === keepTab) ? keepTab : TABS[0].key);
 
   function activate(key) {
@@ -6414,7 +6751,7 @@ function setLanguage(lang) {
   $$('#langsel button').forEach(b => b.setAttribute('aria-pressed', b.dataset.lang === lang ? 'true' : 'false'));
   document.title = STATE.site ? APP.name + ' — ' + (STATE.site.place || STATE.site.nuts)
                               : APP.name + ' — ' + subtitleFor();
-  if (STATE.site) mountApp(STATE.site, null, STATE.tab);   // rebuild every page in the new language
+  if (STATE.site) mountApp(STATE.site, null, STATE.tab, true);   // rebuild every page in the new language, model kept
   else initSetup();                                        // the month labels change with the language
 }
 
@@ -6847,6 +7184,15 @@ Object.assign(PT, {
   "Left": "Esquerda",
   "Right": "Direita",
   "Both": "Ambos",
+  /* CAD export */
+  "Export 3D ▾": "Exportar 3D ▾",
+  "Take the model into CAD": "Levar o modelo para CAD",
+  "Exported": "Exportado",
+  "Revit, ArchiCAD — open the file directly; walls, windows, roof, shading and trees arrive as typed elements": "Revit, ArchiCAD — abrir o ficheiro directamente; paredes, janelas, cobertura, sombreamento e árvores chegam como elementos tipificados",
+  "SketchUp Pro, Rhino, Revit (Import CAD), ArchiCAD (Merge) — 3D faces on AA- layers": "SketchUp Pro, Rhino, Revit (Importar CAD), ArchiCAD (Juntar) — faces 3D em camadas AA-",
+  "Rhino, then Grasshopper — one object per element, grouped by layer": "Rhino e depois Grasshopper — um objecto por elemento, agrupados por camada",
+  "Every decision and every score — the record for the studio, or parameters for Grasshopper": "Todas as decisões e todas as pontuações — o registo para o atelier, ou parâmetros para o Grasshopper",
+  "Metres, Z up, Y north, the plan turned as set on Site. Massing surfaces — walls, window cuts, roof, overhangs, fins, sunspace, detached walls and planting — not wall assemblies. Planting and walls come from Ventilation.": "Metros, Z para cima, Y a norte, a planta rodada como no separador Local. Superfícies de volumetria — paredes, vãos, cobertura, palas, alhetas, estufa, muros e vegetação — não sistemas construtivos. A vegetação e os muros vêm da Ventilação.",
   /* wall colour on Site */
   "Wall colour — albedo": "Cor das paredes — albedo",
   "How much of the sun the walls reflect, read against this site’s summer": "Quanto do sol as paredes reflectem, lido contra o verão deste local",
