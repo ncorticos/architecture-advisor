@@ -373,6 +373,21 @@ footer{border-top:1px solid var(--line); margin-top:26px; background:var(--wash)
 /* A limit stated beside the value being tested against it. */
 .limitrow{display:flex; flex-wrap:wrap; gap:8px 18px; align-items:baseline; margin:10px 0 2px; font-size:12.5px; color:var(--ink2)}
 .limitrow b{font-family:var(--mono); font-size:15px; color:var(--ink)}
+/* the Ventilation workbench: tools | model | selection and view, as in CAD */
+.bench{display:grid; grid-template-columns:178px minmax(0,1fr) 268px; gap:12px; align-items:start; margin:4px 0 14px}
+.bench .rail,.bench .props{display:flex; flex-direction:column; gap:4px; font-size:12.5px; min-width:0}
+.bench .rgroup{display:flex; flex-direction:column; gap:4px}
+.bench .rgroup .btn{text-align:left; width:100%}
+.bench .gh{font-size:10.5px; font-weight:600; letter-spacing:.07em; text-transform:uppercase; color:var(--muted); margin:8px 0 1px}
+.bench .gh:first-child{margin-top:0}
+.bench .props .controls{flex-direction:column; align-items:stretch; gap:8px; margin:0 0 6px; padding:8px 10px}
+.bench .props .ctl{flex-wrap:wrap}
+.bench .props .seg{flex-wrap:wrap}
+.bench .effect{font-size:12px; color:var(--ink2); line-height:1.55; padding:2px 2px 6px}
+.bench .effect b{font-family:var(--mono)}
+.bench .keys{font-size:11px; color:var(--muted); line-height:1.5; margin-top:8px}
+@media(max-width:1100px){.bench{grid-template-columns:1fr}.bench .rgroup{flex-direction:row; flex-wrap:wrap}.bench .rgroup .btn{width:auto}
+  .bench .props .controls{flex-direction:row; flex-wrap:wrap}}
 </style>
 </head>
 
@@ -617,7 +632,7 @@ footer{border-top:1px solid var(--line); margin-top:26px; background:var(--wash)
 /* ------------------------------------------------------------ 0. IDENTITY -- */
 const APP = {
   name:        'Architecture Advisor',
-  version:     '1.70.0',
+  version:     '1.71.0',
   author:      'Nuno Dinis Cortiços',
   institution: 'Lisbon School of Architecture, Universidade de Lisboa',
   builtWith:   'Claude Opus 5 (Anthropic)',
@@ -4249,6 +4264,21 @@ function buildVentilation(host) {
   const lat = S.lat, lon = S.lon;
   pageHead(host, 'Ventilation',
     'One model from Site, Roof and Windows & Shading — volume, slopes, true openings and sunspace — with sun shadows and opposite-pair airflow. Altitude thins the air, the eave height drives the stack, terrain and exposure shape the wind.');
+  /* ---- the workbench: tools on the left, the model in the middle, the
+     selection and the view on the right — every planting decision is made
+     around the model, as in a CAD program, never scrolled away from it.
+     The settings that change rarely (exposure, monthly winds, the local
+     tune) follow below it. ---- */
+  const bench = host.appendChild(el('div', { class:'bench' }));
+  const rail = bench.appendChild(el('div', { class:'rail' }));
+  const stage = bench.appendChild(el('div', { class:'stage' }));
+  const props = bench.appendChild(el('div', { class:'props' }));
+  const benchNote = host.appendChild(el('p', { class:'hint' }));
+  props.appendChild(el('div', { class:'gh', text:'Selection' }));
+  const effLine = props.appendChild(el('div', { class:'effect' }));
+  const selSlot = props.appendChild(el('div'));
+  props.appendChild(el('div', { class:'gh', text:'View' }));
+  const viewBox = props.appendChild(el('div', { class:'controls' }));
 
   const G = MASS, RF = ROOF;
   if (!G) { host.appendChild(el('p', { text:t('Define the site first — go to the Site tab.') })); return; }
@@ -5237,7 +5267,7 @@ function buildVentilation(host) {
     const garden = 8;
     const sunDepth = (typeof SUNSP !== 'undefined' && SUNSP && SUNSP.on) ? SUNSP.depth : 0;
     const half = G.L / 2 + G.D / 2 + garden + sunDepth;
-    const top = 14, bottom = H - 34;
+    const top = W < 600 ? 88 : 40, bottom = H - 34;   // room for the readout (and, on a phone, the badges) above
     const availV = Math.max(40, bottom - top);
     const sByW = (W / 2 - 16) / ((half + sunDepth) * ISO_C);
     const sByH = availV / (half * ISO_S * 2 + maxH);
@@ -5419,14 +5449,14 @@ function buildVentilation(host) {
     'Open (flat) ground slows the wind least; broken and mountainous ground shelters more (power-law exponent 0.14–0.28). Exposure multiplies it again: sheltered 0.6, moderate 1.0, exposed 1.4 (Olgyay, pp.37–40; DeKay & Brown, Strategy 85). Terrain and twelve monthly prevailing winds derive from these coordinates automatically on entry (ERA5 reanalysis via Open-Meteo — like the altitude lookup, only the coordinates leave the browser); the button re-runs it. Exposure stays manual: it reads the immediate surroundings, which no gridded product sees. Exposure stays manual: it reads the immediate surroundings, which no gridded product sees.'));
   const cShadow = checkCtl('Show sun shadows', true, v => { showShadow = v; refresh(); });
   const cAir = checkCtl('Show cross-ventilation paths', true, v => { showAir = v; refresh(); });
-  host.appendChild(controls([cShadow, cAir]));
+  viewBox.appendChild(cShadow); viewBox.appendChild(cAir);
 
   /* ---- turn the model: same facade-picking camera as Windows & Shading ---- */
   host.appendChild(section('Turn the model',
     'Click a facade to turn the view and face it — the compass marks whichever two are out of view.'));
   const cFace = segCtl('Facade', FACES.map(f => ({ value:f, label:FACE_NAME[f] })), curFace,
     v => { curFace = v; refresh(); });
-  host.appendChild(cFace);
+  viewBox.insertBefore(cFace, viewBox.firstChild);
   host.appendChild(hint('vent-face',
     'The camera only ever shows two adjacent walls at once, from whichever corner puts the chosen facade in view — south-west for South or West, north-east for North or East — exactly as on Windows &amp; Shading. Trees, walls and the airflow arrows are unaffected: they read from world position, not from whatever the camera currently shows.'));
 
@@ -5450,7 +5480,7 @@ function buildVentilation(host) {
     }
     refresh();
   }
-  host.appendChild(controls([segDay, cH]));
+  viewBox.insertBefore(cH, cShadow); viewBox.insertBefore(segDay, cH);
   const liveLine = el('div', { class:'hint' });
   host.appendChild(liveLine);
 
@@ -5481,7 +5511,7 @@ function buildVentilation(host) {
     presetSeg.appendChild(el('button', { text:label, title:label, 'aria-pressed':'false', onclick:() => setSeason(ms) }));
   });
   presetRow.appendChild(presetSeg);
-  host.appendChild(controls([monthCtl, presetRow]));
+  viewBox.insertBefore(presetRow, cShadow); viewBox.insertBefore(monthCtl, presetRow);
   /* What the set actually holds, month by month — the mirror the grey
      prevailing row below is summarising. */
   const windSetLine = el('div', { class:'hint', text:'' });
@@ -5533,11 +5563,19 @@ function buildVentilation(host) {
      the region's PROF and the protected areas inside it. Choose another
      region on the setup page and the palette changes with it. */
   const floraSrc = [FLORA.prof ? PROF_REF[FLORA.prof] : null, FLORA.src].filter(Boolean).join(' · ');
-  host.appendChild(el('p', { class:'hint', html:'<b>' + t('Native planting for') + ' ' + floraKey + '</b>'
+  benchNote.innerHTML = '<b>' + t('Native planting for') + ' ' + floraKey + '</b>'
     + (floraKey !== S.nuts ? ' (' + t('region not found — showing Grande Lisboa') + ')' : '')
-    + ' — ' + t('sources for this region only') + ': ' + floraSrc }));
+    + ' — ' + t('sources for this region only') + ': ' + floraSrc;
   let plantArmed = null;
-  const vegPalette = host.appendChild(el('div', { class:'controls', style:'flex-wrap:wrap;gap:4px' }));
+  let ghost = null;
+  let scoreDelta = null, lastScores = null, deltaTimer = 0;   // the last change's effect on both scores
+  let ghostCanvas = null;   // where an armed tool would land, drawn translucent under the pointer
+  /* The select tool is what is left when nothing is armed: click to tune,
+     drag to move, double-click to remove. */
+  rail.appendChild(el('div', { class:'gh', text:'Tools' }));
+  const selectBtn = el('button', { class:'btn small solid', text:'↖ ' + t('Select / move'), title:t('Click to tune · drag to move · double-click to remove') });
+  rail.appendChild(el('div', { class:'rgroup' }, [selectBtn]));
+  const vegPalette = rail.appendChild(el('div', { class:'rgroup' }));
   const vegBtns = [];
   const addSpeciesBtn = sp => {
     const q = specOf(sp);
@@ -5546,8 +5584,7 @@ function buildVentilation(host) {
     b.onclick = () => {
       plantArmed = (plantArmed === sp) ? null : sp;
       wallArmed = false;
-      vegBtns.forEach(x => x.classList.toggle('solid', x.dataset.species === plantArmed));
-      wallBtn.classList.toggle('solid', false);
+      paintTools();
       toast(plantArmed ? t('Click open ground to plant') + ' ' + nameOf(sp) : 'Placement cancelled');
     };
     vegPalette.appendChild(b);
@@ -5557,36 +5594,42 @@ function buildVentilation(host) {
      trunk, bushes sit on it as a mound. The region's list decides which
      species appear; the species table decides which group each joins. */
   const floraAll = FLORA.trees.concat(FLORA.bushes).filter(sp => SPECIES[sp]);
-  vegPalette.appendChild(el('span', { class:'hint', text:'Trees' }));
+  vegPalette.appendChild(el('div', { class:'gh', text:'Trees' }));
   floraAll.filter(sp => specOf(sp).kind === 'tree').forEach(addSpeciesBtn);
-  vegPalette.appendChild(el('span', { class:'hint', text:'Bushes' }));
+  vegPalette.appendChild(el('div', { class:'gh', text:'Bushes' }));
   floraAll.filter(sp => specOf(sp).kind === 'bush').forEach(addSpeciesBtn);
-  const vegCount = el('span', { text:'0/10' });
-  vegPalette.appendChild(vegCount);
+  const vegCount = el('span', { class:'hint', text:'0/10' });
   const vegClear = el('button', { class:'btn small', text:'Clear planting', onclick: () => { VEGETATION.length = 0; selected = null; refresh(); } });
-  vegPalette.appendChild(vegClear);
+  rail.appendChild(el('div', { class:'rgroup' }, [vegCount, vegClear]));
 
   /* ---- detached walls: arm, then click the ground; orientation follows the nearest facade ---- */
   host.appendChild(section('Detached walls',
     'Arm the wall tool, then click open ground. Click a placed wall to tune it, drag its corner dots to resize it, drag the wall to move it, double-click to remove it. A wall near a south or north facade runs east–west; near east or west it runs north–south. Each wall shelters its nearest facade.'));
-  const wallPalette = host.appendChild(el('div', { class:'controls' }));
+  rail.appendChild(el('div', { class:'gh', text:'Walls' }));
+  const wallPalette = rail.appendChild(el('div', { class:'rgroup' }));
   let wallArmed = false;
   const wallBtn = el('button', { class:'btn small', text:'Place wall', onclick: () => {
     wallArmed = !wallArmed; plantArmed = null;
-    vegBtns.forEach(x => x.classList.toggle('solid', false));
-    wallBtn.classList.toggle('solid', wallArmed);
+    paintTools();
     toast(wallArmed ? 'Click open ground to place a wall' : 'Placement cancelled');
   } });
+  /** One tool is armed at a time, or the select tool is. */
+  function paintTools() {
+    vegBtns.forEach(x => x.classList.toggle('solid', x.dataset.species === plantArmed));
+    wallBtn.classList.toggle('solid', wallArmed);
+    selectBtn.classList.toggle('solid', !plantArmed && !wallArmed);
+    if (!plantArmed && !wallArmed) ghost = null;
+    draw();
+  }
+  selectBtn.onclick = () => { plantArmed = null; wallArmed = false; paintTools(); };
+  rail.appendChild(el('div', { class:'keys', text:t('Esc cancels a tool · Delete removes the selected item') }));
   wallPalette.appendChild(wallBtn);
   const wallClear = el('button', { class:'btn small', text:'Clear walls', onclick: () => { WALLS.length = 0; selected = null; refresh(); } });
   wallPalette.appendChild(wallClear);
   const placeHint = el('span', { class:'hint', text:'' });
-  wallPalette.appendChild(placeHint);
 
   /* ---- selected item: click a placed plant or wall to tune it ---- */
-  host.appendChild(section('Selected planting or wall',
-    'Click a placed tree, bush or wall to tune its size here — dragging still moves it, double-click still removes it.'));
-  const selBox = host.appendChild(el('div', { class:'controls' }));
+  const selBox = selSlot.appendChild(el('div', { class:'controls' }));
   const selHint = el('span', { class:'hint', text:'Nothing selected — click a placed item on the model.' });
   let selKey = '@';
   let edH = null, edT = null, edC = null, edWH = null, edWL = null;
@@ -5690,6 +5733,7 @@ function buildVentilation(host) {
          'rgba(20,23,26,.03)', CH.line, 1.2);
 
     /* ---- sun shadow of the whole volume on the garden ---- */
+    let shadowTag = null;
     const sun = sunPos(SH.doy, SH.h, lat, lon, tz);
     const topZ = y => RF.n === 0 ? H0 : RF.n === 1 ? H0 + (y + G.D/2) * Math.tan(roofTh) : RF.n === 3 ? H0 : H0 + Math.max(0, G.D/2 - Math.abs(y)) * Math.tan(roofTh);
     if (showShadow && sun.alt > 0.5) {
@@ -5703,8 +5747,10 @@ function buildVentilation(host) {
       ctx.closePath();
       ctx.fillStyle = 'rgba(20,23,26,.13)'; ctx.fill();
       stroke(ctx, 'rgba(20,23,26,.35)', 1); ctx.stroke();
-      const tq = proj(scs[0][0] + ox, scs[0][1] + oy, 0);
-      label(ctx, fmt(Lsh, 1) + ' m', tq[0] + 5, tq[1] - 5, CH.ink2, FM(9.5), 'left', 'middle');
+      /* labelled at the end, beside the shadow's farthest corners still in
+         sight — never on the building drawn over it */
+      shadowTag = { txt:t('shadow') + ' ' + fmt(Lsh, 1) + ' m',
+        pts:hp.slice().sort((a, b) => (b[0] * ox + b[1] * oy) - (a[0] * ox + a[1] * oy)).map(q => proj(q[0], q[1], 0)) };
       /* Each plant throws the disc of its own canopy, dropped from its full
          height along the same sun ray — enough to read who shades whom. */
       VEGETATION.forEach(v => {
@@ -5885,12 +5931,34 @@ function buildVentilation(host) {
       stroke(ctx, 'rgba(217,119,6,.8)', 1.6, [5,4]); seg(ctx, up[0], up[1], upTop[0], upTop[1]);
     }
 
+    /* ---- the armed tool's ghost, where a click would put it ---- */
+    if (ghost && plantArmed) {
+      const spec = specOf(plantArmed);
+      const gv = { type:plantArmed, height:spec.h, trunk:spec.tr, canopy:+(spec.h - spec.tr).toFixed(1), canopyV:2,
+        density:spec.d, x:ghost.x, y:ghost.y, seed:12345 };
+      /* the painter sets its own alphas, so the ghost is painted apart and
+         laid over the scene faded */
+      const oc = ghostCanvas || (ghostCanvas = document.createElement('canvas'));
+      oc.width = ctx.canvas.width; oc.height = ctx.canvas.height;
+      const g2 = oc.getContext('2d');
+      g2.setTransform(ctx.getTransform());
+      paintPlant(g2, gv, proj, camS, s, false);
+      ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.globalAlpha = ghost.ok ? 0.45 : 0.15;
+      ctx.drawImage(oc, 0, 0); ctx.restore();
+    } else if (ghost && wallArmed) {
+      const f = sideOf(ghost.x, ghost.y), hw = 1.5;
+      const quad = (f === 'S' || f === 'N')
+        ? [[ghost.x - hw, ghost.y, 0], [ghost.x + hw, ghost.y, 0], [ghost.x + hw, ghost.y, 2], [ghost.x - hw, ghost.y, 2]]
+        : [[ghost.x, ghost.y - hw, 0], [ghost.x, ghost.y + hw, 0], [ghost.x, ghost.y + hw, 2], [ghost.x, ghost.y - hw, 2]];
+      poly(quad, ghost.ok ? 'rgba(120,113,108,.28)' : 'rgba(220,38,38,.12)', ghost.ok ? '#57534e' : '#DC2626', 1.2, [4, 3]);
+    }
+
     /* ---- score readout ---- */
     const ws = { S:winterScore('S'), N:winterScore('N'), E:winterScore('E'), W:winterScore('W') };
-    const ss = summerScore();
+    const ss = summerScore(), narrowV = W < 600, ry = narrowV ? 66 : 14;
     ctx.fillStyle = '#14171a'; ctx.font = 'bold 10px ui-monospace'; ctx.textAlign = 'left';
-    ctx.fillText('Winter shelter S-'+ws.S+' N-'+ws.N+' E-'+ws.E+' W-'+ws.W, 8, 14);
-    ctx.fillStyle = '#1D4ED8'; ctx.fillText('Summer ' + monthSetName() + ' S–N '+pairScore('S','N')+' · E–W '+pairScore('E','W')+' · mean '+ss+'/100', 8, 26);
+    ctx.fillText(t('Winter shelter') + ' S-'+ws.S+' N-'+ws.N+' E-'+ws.E+' W-'+ws.W, 8, ry);
+    ctx.fillStyle = '#1D4ED8'; ctx.fillText(t('Summer') + ' ' + monthSetName() + ' S–N '+pairScore('S','N')+' · E–W '+pairScore('E','W')+' · ' + t('mean') + ' '+ss+'/100', 8, ry + 12);
 
     /* ---- corner etiqueta: the Olgyay meta-evaluation on the model ----
        Winter badge reads the vegetation-and-wall windbreak (blockage after
@@ -5898,17 +5966,39 @@ function buildVentilation(host) {
        tunnel through the opposite window pairs. No usable openings on
        either pair, no summer score — without windows it does not count. */
     const ventColor = v => v === null ? CH.faint : v >= 80 ? '#16A34A' : v >= 50 ? '#D97706' : '#DC2626';
-    const ventBadge = (x, y, value, caption) => {
+    /* The last change's effect rides beside each badge for a few seconds —
+       plant a tree, see what it did to both scores without looking away. */
+    const fresh = scoreDelta && performance.now() - scoreDelta.at < 3200;
+    const ventBadge = (i, value, caption, dv) => {
       const col = ventColor(value);
+      const x = narrowV ? 4 + i * 92 : W - 92, y = narrowV ? 4 : 6 + i * 58;
       ctx.fillStyle = '#fff';
       ctx.fillRect(x, y, 84, 52);
       stroke(ctx, col, 1.5); ctx.strokeRect(x, y, 84, 52);
       label(ctx, value === null ? '–' : String(Math.round(value)), x + 42, y + 25, col, FM(24), 'center', 'middle');
-      label(ctx, t(caption), x + 42, y + 44, CH.muted, F(9), 'center', 'middle');
+      let cs = 9;   // longer translations shrink to stay inside the box
+      ctx.font = F(cs);
+      while (cs > 6.5 && ctx.measureText(t(caption)).width > 78) { cs -= 0.5; ctx.font = F(cs); }
+      label(ctx, t(caption), x + 42, y + 44, CH.muted, F(cs), 'center', 'middle');
+      if (fresh && dv) {
+        const txt = (dv > 0 ? '+' : '−') + Math.abs(dv), dcol = dv > 0 ? '#16A34A' : '#DC2626';
+        if (narrowV) label(ctx, txt, x + 80, y + 12, dcol, FM(12, '700'), 'right', 'middle');
+        else { ctx.fillStyle = 'rgba(255,255,255,.9)'; ctx.fillRect(x - 46, y + 14, 42, 22); label(ctx, txt, x - 6, y + 25, dcol, FM(15, '700'), 'right', 'middle'); }
+      }
     };
     const noPairFlow = effectiveArea('S', 'N') <= 0 && effectiveArea('E', 'W') <= 0;
-    ventBadge(W - 92, 6, winterPosture(), 'Winter shelter /100');
-    ventBadge(W - 92, 64, noPairFlow ? null : summerScore(), 'Summer tunnel /100');
+    ventBadge(0, winterPosture(), 'Winter shelter /100', scoreDelta && scoreDelta.w);
+    ventBadge(1, noPairFlow ? null : summerScore(), 'Summer tunnel /100', scoreDelta && scoreDelta.s);
+    if (shadowTag) {
+      const desk = labelDesk(ctx, W, H);
+      const boxPts = [];
+      [0, ridge].forEach(z => [[G.L/2, G.D/2], [-G.L/2, G.D/2], [-G.L/2, -G.D/2], [G.L/2, -G.D/2]].forEach(c => boxPts.push(proj(c[0], c[1], z))));
+      desk.area(hullV(boxPts));
+      desk.block(0, 0, W * 0.45, narrowV ? 80 : 32).block(narrowV ? 0 : W - 150, 0, narrowV ? 190 : W, narrowV ? 60 : 120).block(0, H - 30, W, H);
+      const spots = shadowTag.pts.filter(q => !desk.covered(q[0], q[1])).slice(0, 4);
+      const around = q => [[q[0] + 8, q[1] - 9, 'left'], [q[0] - 8, q[1] - 9, 'right'], [q[0] + 8, q[1] + 9, 'left'], [q[0] - 8, q[1] + 9, 'right']];
+      desk.place(shadowTag.txt, (spots.length ? spots : shadowTag.pts.slice(0, 1)).map(around).reduce((a, b) => a.concat(b), []), CH.ink2, FM(9.5));
+    }
     ctx.fillStyle = '#7b838b'; ctx.font = '9px ui-sans-serif';
     ctx.textAlign = 'center';
     ctx.fillText(fmt(lat,2)+'° '+(lat<0?'S':'N')+' · '+fmt(Math.abs(lon),2)+'° '+(lon<0?'W':'E')+' · '+fmt(S.alt||0,0)+' m · ρ '+fmt(airDensity(),3)+' kg/m³ · eave '+fmt(eaveWind(),1)+' m/s · stack(5K) '+fmt(stackPa(5),1)+' Pa', W/2, H-18);
@@ -5955,10 +6045,10 @@ function buildVentilation(host) {
     return csvHeader([['Site', (S.place || S.nuts || '') + ' ' + lat.toFixed(2) + ' ' + lon.toFixed(2)]]) + csvRows(rows);
   };
 
-  ventPanel = makePanel(host, {
+  ventPanel = makePanel(stage, {
     title: 'One model \u2014 site, roof, windows, sun and air',
-    note: 'Volume and eave height from Site, slopes from Roof, openings and sunspace from Windows & Shading, shadows from the same sun, airflow from the opposite pairs \u2014 arm a tool to place, click to tune, drag corners to resize, drag to move, double-click to remove',
-    aspect: 900 / 420,
+    note: 'Volume and eave height from Site, slopes from Roof, openings and sunspace from Windows & Shading, shadows from the same sun, airflow from the opposite pairs \u2014 pick a tool on the left, click the ground to place; the selection and the view are on the right',
+    heightFn: w => w < 600 ? Math.round(w * 0.95 + 80) : Math.round(clamp(w * 0.64, 340, 660)),
     render: renderVent,
     csv: ventCSV
   });
@@ -6060,15 +6150,13 @@ function buildVentilation(host) {
       if (VEGETATION.length >= 10) { toast('Maximum 10 plantings reached'); return; }
       const spec = specOf(plantArmed);
       VEGETATION.push({ type:plantArmed, height:spec.h, trunk:spec.tr, canopy:+(spec.h - spec.tr).toFixed(1), canopyV:2, density:spec.d, x:+pos.x.toFixed(1), y:+pos.y.toFixed(1), seed:(Math.random() * 4294967296) >>> 0 });
-      plantArmed = null;
-      vegBtns.forEach(x => x.classList.toggle('solid', false));
+      /* the tool stays armed, as a CAD tool does, until Esc or the select
+         tool; the new plant is selected so its effect reads at once */
       selected = { kind:'tree', ref:VEGETATION[VEGETATION.length - 1] };
       refresh();
     } else if (wallArmed) {
       const f = sideOf(pos.x, pos.y);
       WALLS.push({ x:+pos.x.toFixed(1), y:+pos.y.toFixed(1), along:(f === 'S' || f === 'N') ? 'x' : 'y', height:2.0, length:3.0 });
-      wallArmed = false;
-      wallBtn.classList.toggle('solid', false);
       selected = { kind:'wall', ref:WALLS[WALLS.length - 1] };
       refresh();
     }
@@ -6142,7 +6230,15 @@ function buildVentilation(host) {
       draw();
       return;
     }
-    if (plantArmed || wallArmed) { cv.style.cursor = 'cell'; hideTip(); return; }
+    if (plantArmed || wallArmed) {
+      const pos = getWorldPos(ev.clientX, ev.clientY);
+      const lim = { x:G.L/2 + FR.garden, y:G.D/2 + FR.garden };
+      const gx = clamp(pos.x, -lim.x, lim.x), gy = clamp(pos.y, -lim.y, lim.y);
+      ghost = { x:gx, y:gy, ok:!onBuilding(gx, gy) };
+      cv.style.cursor = ghost.ok ? 'cell' : 'not-allowed';
+      hideTip(); draw();
+      return;
+    }
     const hit = pickItem(ev.clientX, ev.clientY);
     if (hit) {
       cv.style.cursor = hit.kind === 'handle' ? (hit.part === 'top' ? 'ns-resize' : 'ew-resize') : 'grab';
@@ -6167,7 +6263,24 @@ function buildVentilation(host) {
   };
   cv.addEventListener('pointerup', endDragV);
   cv.addEventListener('pointercancel', endDragV);
-  cv.addEventListener('mouseleave', hideTip);
+  cv.addEventListener('mouseleave', () => { hideTip(); if (ghost) { ghost = null; draw(); } });
+  /* Keys, as in CAD: Esc drops the armed tool (or the selection), Delete
+     removes the selected item — never while typing in a field. */
+  document.addEventListener('keydown', ev => {
+    if (STATE.tab !== 'ventilation' || !host.isConnected) return;
+    if (/INPUT|SELECT|TEXTAREA/.test((ev.target && ev.target.tagName) || '')) return;
+    if (ev.key === 'Escape') {
+      if (plantArmed || wallArmed) { plantArmed = null; wallArmed = false; paintTools(); }
+      else if (selected) { selected = null; refresh(); }
+    } else if (ev.key === 'Delete' || ev.key === 'Backspace') {
+      const s0 = selItem();
+      if (!s0) return;
+      ev.preventDefault();
+      (s0.kind === 'wall' ? WALLS : VEGETATION).splice(s0.index, 1);
+      selected = null; refresh();
+      toast(s0.kind === 'wall' ? 'Wall removed' : 'Plant removed');
+    }
+  });
   cv.addEventListener('dblclick', ev => {
     if (plantArmed || wallArmed) return;
     const hit = pickItem(ev.clientX, ev.clientY);
@@ -6184,7 +6297,30 @@ function buildVentilation(host) {
   /* ---- refresh everything ----
      The panel already owns the canvas; refresh only updates the live
      readout and redraws through it. ---- */
+  /** What the selected item is worth: both scores with it, minus both
+      without it — the same test the student would run by deleting it. */
+  const effectOf = sel => {
+    const arr = sel.kind === 'wall' ? WALLS : VEGETATION, it = arr[sel.index];
+    if (!it) return null;
+    const w1 = winterPosture(), s1 = summerScore();
+    arr.splice(sel.index, 1);
+    const w0 = winterPosture(), s0 = summerScore();
+    arr.splice(sel.index, 0, it);
+    return { w:w1 - w0, s:s1 - s0 };
+  };
+  const signed = v => (v > 0 ? '+' : v < 0 ? '−' : '±') + Math.abs(v);
   const refresh = () => {
+    const nowW = winterPosture(), noFlow = effectiveArea('S', 'N') <= 0 && effectiveArea('E', 'W') <= 0;
+    const nowS = noFlow ? null : summerScore();
+    if (lastScores && (nowW !== lastScores.w || nowS !== lastScores.s)) {
+      scoreDelta = { w:nowW - lastScores.w, s:nowS === null || lastScores.s === null ? 0 : nowS - lastScores.s, at:performance.now() };
+      clearTimeout(deltaTimer); deltaTimer = setTimeout(draw, 3300);
+    }
+    lastScores = { w:nowW, s:nowS };
+    const sel0 = selItem(), eff = sel0 ? effectOf(sel0) : null;
+    effLine.innerHTML = !sel0 || !eff ? t('Pick a tool on the left and click open ground; click a placed item to see what it does.')
+      : '<b>' + t(sel0.kind === 'wall' ? 'This wall' : 'This plant') + '</b>: ' + t('winter shelter') + ' <b>' + signed(eff.w) + '</b> · '
+        + t('summer tunnel') + ' <b>' + signed(eff.s) + '</b><br><span style="color:var(--muted)">' + t('what the two scores lose if it goes') + '</span>';
     syncEditor();
     refreshScores();
     syncWallEd();
@@ -7588,6 +7724,54 @@ Object.assign(PT, {
   "How much of the sun the roof reflects, read against this site’s summer": "Quanto do sol a cobertura reflecte, lido contra o verão deste local",
   "Pick a roof colour to read its albedo here": "Escolha uma cor de cobertura para ler aqui o seu albedo",
   "the summer here will overheat this roof": "o verão deste local vai sobreaquecer esta cobertura",
+  /* the Ventilation workbench */
+  "Tools": "Ferramentas",
+  "Selection": "Selecção",
+  "View": "Vista",
+  "Walls": "Muros",
+  "Select / move": "Seleccionar / mover",
+  "Esc cancels a tool · Delete removes the selected item": "Esc cancela a ferramenta · Delete apaga o elemento seleccionado",
+  "Pick a tool on the left and click open ground; click a placed item to see what it does.": "Escolha uma ferramenta à esquerda e clique em terreno livre; clique num elemento colocado para ver o que faz.",
+  "This plant": "Esta planta",
+  "This wall": "Este muro",
+  "winter shelter": "abrigo de inverno",
+  "summer tunnel": "túnel de verão",
+  "what the two scores lose if it goes": "o que as duas pontuações perdem se for retirado",
+  "Winter shelter": "Abrigo de inverno",
+  "mean": "média",
+  "Summer": "Verão",
+  "Ventilation": "Ventilação",
+  "Place wall": "Colocar muro",
+  "Clear walls": "Limpar muros",
+  "Plant removed": "Planta retirada",
+  "Wall removed": "Muro retirado",
+  "Click open ground to place a wall": "Clique em terreno livre para colocar um muro",
+  "Nothing selected — click a placed item on the model.": "Nada seleccionado — clique num elemento colocado no modelo.",
+  "Delete wall": "Apagar muro",
+  "Delete plant": "Apagar planta",
+  "Maximum 10 plantings reached": "Atingido o máximo de 10 plantações",
+  "Plant and build on open ground, not on the building": "Plante e construa em terreno livre, não sobre o edifício",
+  "Months": "Meses",
+  "Season": "Estação",
+  "Cooling Jun–Aug": "Arrefecimento Jun–Ago",
+  "Deep winter Dec–Feb": "Inverno Dez–Fev",
+  "Whole year": "Todo o ano",
+  "Height": "Altura",
+  "Trunk": "Tronco",
+  "Canopy": "Copa",
+  "Density": "Densidade",
+  "Length": "Comprimento",
+  "Keep at least one month selected": "Mantenha pelo menos um mês seleccionado",
+  "Click to tune · drag to move · double-click to remove": "Clique para ajustar · arraste para mover · duplo clique para retirar",
+  "Drag to resize the wall": "Arraste para redimensionar o muro",
+  "shelters": "abriga",
+  "Wall": "Muro",
+  "Drag corners to resize · drag to move · double-click to remove": "Arraste os cantos para redimensionar · arraste para mover · duplo clique para retirar",
+  "Trees and bushes against the wind and sun": "Árvores e arbustos contra o vento e o sol",
+  "Detached walls": "Muros isolados",
+  "Ventilation scores — winter defense, summer breeze": "Pontuações de ventilação — defesa de inverno, brisa de verão",
+  "Volume and eave height from Site, slopes from Roof, openings and sunspace from Windows & Shading, shadows from the same sun, airflow from the opposite pairs \u2014 pick a tool on the left, click the ground to place; the selection and the view are on the right":
+    "Volume e altura do beirado do Local, vertentes da Cobertura, vãos e estufa de Janelas e Sombreamento, sombras do mesmo sol, escoamento pelos pares opostos \u2014 escolha uma ferramenta à esquerda, clique no terreno para colocar; a selecção e a vista estão à direita",
   /* planting on Ventilation: the regional palette and its species */
   "Native planting for": "Plantação autóctone para",
   "sources for this region only": "fontes apenas desta região",
