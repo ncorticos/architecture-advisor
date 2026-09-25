@@ -632,7 +632,7 @@ footer{border-top:1px solid var(--line); margin-top:26px; background:var(--wash)
 /* ------------------------------------------------------------ 0. IDENTITY -- */
 const APP = {
   name:        'Architecture Advisor',
-  version:     '1.71.0',
+  version:     '1.72.0',
   author:      'Nuno Dinis Cortiços',
   institution: 'Lisbon School of Architecture, Universidade de Lisboa',
   builtWith:   'Claude Opus 5 (Anthropic)',
@@ -1686,6 +1686,95 @@ const albedoFitFor = (key, w) => {
   const f = finishOf(key);
   return f ? Math.round(clamp(100 * (1 - w * (FINISH_ALPHA[f.cls] - 0.4) / 0.4), 0, 100)) : null;
 };
+/* --- the plan: one bar, or a bar broken into an L, a T or an H --------------
+   Local metres: x along the main facade, y toward the back, the main facade
+   on y = −D/2 and the bar centred on the origin. A break adds wings — an L
+   one at an end, a T one at the middle, an H one at each end reaching both
+   ways. A wing's reach e is signed: behind the bar when positive, in front
+   of the main facade when negative. The pieces never overlap, so their areas
+   add and their boxes can be ray-cast one by one. */
+function planRects(G) {
+  const L = G.L, D = G.D, bar = [-L / 2, -D / 2, L / 2, D / 2], f = G.form || 'rect', wg = G.wing;
+  if (f === 'rect' || !wg) return [bar];
+  const w = wg.w, e = wg.e, yb = e >= 0 ? [D / 2, D / 2 + e] : [-D / 2 + e, -D / 2];
+  if (f === 'L') {
+    const xr = wg.side < 0 ? [-L / 2, -L / 2 + w] : [L / 2 - w, L / 2];
+    return [bar, [xr[0], yb[0], xr[1], yb[1]]];
+  }
+  if (f === 'T') return [bar, [-w / 2, yb[0], w / 2, yb[1]]];
+  const a = Math.abs(e);   // H: both ends, both ways
+  return [bar, [L / 2 - w, D / 2, L / 2, D / 2 + a], [L / 2 - w, -D / 2 - a, L / 2, -D / 2],
+    [-L / 2, D / 2, -L / 2 + w, D / 2 + a], [-L / 2, -D / 2 - a, -L / 2 + w, -D / 2]];
+}
+/** Does a ray from p along d meet the box over plan rectangle r, up to height h? (slabs) */
+function rayHitsBox(p, d, r, h) {
+  let t0 = 1e-6, t1 = Infinity;
+  const lo = [r[0], r[1], 0], hi = [r[2], r[3], h];
+  for (let k = 0; k < 3; k++) {
+    if (Math.abs(d[k]) < 1e-12) { if (p[k] < lo[k] || p[k] > hi[k]) return false; continue; }
+    let ta = (lo[k] - p[k]) / d[k], tb = (hi[k] - p[k]) / d[k];
+    if (ta > tb) { const q = ta; ta = tb; tb = q; }
+    if (ta > t0) t0 = ta;
+    if (tb < t1) t1 = tb;
+    if (t0 > t1) return false;
+  }
+  return true;
+}
+/** Keeps a wing inside what its bar can carry, in half metres. */
+function fixWing(G) {
+  if (!G.form || G.form === 'rect') return;
+  const wg = G.wing || (G.wing = { w:4, e:5, side:1 });
+  const maxW = G.form === 'H' ? (G.L - 2) / 2 : G.L - 2;
+  wg.w = Math.round(clamp(wg.w, 2, Math.max(2, maxW)) * 2) / 2;
+  const a = Math.round(clamp(Math.abs(wg.e), 2, 16) * 2) / 2;
+  wg.e = G.form === 'H' ? a : (wg.e < 0 ? -a : a);
+  wg.side = wg.side < 0 ? -1 : 1;
+}
+/**
+ * The outline of a union of rectangles, read off the grid their edges cut:
+ * the filled cells, the area, the perimeter and the boundary walls as merged
+ * segments, each with its outward normal.
+ */
+function planOutline(rects) {
+  const k = v => Math.round(v * 1000) / 1000;
+  const xs = [...new Set(rects.reduce((a, r) => a.concat([k(r[0]), k(r[2])]), []))].sort((a, b) => a - b);
+  const ys = [...new Set(rects.reduce((a, r) => a.concat([k(r[1]), k(r[3])]), []))].sort((a, b) => a - b);
+  const nx = xs.length - 1, ny = ys.length - 1;
+  const F = [];
+  for (let i = 0; i < nx; i++) {
+    F.push([]);
+    for (let j = 0; j < ny; j++) {
+      const cx = (xs[i] + xs[i + 1]) / 2, cy = (ys[j] + ys[j + 1]) / 2;
+      F[i].push(rects.some(r => cx > r[0] && cx < r[2] && cy > r[1] && cy < r[3]));
+    }
+  }
+  const at = (i, j) => i >= 0 && j >= 0 && i < nx && j < ny && F[i][j];
+  const cells = [];
+  let area = 0;
+  for (let i = 0; i < nx; i++) for (let j = 0; j < ny; j++) if (F[i][j]) {
+    cells.push([xs[i], ys[j], xs[i + 1], ys[j + 1]]);
+    area += (xs[i + 1] - xs[i]) * (ys[j + 1] - ys[j]);
+  }
+  const segs = [];
+  for (let i = 0; i <= nx; i++) {          // walls running along y, at x = xs[i]
+    let run = null;
+    for (let j = 0; j <= ny; j++) {
+      const l = j < ny && at(i - 1, j), r = j < ny && at(i, j), kind = l === r ? 0 : l ? 1 : -1;
+      if (run && run.kind !== kind) { segs.push({ a:[xs[i], ys[run.j]], b:[xs[i], ys[j]], n:[run.kind, 0] }); run = null; }
+      if (!run && kind) run = { kind, j };
+    }
+  }
+  for (let j = 0; j <= ny; j++) {          // walls running along x, at y = ys[j]
+    let run = null;
+    for (let i = 0; i <= nx; i++) {
+      const d = i < nx && at(i, j - 1), u = i < nx && at(i, j), kind = d === u ? 0 : d ? 1 : -1;
+      if (run && run.kind !== kind) { segs.push({ a:[xs[run.i], ys[j]], b:[xs[i], ys[j]], n:[0, run.kind] }); run = null; }
+      if (!run && kind) run = { kind, i };
+    }
+  }
+  segs.forEach(sg => { sg.len = Math.hypot(sg.b[0] - sg.a[0], sg.b[1] - sg.a[1]); });
+  return { rects, cells, area, segs, perimeter:segs.reduce((a, sg) => a + sg.len, 0), bbox:[xs[0], ys[0], xs[nx], ys[ny]] };
+}
 /** The finish buttons, grouped by colour class; set() gets the key, or null
     when the chosen one is pressed again. */
 function finishPicker(get, set) {
@@ -2393,10 +2482,82 @@ function buildSite(host) {
     const roof = RF.n === 3 ? (G.L + 2 * rl + G.D) * slope
       : (RF.n === 2 ? 2 * slope : slope) * G.L;
     const roofVol = RF.n === 3 ? Math.max(0, rise * G.D * (3 * G.L - G.D) / 6) : G.L * G.D * rise / 2;
+    if (planOf().rects.length > 1) return labFFBroken(H0, th);
     const A = wallEW + wallNS + roof + G.L * G.D;
     const V = G.L * G.D * H0 + roofVol;
     return { H:H0 + rise, V, A, ff:A / V };
   };
+  /**
+   * The same ratio for a broken plan. Walls to the eaves run the whole
+   * perimeter of the outline and the roof covers the plan area over the
+   * cosine of the pitch — both exact whatever the form, since every slope
+   * shares the pitch. The roof space — its volume, and the gable or shed
+   * walls rising above the eaves — is taken piece by piece, each piece
+   * roofed along its own long side; where the pieces meet it is an estimate.
+   */
+  function labFFBroken(H0, th) {
+    const pl = planOf();
+    let roofVol = 0, roofWalls = 0, riseMax = 0;
+    pl.rects.forEach(r => {
+      const a = r[2] - r[0], b = r[3] - r[1], Lp = Math.max(a, b), Dp = Math.min(a, b);
+      const rise = ((RF.n === 0 || RF.n === 1) ? Dp : Dp / 2) * Math.tan(th);
+      riseMax = Math.max(riseMax, rise);
+      roofVol += RF.n === 3 ? Math.max(0, rise * Dp * (3 * Lp - Dp) / 6) : Lp * Dp * rise / 2;
+      roofWalls += RF.n === 2 ? Dp * rise : RF.n === 1 ? (Lp + Dp) * rise : 0;
+    });
+    const A = pl.perimeter * H0 + roofWalls + pl.area / Math.cos(th) + pl.area;
+    const V = pl.area * H0 + roofVol;
+    return { H:H0 + riseMax, V, A, ff:A / V };
+  }
+  /** The plan outline, rebuilt only when the plan itself changes. */
+  let planCache = null;
+  function planOf() {
+    fixWing(G);
+    const key = [G.L, G.D, G.form, G.wing && G.wing.w, G.wing && G.wing.e, G.wing && G.wing.side].join('|');
+    if (!planCache || planCache.key !== key) planCache = Object.assign(planOutline(planRects(G)), { key });
+    return planCache;
+  }
+  /**
+   * The sun the building takes off its own walls: every outline wall sampled
+   * about every 0.75 m along and at three heights, the day's sun every half
+   * hour, each sample weighed by how squarely the sun meets its wall; a
+   * sample counts as shaded when the ray back to the sun meets any piece of
+   * the plan, raised to its eaves. The share of that weighted sun lost, in
+   * percent — 0 for a plain bar, which cannot shade itself. Roofs above the
+   * eaves are left out, so pitched roofs shade a little more than this reads.
+   */
+  const shadeCache = {};
+  function selfShade(doy) {
+    const pl = planOf(), H0 = G.fl * G.fh;
+    if (pl.rects.length < 2) return 0;
+    const key = pl.key + '|' + G.rot + '|' + H0 + '|' + doy;
+    if (key in shadeCache) return shadeCache[key];
+    const a = (G.rot - 180) * RAD, ca = Math.cos(a), sa = Math.sin(a);
+    const pts = [];
+    pl.segs.forEach(sg => {
+      const nU = Math.max(2, Math.ceil(sg.len / 0.75));
+      for (let i = 0; i < nU; i++) {
+        const t = (i + 0.5) / nU;
+        const x = sg.a[0] + (sg.b[0] - sg.a[0]) * t + sg.n[0] * 0.05, y = sg.a[1] + (sg.b[1] - sg.a[1]) * t + sg.n[1] * 0.05;
+        [0.2, 0.5, 0.8].forEach(fz => pts.push({ x, y, z:fz * H0, n:sg.n }));
+      }
+    });
+    const ss = sunriseSunset(doy, lat, lon, tz);
+    let tot = 0, lost = 0;
+    if (ss) for (let h = ss.rise + 0.25; h < ss.set; h += 0.5) {
+      const sp = sunPos(doy, h, lat, lon, tz);
+      if (sp.alt <= 1) continue;
+      const ce = Math.cos(sp.alt * RAD), wx = Math.sin(sp.azi * RAD) * ce, wy = Math.cos(sp.azi * RAD) * ce;
+      const d = [wx * ca - wy * sa, wx * sa + wy * ca, Math.sin(sp.alt * RAD)];   // the sun, in plan metres
+      pts.forEach(p => {
+        const w = p.n[0] * d[0] + p.n[1] * d[1];
+        if (w <= 0) return;
+        tot += w;
+        if (pl.rects.some(r => rayHitsBox([p.x, p.y, p.z], d, r, H0))) lost += w;
+      });
+    }
+    return (shadeCache[key] = tot > 0 ? 100 * lost / tot : 0);
+  }
   const SUN_DEC = noonSun(355), SUN_JUN = noonSun(172);   // site constants, CSV only
 
   /* --- the windows, as set on Windows & Shading ----------------------------
@@ -2444,7 +2605,8 @@ function buildSite(host) {
   };
   SCORES.site = () => ({ 'Olgyay fit /100':labScore().total, 'Form factor':+labFF().ff.toFixed(2),
     'Albedo fit /100':albedoFit(), 'Wall albedo':finishOf(G.col) ? +(1 - FINISH_ALPHA[finishOf(G.col).cls]).toFixed(2) : null,
-    'Window fit /100':winAim() ? winAim().fit : null });
+    'Window fit /100':winAim() ? winAim().fit : null,
+    'Plan form':G.form || 'rect', 'Own shade, winter %':Math.round(selfShade(355)), 'Own shade, summer %':Math.round(selfShade(172)) });
   /** Frame shared by the render and the pointer handlers; the shadow is clipped to the ring. */
   /* Isometric camera: the ground plane is viewed from the south-west at a
      30° tilt, so a world offset (x east, y north, z up) projects as
@@ -2452,18 +2614,41 @@ function buildSite(host) {
      circle becomes the ellipse the compass ring is drawn as; height simply
      lifts a point straight up the screen. */
   const ISO_C = Math.cos(30 * RAD), ISO_S = Math.sin(30 * RAD);
+  /** How far the plan reaches in front of the main facade on its centre
+      line, as local y — the bar's face, or a T stem or L wing standing in
+      front of it. The black arrow and its knob start there. */
+  const frontOf = () => Math.min.apply(null, planOf().rects.filter(r => r[0] <= 1e-6 && r[2] >= -1e-6).map(r => r[1]));
+  /** The vertex points, in local plan metres: the bar's corners that are
+      still corners of the outline, and each wing's free inner corner. */
+  const vertexHandles = () => {
+    const pl = planOf(), out = [];
+    const isVertex = (x, y) => pl.segs.some(sg => (Math.abs(sg.a[0] - x) < 1e-3 && Math.abs(sg.a[1] - y) < 1e-3) || (Math.abs(sg.b[0] - x) < 1e-3 && Math.abs(sg.b[1] - y) < 1e-3));
+    [[1, 1], [-1, 1], [-1, -1], [1, -1]].forEach(([sx, sy]) => {
+      if (isVertex(sx * G.L / 2, sy * G.D / 2)) out.push({ id:'bar', x:sx * G.L / 2, y:sy * G.D / 2 });
+    });
+    if (pl.rects.length > 1) {
+      const r = pl.rects[1], far = G.form === 'H' || G.wing.e >= 0 ? r[3] : r[1];
+      const x = G.form === 'T' ? r[2] : G.form === 'L' && G.wing.side < 0 ? r[2] : r[0];
+      out.push({ id:'wing', x, y:far });
+      /* an H hides the bar's corners inside its wings: its outer corner
+         stretches the bar and the wings' reach together */
+      if (G.form === 'H') out.push({ id:'barH', x:G.L / 2, y:G.D / 2 + Math.abs(G.wing.e) });
+    }
+    return out;
+  };
   const labFrame = (W, H) => {
     const cx = W / 2;
     const A = G.L * G.D;
     const Li = Math.sqrt(A * OI.r), Di = Math.sqrt(A / OI.r);
     const arr = Math.max(2.5, 0.3 * Math.min(G.L, G.D));
-    const half = Math.max(Math.hypot(G.L, G.D), Math.hypot(Li, Di)) / 2;
+    const reach = Math.max.apply(null, planOf().rects.map(r => Math.max(Math.hypot(r[0], r[1]), Math.hypot(r[2], r[1]), Math.hypot(r[0], r[3]), Math.hypot(r[2], r[3]))));
+    const half = Math.max(reach, Math.hypot(Li, Di) / 2);
     const need = half + arr + 1.5;             // world footprint radius, metres
     const Hgt = G.fl * G.fh;                    // world height to clear above the ring
     /* a phone-width canvas is taller, with its badges in a row across the
        top and a two-row key at the foot — the drawing sits between them */
     const narrow = W < 600;
-    const top = narrow ? 96 : 14, bottom = H - (narrow ? 46 : 34);
+    const top = narrow ? 148 : 14, bottom = H - (narrow ? 46 : 34);
     const availV = Math.max(40, bottom - top);
     const sByW = (W / 2 - 16) / (need * ISO_C * Math.SQRT2);
     const sByH = availV / (need * ISO_S * Math.SQRT2 * 2 + Hgt);
@@ -2479,6 +2664,7 @@ function buildSite(host) {
   const pillWin = el('span', { class:'pill ok' });
   host.appendChild(el('div', { class:'limitrow' }, [pillOri, pillForm, pillWin]));
   let refreshCol = () => {};   // the wall-colour pill, set up with its section below
+  let refreshShade = () => {};   // the plan-form pill, set up with the model below
   /** Largest and smallest window, named by the way they face (ties joined). */
   function refreshWin() {
     const ws = WIN_KEYS.map(f => ({ f, w:winOf(f) })).filter(o => o.w);
@@ -2505,6 +2691,7 @@ function buildSite(host) {
     else { pillForm.className = 'pill empty'; pillForm.textContent = t('Diagonal — settle the long axis east–west'); }
     refreshWin();
     refreshCol();
+    refreshShade();
   }
   host._refresh = () => refreshLab();   // the windows may have changed on Windows & Shading
 
@@ -2597,7 +2784,7 @@ function buildSite(host) {
   labPanel = makePanel(host, {
     title: 'Your plan against the optimum',
     note: 'Isometric view, tilted from the south-west. Drag the plan to stretch it, drag the black knob to turn it, drive the sun through its day below. The windows are the ones sized on Windows & Shading.',
-    heightFn: w => w < 600 ? Math.round(w * 1.2 + 70) : Math.round(w / 1.5),
+    heightFn: w => w < 600 ? Math.round(w * 1.2 + 122) : Math.round(w / 1.5),
     render(ctx, W, H) {
       const GREEN = '#16A34A', BLUE = '#2563EB', narrow = W < 600;
       const desk = labelDesk(ctx, W, H);   // every number is placed last, clear of the lines
@@ -2681,15 +2868,24 @@ function buildSite(host) {
       const Lsh = shadowLen(Hgt, sun.alt);
       const saz = (sun.azi + 180) * RAD;
       const ox = Lsh * Math.sin(saz), oy = Lsh * Math.cos(saz);
-      const scs = [[G.L/2, G.D/2], [-G.L/2, G.D/2], [-G.L/2, -G.D/2], [G.L/2, -G.D/2]]
-        .map(pt => rot(pt[0], pt[1], beta));
-      const hp = hull(scs.concat(scs.map(p => [p[0] + ox, p[1] + oy])));
+      const pl = planOf();
+      const cornersOf = r => [[r[0], r[1]], [r[2], r[1]], [r[2], r[3]], [r[0], r[3]]];
+      /* every piece throws its own shadow; one path, filled once, so where
+         they overlap the ground does not darken twice */
+      const partHulls = pl.rects.map(r => { const c = cornersOf(r).map(pt => rot(pt[0], pt[1], beta)); return hull(c.concat(c.map(p => [p[0] + ox, p[1] + oy]))); });
+      const scs = pl.rects.reduce((acc, r) => acc.concat(cornersOf(r).map(pt => rot(pt[0], pt[1], beta))), []);
+      const hp = hull(scs.concat(scs.map(p => [p[0] + ox, p[1] + oy])));   // the whole shadow's reach, for its label
       ctx.save();
       ringPath(ring(R * 0.985, 0)); ctx.clip();
-      const hpS = hp.map(p => proj(p[0], p[1], 0));
-      outline(hpS, true);
-      ctx.fillStyle = 'rgba(20,23,26,.13)'; ctx.fill();
-      stroke(ctx, 'rgba(20,23,26,.35)', 1); ctx.stroke();
+      ctx.beginPath();
+      partHulls.forEach(hh => {
+        const qs = hh.map(p => proj(p[0], p[1], 0));
+        qs.forEach((q, i) => i ? ctx.lineTo(q[0], q[1]) : ctx.moveTo(q[0], q[1]));
+        ctx.closePath();
+        desk.path(qs, true);
+      });
+      ctx.fillStyle = 'rgba(20,23,26,.13)'; ctx.fill('nonzero');
+      stroke(ctx, pl.rects.length > 1 ? 'rgba(20,23,26,.2)' : 'rgba(20,23,26,.35)', 1); ctx.stroke();
       ctx.restore();
       let far = scs[0], best = -1e9;
       scs.forEach(p => { const d = p[0] * ox + p[1] * oy; if (d > best) { best = d; far = p; } });
@@ -2704,7 +2900,7 @@ function buildSite(host) {
       }
       const tq = proj(far[0] + ox * tk, far[1] + oy * tk, 0);
 
-      // only the two faces the south-west camera can see get drawn on either box
+      // only the faces the south-west camera can see get drawn
       const camDir = { x:-1, y:-1 };
       const faceVerts = (L, D, beta, hgt) => {
         const local = [[L/2, D/2], [-L/2, D/2], [-L/2, -D/2], [L/2, -D/2]];
@@ -2738,65 +2934,141 @@ function buildSite(host) {
       };
       drawBoxOutline(Li, Di, OI.az - 180, Hgt, GREEN);
 
-      // the student's plan, extruded to its actual height
-      const drawBox = (L, D, beta, hgt) => {
-        const { base, baseS, topS } = faceVerts(L, D, beta, hgt);
-        for (let i = 0; i < 4; i++) {
-          const a = base[i], b = base[(i + 1) % 4];
-          const mx = (a[0] + b[0]) / 2, my = (a[1] + b[1]) / 2;
-          if (mx * camDir.x + my * camDir.y <= 0) continue;   // back-facing: hidden
-          const bottomA = baseS[i], bottomB = baseS[(i + 1) % 4];
-          const topA = topS[i], topB = topS[(i + 1) % 4];
-          outline([bottomA, bottomB, topB, topA], true);
-          ctx.fillStyle = wallFill(i % 2 === 0 ? 0.14 : 0.08, i % 2 === 0 ? 0.82 : 1);
-          ctx.fill();
-          stroke(ctx, CH.ink, 1.4); ctx.stroke();
-        }
-        outline(topS, true);
-        ctx.fillStyle = roofFill(0.05, 1); ctx.fill();
-        stroke(ctx, CH.ink, 2); ctx.stroke();
-      };
-      drawBox(G.L, G.D, beta, Hgt);
-      { const fv = faceVerts(G.L, G.D, beta, Hgt); desk.area(hull(fv.baseS.concat(fv.topS))); }   // labels keep off the volume
-
-      /* The windows, as sized on Windows & Shading, on the walls they belong
-         to. The two walls facing the camera show glass and mullions; the two
-         behind show dashed at their true place, as on Windows & Shading, so
-         no window vanishes behind the volume. */
+      /* The student's plan, extruded to its height: the outline's walls that
+         face the camera, farthest first; on each wall still in the sun, the
+         shadow the other pieces cast on it now; then the top over them. */
+      const sunL = (() => {   // the sun, in plan metres
+        const ce = Math.cos(sun.alt * RAD), wx = Math.sin(sun.azi * RAD) * ce, wy = Math.cos(sun.azi * RAD) * ce, a = beta * RAD;
+        return [wx * Math.cos(a) - wy * Math.sin(a), wx * Math.sin(a) + wy * Math.cos(a), Math.sin(sun.alt * RAD)];
+      })();
+      /* where each bar facade's window sits: the longest stretch of that
+         facade still on the outline, the window keeping its own size */
       const faceSeen = f => { const q = rot(WIN_NORM[f][0], WIN_NORM[f][1], beta); return q[0] * camDir.x + q[1] * camDir.y; };
       /** A point on local facade f: u along it from its middle, z up. */
       const onFace = (f, u, z) => {
         const l = f === 'S' ? [u, -G.D / 2] : f === 'N' ? [u, G.D / 2] : f === 'E' ? [G.L / 2, u] : [-G.L / 2, u];
         return at(l[0], l[1], beta, z);
       };
-      /** The facade's two ends along the ground, in local plan metres. */
-      const faceEnds = f => f === 'S' ? [[-G.L / 2, -G.D / 2], [G.L / 2, -G.D / 2]]
-        : f === 'N' ? [[-G.L / 2, G.D / 2], [G.L / 2, G.D / 2]]
-        : f === 'E' ? [[G.L / 2, -G.D / 2], [G.L / 2, G.D / 2]]
-        : [[-G.L / 2, -G.D / 2], [-G.L / 2, G.D / 2]];
+      const faceLine = f => f === 'S' ? -G.D / 2 : f === 'N' ? G.D / 2 : f === 'E' ? G.L / 2 : -G.L / 2;
+      const onLine = (sg, f) => { const n = WIN_NORM[f], k = (f === 'S' || f === 'N') ? 1 : 0;
+        return sg.n[0] === n[0] && sg.n[1] === n[1] && Math.abs(sg.a[k] - faceLine(f)) < 1e-3; };
+      /** The longest stretch of a bar facade still on the outline, as [u0, u1]. */
+      const exposed = f => {
+        const along = (f === 'S' || f === 'N') ? 0 : 1;
+        let bestU = null;
+        pl.segs.forEach(sg => {
+          if (!onLine(sg, f)) return;
+          const u0 = Math.min(sg.a[along], sg.b[along]), u1 = Math.max(sg.a[along], sg.b[along]);
+          if (!bestU || u1 - u0 > bestU[1] - bestU[0]) bestU = [u0, u1];
+        });
+        return bestU;
+      };
+      const winAt = {};
       WIN_KEYS.forEach(f => {
-        const w = winOf(f);
-        if (!w) return;
-        const hid = faceSeen(f) <= 1e-6;
-        const q = [onFace(f, -w.w / 2, w.sill), onFace(f, w.w / 2, w.sill), onFace(f, w.w / 2, w.head), onFace(f, -w.w / 2, w.head)];
+        const w = winOf(f), sp = exposed(f);
+        if (w && sp) winAt[f] = { uc:(sp[0] + sp[1]) / 2, ww:Math.min(w.w, 0.92 * (sp[1] - sp[0])), sp, w };
+      });
+      const drawWindow = (f, hid) => {
+        const wa = winAt[f];
+        if (!wa) return;
+        const { uc, ww, w } = wa;
+        const q = [onFace(f, uc - ww / 2, w.sill), onFace(f, uc + ww / 2, w.sill), onFace(f, uc + ww / 2, w.head), onFace(f, uc - ww / 2, w.head)];
         outline(q, true);
         ctx.fillStyle = hid ? 'rgba(37,99,235,.05)' : 'rgba(219,234,254,.92)'; ctx.fill();
         stroke(ctx, hid ? 'rgba(37,99,235,.6)' : BLUE, hid ? 1.1 : 1.4, hid ? [5, 4] : null); ctx.stroke();
         if (hid) return;
-        const n = Math.max(1, Math.round(w.w / 1.2));   // one pane to about every 1.2 m
+        const n = Math.max(1, Math.round(ww / 1.2));   // one pane to about every 1.2 m
         stroke(ctx, BLUE, 1);
         for (let k = 1; k < n; k++) {
-          const u = -w.w / 2 + k * w.w / n, a = onFace(f, u, w.sill), b = onFace(f, u, w.head);
+          const u = uc - ww / 2 + k * ww / n, a = onFace(f, u, w.sill), b = onFace(f, u, w.head);
           seg(ctx, a[0], a[1], b[0], b[1]); desk.line(a[0], a[1], b[0], b[1]);
         }
-      });
+      };
+      /** The shade the other pieces cast on a sunlit wall now: per column,
+          the height the shadow climbs to, found by halving; drawn as one
+          outline per shaded run so its edge reads as a line, not steps. */
+      const castShade = (w, hgt) => {
+        const nU = Math.max(4, Math.ceil(w.sg.len / 0.25));
+        const shadedAt = (tm, z) => {
+          const px0 = w.sg.a[0] + (w.sg.b[0] - w.sg.a[0]) * tm + w.sg.n[0] * 0.05, py0 = w.sg.a[1] + (w.sg.b[1] - w.sg.a[1]) * tm + w.sg.n[1] * 0.05;
+          return pl.rects.some(r => rayHitsBox([px0, py0, z], sunL, r, hgt));
+        };
+        const tops = [];
+        for (let i = 0; i < nU; i++) {
+          const tm = (i + 0.5) / nU;
+          if (!shadedAt(tm, 0.02)) { tops.push(0); continue; }
+          let lo = 0.02, hi = hgt;
+          if (shadedAt(tm, hgt - 0.01)) { tops.push(hgt); continue; }
+          for (let k = 0; k < 12; k++) { const mz = (lo + hi) / 2; if (shadedAt(tm, mz)) lo = mz; else hi = mz; }
+          tops.push(lo);
+        }
+        const P = (t, z) => proj(w.a[0] + (w.b[0] - w.a[0]) * t, w.a[1] + (w.b[1] - w.a[1]) * t, z);
+        ctx.fillStyle = 'rgba(20,23,26,.30)';
+        let i = 0;
+        while (i < nU) {
+          if (!tops[i]) { i++; continue; }
+          let j = i;
+          while (j + 1 < nU && tops[j + 1]) j++;
+          const ptsTop = [];
+          for (let k = i; k <= j; k++) ptsTop.push(P((k + 0.5) / nU, tops[k]));
+          const t0 = i / nU, t1 = (j + 1) / nU;
+          const poly = [P(t0, 0), P(t1, 0), P(t1, tops[j])].concat(ptsTop.reverse()).concat([P(t0, tops[i])]);
+          ctx.beginPath(); poly.forEach((c, m) => m ? ctx.lineTo(c[0], c[1]) : ctx.moveTo(c[0], c[1])); ctx.closePath(); ctx.fill();
+          i = j + 1;
+        }
+      };
+      const drawPlan = hgt => {
+        pl.segs.map(sg => {
+          const nW = rot(sg.n[0], sg.n[1], beta), a = rot(sg.a[0], sg.a[1], beta), b = rot(sg.b[0], sg.b[1], beta);
+          return { sg, nW, a, b, depth:(a[0] + b[0] + a[1] + b[1]) / 2 };
+        }).filter(w => w.nW[0] * camDir.x + w.nW[1] * camDir.y > 1e-6)
+          .sort((p, q) => q.depth - p.depth)
+          .forEach(w => {
+            const q = [proj(w.a[0], w.a[1], 0), proj(w.b[0], w.b[1], 0), proj(w.b[0], w.b[1], hgt), proj(w.a[0], w.a[1], hgt)];
+            outline(q, true);
+            const ns = w.sg.n[1] !== 0;   // local north/south walls a touch darker, as the bar always drew them
+            ctx.fillStyle = wallFill(ns ? 0.14 : 0.08, ns ? 0.82 : 1);
+            ctx.fill();
+            stroke(ctx, CH.ink, 1.4); ctx.stroke();
+            /* the wall's own window, before any nearer wall covers it and
+               under the shade that falls on it */
+            WIN_KEYS.forEach(f => {
+              const wa = winAt[f];
+              if (!wa || !onLine(w.sg, f)) return;
+              const k = (f === 'S' || f === 'N') ? 0 : 1, u0 = Math.min(w.sg.a[k], w.sg.b[k]), u1 = Math.max(w.sg.a[k], w.sg.b[k]);
+              if (wa.uc >= u0 - 1e-3 && wa.uc <= u1 + 1e-3) drawWindow(f, false);
+            });
+            if (pl.rects.length > 1 && sun.alt > 0.5 && w.sg.n[0] * sunL[0] + w.sg.n[1] * sunL[1] > 0) castShade(w, hgt);
+          });
+        ctx.beginPath();
+        pl.cells.forEach(c => {
+          cornersOf(c).map(pt => at(pt[0], pt[1], beta, hgt)).forEach((q, i) => i ? ctx.lineTo(q[0], q[1]) : ctx.moveTo(q[0], q[1]));
+          ctx.closePath();
+        });
+        ctx.fillStyle = roofFill(0.05, 1); ctx.fill('nonzero');
+        stroke(ctx, CH.ink, 2);
+        pl.segs.forEach(sg => { const a = at(sg.a[0], sg.a[1], beta, hgt), b = at(sg.b[0], sg.b[1], beta, hgt); seg(ctx, a[0], a[1], b[0], b[1]); desk.line(a[0], a[1], b[0], b[1]); });
+      };
+      drawPlan(Hgt);
+      desk.area(hull(scs.map(p => proj(p[0], p[1], 0)).concat(scs.map(p => proj(p[0], p[1], Hgt)))));   // labels keep off the volume
 
-      /* Dimension lines on the two walls facing the camera: extension lines
-         off the corners, the line 0.9 m out, architect's ticks at the ends;
-         the numbers go beside the line, placed at the end with the rest. */
+      /* The windows, as sized on Windows & Shading: the ones on walls facing
+         the camera went on with their walls; the ones behind show dashed at
+         their true place, as on Windows & Shading, so no window vanishes
+         behind the volume. Where a wing meets the bar a window keeps its
+         size and moves to the longest stretch of that wall still outside. */
+      WIN_KEYS.forEach(f => { if (faceSeen(f) <= 1e-6) drawWindow(f, true); });
+
+      /* Dimension lines on the two sides of the plan's overall extent that
+         face the camera: extension lines, the line 0.9 m out, architect's
+         ticks at the ends; the numbers go beside the line, placed at the end
+         with the rest. For a plain bar the extent is the bar itself. */
+      const bb = pl.bbox;
+      const sideOf = { S:[[bb[0], bb[1]], [bb[2], bb[1]]], N:[[bb[0], bb[3]], [bb[2], bb[3]]],
+        E:[[bb[2], bb[1]], [bb[2], bb[3]]], W:[[bb[0], bb[1]], [bb[0], bb[3]]] };
       const dims = [];
       const dimLine = f => {
-        const [p0, p1] = faceEnds(f), n = WIN_NORM[f], off = 0.9;
+        const [p0, p1] = sideOf[f], n = WIN_NORM[f], off = 0.9;
         const P = (p, d) => at(p[0] + n[0] * d, p[1] + n[1] * d, beta, 0);
         stroke(ctx, CH.ink2, 1);
         [p0, p1].forEach(p => { const e0 = P(p, 0.25), e1 = P(p, off + 0.35); seg(ctx, e0[0], e0[1], e1[0], e1[1]); desk.line(e0[0], e0[1], e1[0], e1[1]); });
@@ -2807,7 +3079,7 @@ function buildSite(host) {
         const tx = (ux + uy) * 4.2 * Math.SQRT1_2, ty = (uy - ux) * 4.2 * Math.SQRT1_2;   // the 45° slash
         stroke(ctx, CH.ink, 1.4);
         [A, B].forEach(Q => seg(ctx, Q[0] - tx, Q[1] - ty, Q[0] + tx, Q[1] + ty));
-        dims.push({ f, A, B, len:(f === 'S' || f === 'N') ? G.L : G.D });
+        dims.push({ f, A, B, len:(f === 'S' || f === 'N') ? bb[2] - bb[0] : bb[3] - bb[1] });
       };
       const fL = faceSeen('S') >= faceSeen('N') ? 'S' : 'N', fD = faceSeen('E') >= faceSeen('W') ? 'E' : 'W';
       dimLine(fL); dimLine(fD);
@@ -2820,18 +3092,28 @@ function buildSite(host) {
         return { a, b };
       };
       const ga = normalArrow(Li, Di, OI.az - 180, GREEN, true);
-      const sa = normalArrow(G.L, G.D, beta, CH.ink, false);
+      const sa = normalArrow(G.L, -2 * frontOf(), beta, CH.ink, false);   // from the plan's front, wings included
       // the rotation knob: a black dot on the student's arrow-tip
       ctx.fillStyle = '#fff';
       ctx.beginPath(); ctx.arc(sa.b[0], sa.b[1], 9, 0, 6.284); ctx.fill();
       ctx.fillStyle = CH.ink;
       ctx.beginPath(); ctx.arc(sa.b[0], sa.b[1], 5.5, 0, 6.284); ctx.fill();
       desk.block(sa.b[0] - 11, sa.b[1] - 11, sa.b[0] + 11, sa.b[1] + 11);
+      /* the vertex points: black dots on the plan's corners at the eaves —
+         the bar's to stretch it, each wing's free inner corner to size the
+         wing and swing it in front of or behind the bar */
+      const hvs = vertexHandles().map(h => Object.assign({ q:at(h.x, h.y, beta, Hgt) }, h));
+      hvs.forEach(h => {
+        ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(h.q[0], h.q[1], 7.5, 0, 6.284); ctx.fill();
+        stroke(ctx, CH.ink, 1); ctx.stroke();
+        ctx.fillStyle = CH.ink; ctx.beginPath(); ctx.arc(h.q[0], h.q[1], 4.2, 0, 6.284); ctx.fill();
+        desk.block(h.q[0] - 9, h.q[1] - 9, h.q[0] + 9, h.q[1] + 9);
+      });
 
       // readout, the rule for the windows, and the score badges
-      const readout = fmt(A, 0) + ' m² · 1 : ' + fmt(labRatio(), 2) + ' · Δ ' + fmt(circDev(G.rot, OI.az), 0) + '°'
+      const readout = fmt(planOf().area, 0) + ' m² · 1 : ' + fmt(labRatio(), 2) + ' · Δ ' + fmt(circDev(G.rot, OI.az), 0) + '°'
         + ' · H ' + fmt(G.fl * G.fh, 1) + ' m · ' + t(SH.key) + ' ' + fmt(SH.h, 2) + ' h';
-      const ry = narrow ? 64 : 12, rf = narrow ? FM(9.5) : FM(11);
+      const ry = narrow ? 116 : 12, rf = narrow ? FM(9.5) : FM(11);
       label(ctx, readout, 8, ry, CH.ink2, rf, 'left', 'middle');
       desk.block(4, ry - 9, 12 + desk.measure(readout, rf).w, ry + 9);
       const rule = lat < 0 ? 'Larger windows face north, smaller ones south' : 'Larger windows face south, smaller ones north';
@@ -2839,9 +3121,9 @@ function buildSite(host) {
       desk.block(4, ry + 9, 12 + desk.measure(rule, F(10.5, '600')).w, ry + 26);
       /* Five badges down the right edge, or in one row across the top of a
          phone-width canvas. */
-      const bw = narrow ? Math.min(84, (W - 8 - 16) / 5) : 84, bh = narrow ? 46 : 52;
+      const bw = narrow ? Math.min(100, (W - 16) / 3) : 84, bh = narrow ? 46 : 52;
       const badge = (i, v, cap, col, capSize) => {
-        const bx = narrow ? 4 + i * (bw + 4) : W - 92, by = narrow ? 4 : 6 + i * 58;
+        const bx = narrow ? 4 + (i % 3) * (bw + 4) : W - 92, by = narrow ? 4 + Math.floor(i / 3) * (bh + 4) : 6 + i * 58;
         ctx.fillStyle = '#fff';
         ctx.fillRect(bx, by, bw, bh);
         stroke(ctx, col, 1.5); ctx.strokeRect(bx, by, bw, bh);
@@ -2863,6 +3145,9 @@ function buildSite(host) {
       const aim = winAim();
       badge(4, aim ? String(aim.fit) : '–', t('Window fit') + ' /100',
         !aim ? CH.faint : aim.fit >= 80 ? GREEN : aim.fit >= 50 ? '#D97706' : '#DC2626');
+      // the plan form: the winter sun its own wings take off its walls
+      const shW = Math.round(selfShade(355));
+      badge(5, String(shW), t('Own shade · winter %'), shW <= 5 ? GREEN : shW <= 15 ? '#D97706' : '#DC2626');
       swatchKey(ctx, 8, H - 30,
         [{ color:CH.ink, label:'Your plan' }, { color:GREEN, label:'Olgyay optimum' }, { color:BLUE, label:'Windows' },
          { color:'#D97706', label:'Sun' }, { color:'rgba(20,23,26,.45)', label:'Shadow' }],
@@ -2879,15 +3164,27 @@ function buildSite(host) {
       /* Each window's tag: the way that facade really faces, then the window
          itself in metres. Walls facing the camera carry it beside their
          dimension line; walls behind, beside their eave line. */
+      const onBox = { S:Math.abs(bb[1] + G.D / 2) < 1e-3, N:Math.abs(bb[3] - G.D / 2) < 1e-3, E:Math.abs(bb[2] - G.L / 2) < 1e-3, W:Math.abs(bb[0] + G.L / 2) < 1e-3 };
       WIN_KEYS.forEach(f => {
-        const w = winOf(f);
-        const txt = faceDir(f) + ' · ' + (w ? t('window') + ' ' + fmt(w.w, 1) + ' × ' + fmt(w.h, 1) + ' m · ' + fmt(w.wwr * 100, 0) + ' %' : t('no window'));
-        const font = F(10, '600'), col = w ? BLUE : CH.muted;
-        const d = dims.find(o => o.f === f);
-        const cands = d ? desk.beside(txt, font, d.A, d.B, mid, FR, 3, 3)
-          : (() => { const e = faceEnds(f); return desk.beside(txt, font, at(e[0][0], e[0][1], beta, Hgt), at(e[1][0], e[1][1], beta, Hgt), midTop, FR, 4, 3); })();
+        const w = winOf(f), wa = winAt[f], sp = exposed(f);
+        if (!sp) return;   // a facade the wings have swallowed whole
+        const txt = faceDir(f) + ' · ' + (w && wa ? t('window') + ' ' + fmt(wa.ww, 1) + ' × ' + fmt(w.h, 1) + ' m · ' + fmt(w.wwr * 100, 0) + ' %' : t('no window'));
+        const font = F(10, '600'), col = w && wa ? BLUE : CH.muted;
+        const hid = faceSeen(f) <= 1e-6, zt = hid ? Hgt : 0;
+        const d = onBox[f] ? dims.find(o => o.f === f) : null;
+        const cands = (d ? desk.beside(txt, font, d.A, d.B, mid, FR, 3, 3) : [])
+          .concat(desk.beside(txt, font, onFace(f, sp[0], zt), onFace(f, sp[1], zt), hid ? midTop : mid, FR, hid ? 4 : 12, 3));
         desk.place(txt, cands, col, font);
       });
+      /* the wing's own size, beside its point */
+      if (G.form && G.form !== 'rect' && G.wing) {
+        const h = hvs.find(o => o.id === 'wing');
+        if (h) {
+          const txt = t('wing') + ' ' + fmt(G.wing.w, 1) + ' × ' + fmt(Math.abs(G.wing.e), 1) + ' m';
+          desk.place(txt, [[h.q[0] + 12, h.q[1] - 10, 'left'], [h.q[0] - 12, h.q[1] - 10, 'right'], [h.q[0] + 12, h.q[1] + 10, 'left'],
+            [h.q[0] - 12, h.q[1] + 10, 'right'], [h.q[0], h.q[1] - 18, 'center'], [h.q[0], h.q[1] + 18, 'center']], CH.ink, FM(10, '600'));
+        }
+      }
       {
         const ux = ga.b[0] - ga.a[0], uy = ga.b[1] - ga.a[1], ul = Math.hypot(ux, uy) || 1;
         const m = desk.measure('Olgyay optimum', F(10, '600'));
@@ -2938,6 +3235,12 @@ function buildSite(host) {
         return ['Window ' + f + (f === 'S' ? ' (main facade)' : '') + ' — faces ' + COMPASS8_EN[Math.round(faceAz(f) / 45) % 8] + ', w × h (m)',
           w ? +w.w.toFixed(2) + ' × ' + +w.h.toFixed(2) : 'none']; }))
       .concat([['Window fit (0–100)', winAim() ? winAim().fit : ''],
+      ['Plan form', G.form || 'rect'],
+      ['Wing width × reach (m)', G.wing && G.form !== 'rect' ? G.wing.w + ' × ' + G.wing.e + (G.form === 'L' ? (G.wing.side > 0 ? ' (east end)' : ' (west end)') : '') : ''],
+      ['Plan area (m²)', +planOf().area.toFixed(1)],
+      ['Outline perimeter (m)', +planOf().perimeter.toFixed(1)],
+      ['Own shade on the walls, 21 Dec (%)', +selfShade(355).toFixed(1)],
+      ['Own shade on the walls, 21 Jun (%)', +selfShade(172).toFixed(1)],
       ['Floors above ground', G.fl],
       ['Floor height (m)', +G.fh.toFixed(1)],
       ['Building height (m)', +(G.fl * G.fh).toFixed(1)],
@@ -2953,6 +3256,39 @@ function buildSite(host) {
       ['Köppen–Geiger', STATE.clim.k.code]]));
     }
   });
+  /* --- break the volume: the plan form, on a bar right above the model ---
+     Each form starts from wings sized to the bar; the black points then
+     reshape them on the model itself. */
+  const formDefaults = {
+    L:() => ({ w:clamp(Math.round(G.L * 0.35), 3, 6), e:Math.round(G.D * 0.75), side:1 }),
+    T:() => ({ w:clamp(Math.round(G.L * 0.3), 3, 5), e:Math.round(G.D * 0.75), side:1 }),
+    H:() => ({ w:clamp(Math.round(G.L * 0.25), 3, 4), e:Math.round(G.D * 0.5), side:1 })
+  };
+  const mirrorBtn = el('button', { class:'btn small', text:'Mirror the L', onclick:() => { if (G.wing) { G.wing.side = -G.wing.side; labDraw(); } } });
+  const cForm = segCtl('Break the volume', [{ value:'rect', label:'▭' }, { value:'L', label:'L' }, { value:'T', label:'T' }, { value:'H', label:'H' }],
+    G.form || 'rect', v => {
+      G.form = v;
+      G.wing = v === 'rect' ? null : formDefaults[v]();
+      fixWing(G);
+      mirrorBtn.hidden = v !== 'L';
+      labDraw();
+    });
+  mirrorBtn.hidden = G.form !== 'L';
+  labPanel.body.insertBefore(el('div', { class:'controls', style:'margin:0 0 8px' },
+    [cForm, mirrorBtn, el('span', { class:'hint', text:t('Drag the black points on the model to reshape the plan') })]), labPanel.body.firstChild);
+  const pillShade = el('span', { class:'pill empty' });
+  host.appendChild(el('div', { class:'limitrow' }, [pillShade]));
+  refreshShade = () => {
+    const pl = planOf();
+    if (pl.rects.length < 2) { pillShade.className = 'pill empty'; pillShade.textContent = t('A plain bar casts no shade on itself — break the volume to test an L, T or H'); return; }
+    const w = Math.round(selfShade(355)), su = Math.round(selfShade(172));
+    pillShade.className = 'pill ' + (w <= 5 ? 'ok' : w <= 15 ? 'empty' : 'bad');
+    pillShade.textContent = G.form + ' · ' + t('its wings take') + ' ' + w + ' % ' + t('of the winter sun off its walls and give') + ' ' + su + ' % ' + t('summer shade') +
+      ' · FF ' + fmt(labFF().ff, 2) + ' · ' + fmt(pl.area, 0) + ' m²';
+  };
+  refreshShade();
+  host.appendChild(hint('site-form',
+    'Break the volume with the buttons above the model: an <b>L</b> adds a wing at one end, a <b>T</b> one at the middle, an <b>H</b> one at each end reaching both ways. The black points on the model are its vertices — drag the bar’s corners to stretch it, and a wing’s free corner to size the wing and swing it behind the bar or in front of the main facade; <b>Mirror the L</b> moves its wing to the other end. A broken plan changes two things the badges read at once. <b>Own shade · winter %</b> is the share of the 21 December sun on the walls that the building takes off itself — every wall sampled every 0.75 m at three heights, the sun every half hour, each sample weighed by how squarely the sun meets it, and counted lost when the ray back to the sun meets any wing (eaves height; pitched roofs shade a little more). The same test on 21 June gives the summer shade in the pill: wings that shade an east or west wall in summer earn it, wings that shade the main facade in winter cost it. <b>Form factor</b> is recalculated for the whole outline — walls to the eaves round its perimeter, the roof over its area at the pitch set on Roof, the roof space estimated wing by wing — so a break almost always raises it: more envelope for the same volume. The Olgyay fit still reads the bar. Roof, Windows &amp; Shading and Ventilation keep working on the bar; the wings go into the 3D export.'));
   host.appendChild(hint('ori-score',
     'The badge is a didactic index, not an energy prediction: 60 % orientation — full marks on the green normal, zero at 90° off — plus 40 % form — closeness to the 1:X elongation, discounted for square, diagonal and north–south plans. Two plans can share a score and behave differently; read it with the pills.'));
   host.appendChild(hint('ori-height',
@@ -2988,7 +3324,8 @@ function buildSite(host) {
   const knobPlan = () => {
     const a = (G.rot - 180) * RAD, c = Math.cos(a), q = Math.sin(a);
     const arr = Math.max(2.5, 0.3 * Math.min(G.L, G.D));
-    return { x:(-G.D / 2) * q + (-q) * arr, y:(-G.D / 2) * c + (-c) * arr };
+    const fy = frontOf();
+    return { x:fy * q + (-q) * arr, y:fy * c + (-c) * arr };
   };
   /** 'rotate' on the knob, 'stretch' anywhere on the body's visible walls, null elsewhere. */
   const hitAt = (clientX, clientY) => {
@@ -2998,6 +3335,12 @@ function buildSite(host) {
     const k = knobPlan();
     const kx = F.cx + (k.x - k.y) * ISO_C * F.s, ky = F.cy - (k.x + k.y) * ISO_S * F.s;
     if (Math.hypot(px - kx, py - ky) <= 15) return 'rotate';
+    const a = (G.rot - 180) * RAD, Hh = G.fl * G.fh;
+    for (const h of vertexHandles()) {
+      const wx = h.x * Math.cos(a) + h.y * Math.sin(a), wy = -h.x * Math.sin(a) + h.y * Math.cos(a);
+      const hx = F.cx + (wx - wy) * ISO_C * F.s, hy = F.cy - (wx + wy) * ISO_S * F.s - Hh * F.s;
+      if (Math.hypot(px - hx, py - hy) <= 12) return 'vertex:' + h.id;
+    }
     for (const z of [0, G.fl * G.fh]) {
       const p = toPlanZ(px, py, z);
       const l = toLocal(p.x, p.y);
@@ -3015,6 +3358,8 @@ function buildSite(host) {
     if (h === 'rotate') {
       const az = (Math.atan2(p.x, p.y) / RAD + 360) % 360;
       drag = { kind:'rotate', off:((az - G.rot) % 360 + 540) % 360 - 180 };
+    } else if (h.startsWith('vertex:')) {
+      drag = { kind:'vertex', id:h.slice(7) };
     } else {
       const l = toLocal(p.x, p.y);
       drag = { kind:'stretch', L0:G.L, D0:G.D, e0:2 * Math.abs(l.u), f0:2 * Math.abs(l.v) };
@@ -3025,7 +3370,7 @@ function buildSite(host) {
   cv.addEventListener('pointermove', ev => {
     if (!drag) {
       const h = hitAt(ev.clientX, ev.clientY);
-      cv.style.cursor = h === 'rotate' ? 'grab' : h === 'stretch' ? 'nwse-resize' : 'default';
+      cv.style.cursor = h === 'rotate' ? 'grab' : h === 'stretch' ? 'nwse-resize' : h ? 'move' : 'default';
       return;
     }
     ev.preventDefault();
@@ -3035,6 +3380,28 @@ function buildSite(host) {
       const az = (Math.atan2(p.x, p.y) / RAD + 360) % 360;
       G.rot = Math.round((((az - drag.off) % 360) + 360) % 360);
       syncCtl(cR, G.rot, v => fmt(v, 0) + '°');
+    } else if (drag.kind === 'vertex') {
+      /* a vertex point follows the pointer at the eaves, where it is drawn */
+      const q = toPlanZ(ev.clientX - r.left, ev.clientY - r.top, G.fl * G.fh), l = toLocal(q.x, q.y);
+      const half = v => Math.round(v * 2) / 2;
+      if (drag.id === 'bar') {
+        G.L = half(clamp(2 * Math.abs(l.u), 6, 24));
+        G.D = half(clamp(2 * Math.abs(l.v), 4, 16));
+        syncCtl(cL, G.L, v => fmt(v, 1) + ' m');
+        syncCtl(cD, G.D, v => fmt(v, 1) + ' m');
+      } else if (drag.id === 'barH') {
+        G.L = half(clamp(2 * Math.abs(l.u), 6, 24));
+        G.wing.e = Math.max(2, Math.abs(l.v) - G.D / 2);
+        syncCtl(cL, G.L, v => fmt(v, 1) + ' m');
+      } else {
+        const wg = G.wing;
+        const reach = l.v >= 0 ? Math.max(2, l.v - G.D / 2) : -Math.max(2, -l.v - G.D / 2);
+        if (G.form === 'L') wg.w = G.L / 2 - wg.side * l.u;
+        else if (G.form === 'T') wg.w = 2 * Math.abs(l.u);
+        else wg.w = G.L / 2 - Math.abs(l.u);
+        wg.e = G.form === 'H' ? Math.abs(reach) : reach;
+      }
+      fixWing(G);
     } else {
       const l = toLocal(p.x, p.y);
       G.L = Math.round(clamp(drag.L0 + (2 * Math.abs(l.u) - drag.e0), 6, 24) * 2) / 2;
@@ -6474,52 +6841,146 @@ function exportModel() {
   const FNAME = { S:'South', N:'North', E:'East', W:'West' };
   const fp = (f, u, v) => f === 'S' ? [u, -D / 2, v] : f === 'N' ? [u, D / 2, v] : f === 'E' ? [L / 2, u, v] : [-L / 2, u, v];
   const off = (p, n, d) => [p[0] + n[0] * d, p[1] + n[1] * d, p[2]];
-  ['S', 'N', 'E', 'W'].forEach(f => {
-    const W = f === 'S' || f === 'N' ? L : D, n = FN[f], o = OPEN[f];
-    const top = u => f === 'S' ? topZ(-D / 2) : f === 'N' ? topZ(D / 2) : topZ(u);
-    const crest = (f === 'E' || f === 'W') ? [W / 2, 0, -W / 2] : [W / 2, -W / 2];
-    const rect = (u0, u1, v0, v1) => [[fp(f, u0, v0), fp(f, u1, v0), fp(f, u1, v1), fp(f, u0, v1)], n];
-    const sill = o.sillZ != null ? o.sillZ : 0.9, h = Math.max(0.3, (o.headZ != null ? o.headZ : 2.1) - sill);
-    const w = Math.min(W * 0.92, (o.wwr || 0) * W * H0 / h);
-    const faces = [];
-    if (!(w > 0.01)) faces.push([[fp(f, -W / 2, 0), fp(f, W / 2, 0)].concat(crest.map(u => fp(f, u, top(u)))), n]);
-    else {
-      const u0 = -w / 2, u1 = w / 2, v0 = sill, v1 = Math.min(sill + h, H0);
-      faces.push(rect(-W / 2, W / 2, 0, v0), rect(-W / 2, u0, v0, v1), rect(u1, W / 2, v0, v1));
-      faces.push([[fp(f, -W / 2, v1), fp(f, W / 2, v1)].concat(crest.map(u => fp(f, u, top(u)))), n]);
-      add('window', FNAME[f] + ' window', 'AA-GLAZING', [rect(u0, u1, v0, v1)],
-        { width:w, height:v1 - v0, wwr:o.wwr, facade:f });
-      if (o.ovD > 0) {
-        const vs = o.ovN <= 1 ? [v1] : Array.from({ length:o.ovN }, (_, i) => v0 + (v1 - v0) * (i / (o.ovN - 1)));
-        vs.forEach((vt, i) => add('shading', FNAME[f] + (o.ovN > 1 ? ' louvre ' + (i + 1) : ' overhang'), 'AA-SHADING',
-          [[[fp(f, u0, vt), fp(f, u1, vt), off(fp(f, u1, vt), n, o.ovD), off(fp(f, u0, vt), n, o.ovD)], [0, 0, 1]]],
-          { device:o.ovN > 1 ? 'Louvre' : 'Overhang', depth:o.ovD }));
-      }
-      if (o.finN > 0 && o.finD > 0) {
-        const lo = o.finSide === 'right' ? 0 : u0, hi = o.finSide === 'left' ? 0 : u1;
-        const us = o.finN === 1 ? [o.finSide === 'both' ? (lo + hi) / 2 : (o.finSide === 'right' ? hi : lo)]
-          : Array.from({ length:o.finN }, (_, i) => lo + (hi - lo) * (i / (o.finN - 1)));
-        const side = f === 'S' || f === 'N' ? [1, 0, 0] : [0, 1, 0];
-        us.forEach((uF, i) => add('shading', FNAME[f] + ' fin ' + (i + 1), 'AA-SHADING',
-          [[[fp(f, uF, v0), off(fp(f, uF, v0), n, o.finD), off(fp(f, uF, v1), n, o.finD), fp(f, uF, v1)], side]],
-          { device:'Fin', depth:o.finD }));
-      }
-    }
-    add('wall', FNAME[f] + ' wall', 'AA-WALLS', faces, { facade:f, finish:finishOf(G.col) });
-  });
-
-  /* roof planes and the ground floor */
   const up = [0, 0, 1];
-  const roofFaces = RF.n === 0 ? [[[[-L/2,-D/2,H0],[L/2,-D/2,H0],[L/2,D/2,H0],[-L/2,D/2,H0]], up]]
-    : RF.n === 1 ? [[[[-L/2,-D/2,H0],[L/2,-D/2,H0],[L/2,D/2,ridge],[-L/2,D/2,ridge]], [0,-1,1]]]
-    : RF.n === 2 ? [[[[-L/2,-D/2,H0],[L/2,-D/2,H0],[L/2,0,ridge],[-L/2,0,ridge]], [0,-1,1]],
-                    [[[L/2,D/2,H0],[-L/2,D/2,H0],[-L/2,0,ridge],[L/2,0,ridge]], [0,1,1]]]
-    : [[[[-L/2,-D/2,H0],[L/2,-D/2,H0]].concat(rl > 0 ? [[rl,0,ridge],[-rl,0,ridge]] : [[0,0,ridge]]), [0,-1,1]],
-       [[[L/2,D/2,H0],[-L/2,D/2,H0]].concat(rl > 0 ? [[-rl,0,ridge],[rl,0,ridge]] : [[0,0,ridge]]), [0,1,1]],
-       [[[L/2,-D/2,H0],[L/2,D/2,H0],[rl,0,ridge]], [1,0,1]], [[[-L/2,D/2,H0],[-L/2,-D/2,H0],[-rl,0,ridge]], [-1,0,1]]];
-  add('roof', ['Flat', 'Shed', 'Gable', 'Hip'][RF.n] + ' roof', 'AA-ROOF', roofFaces,
-    { roofType:['FLAT_ROOF', 'SHED_ROOF', 'GABLE_ROOF', 'HIP_ROOF'][RF.n], pitch:RF.n === 0 ? 0 : RF.th });
-  add('slab', 'Ground floor', 'AA-FLOOR', [[[[-L/2,-D/2,0],[L/2,-D/2,0],[L/2,D/2,0],[-L/2,D/2,0]], [0,0,-1]]]);
+  const rects = planRects(G);
+  /** A window with its shading, on facade f of the bar, centred at uc along
+      it and ww wide — the same devices, by the same rules, whatever the plan. */
+  const windowAndShading = (f, uc, ww, v0, v1, o) => {
+    const n = FN[f], u0 = uc - ww / 2, u1 = uc + ww / 2;
+    const rect = (a0, a1, b0, b1) => [[fp(f, a0, b0), fp(f, a1, b0), fp(f, a1, b1), fp(f, a0, b1)], n];
+    add('window', FNAME[f] + ' window', 'AA-GLAZING', [rect(u0, u1, v0, v1)], { width:ww, height:v1 - v0, wwr:o.wwr, facade:f });
+    if (o.ovD > 0) {
+      const vs = o.ovN <= 1 ? [v1] : Array.from({ length:o.ovN }, (_, i) => v0 + (v1 - v0) * (i / (o.ovN - 1)));
+      vs.forEach((vt, i) => add('shading', FNAME[f] + (o.ovN > 1 ? ' louvre ' + (i + 1) : ' overhang'), 'AA-SHADING',
+        [[[fp(f, u0, vt), fp(f, u1, vt), off(fp(f, u1, vt), n, o.ovD), off(fp(f, u0, vt), n, o.ovD)], [0, 0, 1]]],
+        { device:o.ovN > 1 ? 'Louvre' : 'Overhang', depth:o.ovD }));
+    }
+    if (o.finN > 0 && o.finD > 0) {
+      const lo = o.finSide === 'right' ? uc : u0, hi = o.finSide === 'left' ? uc : u1;
+      const us = o.finN === 1 ? [o.finSide === 'both' ? (lo + hi) / 2 : (o.finSide === 'right' ? hi : lo)]
+        : Array.from({ length:o.finN }, (_, i) => lo + (hi - lo) * (i / (o.finN - 1)));
+      const side = f === 'S' || f === 'N' ? [1, 0, 0] : [0, 1, 0];
+      us.forEach((uF, i) => add('shading', FNAME[f] + ' fin ' + (i + 1), 'AA-SHADING',
+        [[[fp(f, uF, v0), off(fp(f, uF, v0), n, o.finD), off(fp(f, uF, v1), n, o.finD), fp(f, uF, v1)], side]],
+        { device:'Fin', depth:o.finD }));
+    }
+  };
+  if (rects.length < 2) {
+    ['S', 'N', 'E', 'W'].forEach(f => {
+      const W = f === 'S' || f === 'N' ? L : D, n = FN[f], o = OPEN[f];
+      const top = u => f === 'S' ? topZ(-D / 2) : f === 'N' ? topZ(D / 2) : topZ(u);
+      const crest = (f === 'E' || f === 'W') ? [W / 2, 0, -W / 2] : [W / 2, -W / 2];
+      const rect = (u0, u1, v0, v1) => [[fp(f, u0, v0), fp(f, u1, v0), fp(f, u1, v1), fp(f, u0, v1)], n];
+      const sill = o.sillZ != null ? o.sillZ : 0.9, h = Math.max(0.3, (o.headZ != null ? o.headZ : 2.1) - sill);
+      const w = Math.min(W * 0.92, (o.wwr || 0) * W * H0 / h);
+      const faces = [];
+      if (!(w > 0.01)) faces.push([[fp(f, -W / 2, 0), fp(f, W / 2, 0)].concat(crest.map(u => fp(f, u, top(u)))), n]);
+      else {
+        const u0 = -w / 2, u1 = w / 2, v0 = sill, v1 = Math.min(sill + h, H0);
+        faces.push(rect(-W / 2, W / 2, 0, v0), rect(-W / 2, u0, v0, v1), rect(u1, W / 2, v0, v1));
+        faces.push([[fp(f, -W / 2, v1), fp(f, W / 2, v1)].concat(crest.map(u => fp(f, u, top(u)))), n]);
+        add('window', FNAME[f] + ' window', 'AA-GLAZING', [rect(u0, u1, v0, v1)],
+          { width:w, height:v1 - v0, wwr:o.wwr, facade:f });
+        if (o.ovD > 0) {
+          const vs = o.ovN <= 1 ? [v1] : Array.from({ length:o.ovN }, (_, i) => v0 + (v1 - v0) * (i / (o.ovN - 1)));
+          vs.forEach((vt, i) => add('shading', FNAME[f] + (o.ovN > 1 ? ' louvre ' + (i + 1) : ' overhang'), 'AA-SHADING',
+            [[[fp(f, u0, vt), fp(f, u1, vt), off(fp(f, u1, vt), n, o.ovD), off(fp(f, u0, vt), n, o.ovD)], [0, 0, 1]]],
+            { device:o.ovN > 1 ? 'Louvre' : 'Overhang', depth:o.ovD }));
+        }
+        if (o.finN > 0 && o.finD > 0) {
+          const lo = o.finSide === 'right' ? 0 : u0, hi = o.finSide === 'left' ? 0 : u1;
+          const us = o.finN === 1 ? [o.finSide === 'both' ? (lo + hi) / 2 : (o.finSide === 'right' ? hi : lo)]
+            : Array.from({ length:o.finN }, (_, i) => lo + (hi - lo) * (i / (o.finN - 1)));
+          const side = f === 'S' || f === 'N' ? [1, 0, 0] : [0, 1, 0];
+          us.forEach((uF, i) => add('shading', FNAME[f] + ' fin ' + (i + 1), 'AA-SHADING',
+            [[[fp(f, uF, v0), off(fp(f, uF, v0), n, o.finD), off(fp(f, uF, v1), n, o.finD), fp(f, uF, v1)], side]],
+            { device:'Fin', depth:o.finD }));
+        }
+      }
+      add('wall', FNAME[f] + ' wall', 'AA-WALLS', faces, { facade:f, finish:finishOf(G.col) });
+    });
+  
+    /* roof planes and the ground floor */
+    const up = [0, 0, 1];
+    const roofFaces = RF.n === 0 ? [[[[-L/2,-D/2,H0],[L/2,-D/2,H0],[L/2,D/2,H0],[-L/2,D/2,H0]], up]]
+      : RF.n === 1 ? [[[[-L/2,-D/2,H0],[L/2,-D/2,H0],[L/2,D/2,ridge],[-L/2,D/2,ridge]], [0,-1,1]]]
+      : RF.n === 2 ? [[[[-L/2,-D/2,H0],[L/2,-D/2,H0],[L/2,0,ridge],[-L/2,0,ridge]], [0,-1,1]],
+                      [[[L/2,D/2,H0],[-L/2,D/2,H0],[-L/2,0,ridge],[L/2,0,ridge]], [0,1,1]]]
+      : [[[[-L/2,-D/2,H0],[L/2,-D/2,H0]].concat(rl > 0 ? [[rl,0,ridge],[-rl,0,ridge]] : [[0,0,ridge]]), [0,-1,1]],
+         [[[L/2,D/2,H0],[-L/2,D/2,H0]].concat(rl > 0 ? [[-rl,0,ridge],[rl,0,ridge]] : [[0,0,ridge]]), [0,1,1]],
+         [[[L/2,-D/2,H0],[L/2,D/2,H0],[rl,0,ridge]], [1,0,1]], [[[-L/2,D/2,H0],[-L/2,-D/2,H0],[-rl,0,ridge]], [-1,0,1]]];
+    add('roof', ['Flat', 'Shed', 'Gable', 'Hip'][RF.n] + ' roof', 'AA-ROOF', roofFaces,
+      { roofType:['FLAT_ROOF', 'SHED_ROOF', 'GABLE_ROOF', 'HIP_ROOF'][RF.n], pitch:RF.n === 0 ? 0 : RF.th });
+    add('slab', 'Ground floor', 'AA-FLOOR', [[[[-L/2,-D/2,0],[L/2,-D/2,0],[L/2,D/2,0],[-L/2,D/2,0]], [0,0,-1]]]);
+  
+  } else {
+    /* A broken plan: walls to the eaves round the outline, each bar
+       facade's window on the longest stretch of that facade still outside
+       (as the Site tab draws it), the Roof tab's roof over every piece along
+       its own long side, and one ground floor under them all. */
+    const pl = planOutline(rects);
+    const lineOf = { S:[1, -D / 2], N:[1, D / 2], E:[0, L / 2], W:[0, -L / 2] };
+    const onLine = (sg, f) => sg.n[0] === FN[f][0] && sg.n[1] === FN[f][1] && Math.abs(sg.a[lineOf[f][0]] - lineOf[f][1]) < 1e-3;
+    const winAt = {};
+    ['S', 'N', 'E', 'W'].forEach(f => {
+      const o = OPEN[f], along = (f === 'S' || f === 'N') ? 0 : 1;
+      let sp = null;
+      pl.segs.forEach(sg => { if (!onLine(sg, f)) return;
+        const u0 = Math.min(sg.a[along], sg.b[along]), u1 = Math.max(sg.a[along], sg.b[along]);
+        if (!sp || u1 - u0 > sp[1] - sp[0]) sp = [u0, u1]; });
+      const W0 = f === 'S' || f === 'N' ? L : D;
+      const sill = o.sillZ != null ? o.sillZ : 0.9, h = Math.max(0.3, (o.headZ != null ? o.headZ : 2.1) - sill);
+      const w = Math.min(W0 * 0.92, (o.wwr || 0) * W0 * H0 / h);
+      if (sp && w > 0.01) winAt[f] = { uc:(sp[0] + sp[1]) / 2, ww:Math.min(w, 0.92 * (sp[1] - sp[0])), v0:sill, v1:Math.min(sill + h, H0) };
+    });
+    pl.segs.forEach((sg, i) => {
+      const n = [sg.n[0], sg.n[1], 0], along = sg.n[1] !== 0 ? 0 : 1;
+      const P = (u, v) => along === 0 ? [u, sg.a[1], v] : [sg.a[0], u, v];
+      const u0 = Math.min(sg.a[along], sg.b[along]), u1 = Math.max(sg.a[along], sg.b[along]);
+      const rect = (a0, a1, b0, b1) => [[P(a0, b0), P(a1, b0), P(a1, b1), P(a0, b1)], n];
+      const f = ['S', 'N', 'E', 'W'].find(k => onLine(sg, k) && winAt[k] && winAt[k].uc >= u0 - 1e-3 && winAt[k].uc <= u1 + 1e-3);
+      const faces = [];
+      if (!f) faces.push(rect(u0, u1, 0, H0));
+      else {
+        const wa = winAt[f], w0 = wa.uc - wa.ww / 2, w1 = wa.uc + wa.ww / 2;
+        faces.push(rect(u0, u1, 0, wa.v0), rect(u0, w0, wa.v0, wa.v1), rect(w1, u1, wa.v0, wa.v1), rect(u0, u1, wa.v1, H0));
+        windowAndShading(f, wa.uc, wa.ww, wa.v0, wa.v1, OPEN[f]);
+      }
+      const facing = COMPASS8_EN[Math.round(((G.rot + (sg.n[1] < 0 ? 0 : sg.n[1] > 0 ? 180 : sg.n[0] > 0 ? 270 : 90)) % 360) / 45) % 8];
+      add('wall', (f ? FNAME[f] + ' wall' : 'Wall ' + (i + 1)) + ' (faces ' + facing + ')', 'AA-WALLS', faces, { facade:f || null, finish:finishOf(G.col) });
+    });
+    /* the roof over each piece, ridge along its long side; gable and shed
+       walls rise with it — where the pieces meet their roofs intersect, as
+       a massing model's do */
+    rects.forEach((r, k) => {
+      const alongX = (r[2] - r[0]) >= (r[3] - r[1]);
+      const cx = (r[0] + r[2]) / 2, cy = (r[1] + r[3]) / 2;
+      const Lp = alongX ? r[2] - r[0] : r[3] - r[1], Dp = alongX ? r[3] - r[1] : r[2] - r[0];
+      const M = (a, b, z) => alongX ? [cx + a, cy + b, z] : [cx + b, cy + a, z];
+      const Nm = (na, nb, nz) => alongX ? [na, nb, nz] : [nb, na, nz];
+      const rise = (RF.n <= 1 ? Dp : Dp / 2) * tn, rg = H0 + rise, rq = Math.max(0, Lp / 2 - Dp / 2);
+      const F = (pts, nrm) => [pts.map(q => M(q[0], q[1], q[2])), Nm(nrm[0], nrm[1], nrm[2])];
+      const name = k === 0 ? 'Bar' : 'Wing ' + k;
+      let roofF = [], gab = [];
+      if (RF.n === 0) roofF = [F([[-Lp/2,-Dp/2,H0],[Lp/2,-Dp/2,H0],[Lp/2,Dp/2,H0],[-Lp/2,Dp/2,H0]], [0,0,1])];
+      else if (RF.n === 1) {
+        roofF = [F([[-Lp/2,-Dp/2,H0],[Lp/2,-Dp/2,H0],[Lp/2,Dp/2,rg],[-Lp/2,Dp/2,rg]], [0,-1,1])];
+        gab = [F([[-Lp/2,Dp/2,H0],[Lp/2,Dp/2,H0],[Lp/2,Dp/2,rg],[-Lp/2,Dp/2,rg]], [0,1,0]),
+               F([[Lp/2,-Dp/2,H0],[Lp/2,Dp/2,H0],[Lp/2,Dp/2,rg]], [1,0,0]), F([[-Lp/2,-Dp/2,H0],[-Lp/2,Dp/2,H0],[-Lp/2,Dp/2,rg]], [-1,0,0])];
+      } else if (RF.n === 2) {
+        roofF = [F([[-Lp/2,-Dp/2,H0],[Lp/2,-Dp/2,H0],[Lp/2,0,rg],[-Lp/2,0,rg]], [0,-1,1]), F([[Lp/2,Dp/2,H0],[-Lp/2,Dp/2,H0],[-Lp/2,0,rg],[Lp/2,0,rg]], [0,1,1])];
+        gab = [F([[Lp/2,-Dp/2,H0],[Lp/2,Dp/2,H0],[Lp/2,0,rg]], [1,0,0]), F([[-Lp/2,-Dp/2,H0],[-Lp/2,Dp/2,H0],[-Lp/2,0,rg]], [-1,0,0])];
+      } else {
+        roofF = [F([[-Lp/2,-Dp/2,H0],[Lp/2,-Dp/2,H0]].concat(rq > 0 ? [[rq,0,rg],[-rq,0,rg]] : [[0,0,rg]]), [0,-1,1]),
+                 F([[Lp/2,Dp/2,H0],[-Lp/2,Dp/2,H0]].concat(rq > 0 ? [[-rq,0,rg],[rq,0,rg]] : [[0,0,rg]]), [0,1,1]),
+                 F([[Lp/2,-Dp/2,H0],[Lp/2,Dp/2,H0],[rq,0,rg]], [1,0,1]), F([[-Lp/2,Dp/2,H0],[-Lp/2,-Dp/2,H0],[-rq,0,rg]], [-1,0,1])];
+      }
+      add('roof', name + ' — ' + ['flat', 'shed', 'gable', 'hip'][RF.n] + ' roof', 'AA-ROOF', roofF,
+        { roofType:['FLAT_ROOF', 'SHED_ROOF', 'GABLE_ROOF', 'HIP_ROOF'][RF.n], pitch:RF.n === 0 ? 0 : RF.th });
+      if (gab.length) add('wall', name + ' — ' + (RF.n === 1 ? 'shed walls' : 'gables'), 'AA-WALLS', gab, { finish:finishOf(G.col) });
+    });
+    add('slab', 'Ground floor', 'AA-FLOOR', pl.cells.map(c => [[[c[0], c[1], 0], [c[2], c[1], 0], [c[2], c[3], 0], [c[0], c[3], 0]], [0, 0, -1]]));
+  }
 
   /* the attached sunspace, a glazed box on its facade */
   if (SUNSP && SUNSP.on) {
@@ -6661,6 +7122,7 @@ function toDecisionsJSON() {
       koppen:STATE.clim.k.code, normalsSource:STATE.clim.source || null },
     decisions:{
       plan:{ length:MASS.L, depth:MASS.D, mainFacadeAzimuth:MASS.rot, floors:MASS.fl, floorHeight:MASS.fh,
+        form:MASS.form || 'rect', wing:MASS.form && MASS.form !== 'rect' && MASS.wing ? Object.assign({}, MASS.wing) : null,
         wallColour:colourOf(fin) },
       roof:{ type:['flat', 'shed', 'gable', 'hip'][ROOF.n], pitch:ROOF.n === 0 ? 0 : ROOF.th, roofColour:colourOf(rfin) },
       openings:OPEN, sunspace:SUNSP, roofWindows:RWIN,
@@ -7157,7 +7619,7 @@ function mountApp(site, clim, keepTab, keepModel) {
   for (const k in SCORES) delete SCORES[k];
   if (!(keepModel && MASS)) {   // a language switch keeps the student's model; a new site starts afresh
   SCENE.veg.length = 0; SCENE.walls.length = 0;
-  MASS = { L:12, D:8, rot:180, fl:1, fh:3.0, col:null };
+  MASS = { L:12, D:8, rot:180, fl:1, fh:3.0, col:null, form:'rect', wing:null };
   ROOF = { n:2, th:Math.round(Math.abs(site.lat)), col:null };
   /* One entry per local facade (S/N/E/W, matching the Roof tab's convention
      of true-south regardless of the plan's chosen rotation), each holding
@@ -7724,6 +8186,16 @@ Object.assign(PT, {
   "How much of the sun the roof reflects, read against this site’s summer": "Quanto do sol a cobertura reflecte, lido contra o verão deste local",
   "Pick a roof colour to read its albedo here": "Escolha uma cor de cobertura para ler aqui o seu albedo",
   "the summer here will overheat this roof": "o verão deste local vai sobreaquecer esta cobertura",
+  /* plan forms on Site */
+  "Break the volume": "Quebrar o volume",
+  "Mirror the L": "Espelhar o L",
+  "Drag the black points on the model to reshape the plan": "Arraste os pontos pretos no modelo para redesenhar a planta",
+  "A plain bar casts no shade on itself — break the volume to test an L, T or H": "Uma barra simples não se sombreia a si própria — quebre o volume para testar um L, T ou H",
+  "its wings take": "as suas alas retiram",
+  "of the winter sun off its walls and give": "do sol de inverno às paredes e dão",
+  "summer shade": "de sombra no verão",
+  "Own shade · winter %": "Sombra própria · inverno %",
+  "wing": "ala",
   /* the Ventilation workbench */
   "Tools": "Ferramentas",
   "Selection": "Selecção",
@@ -7823,6 +8295,8 @@ Object.assign(PT, {
 
 /* --- the long captions, keyed by identifier ----------------------------- */
 Object.assign(PT_HINT, {
+  'site-form':
+    'Quebre o volume com os botões por cima do modelo: um <b>L</b> acrescenta uma ala numa ponta, um <b>T</b> uma ao meio, um <b>H</b> uma em cada ponta, para os dois lados. Os pontos pretos no modelo são os seus vértices — arraste os cantos da barra para a esticar, e o canto livre de uma ala para a dimensionar e a rodar para trás da barra ou para a frente da fachada principal; <b>Espelhar o L</b> passa a sua ala para a outra ponta. Uma planta quebrada muda duas coisas que as caixas lêem ao mesmo tempo. <b>Sombra própria · inverno %</b> é a parte do sol de 21 de Dezembro nas paredes que o edifício retira a si próprio — cada parede amostrada a cada 0,75 m em três alturas, o sol a cada meia hora, cada amostra pesada por quão de frente o sol a atinge, e contada como perdida quando o raio de volta ao sol encontra uma ala (altura do beirado; coberturas inclinadas sombreiam um pouco mais). O mesmo teste a 21 de Junho dá a sombra de verão no indicador: alas que sombreiam uma parede a nascente ou a poente no verão ganham com isso, alas que sombreiam a fachada principal no inverno pagam por isso. O <b>fator de forma</b> é recalculado para todo o contorno — paredes até ao beirado em todo o perímetro, a cobertura sobre a sua área com a inclinação definida em Cobertura, o desvão estimado ala a ala — pelo que uma quebra quase sempre o aumenta: mais envolvente para o mesmo volume. O ajuste a Olgyay continua a ler a barra. Cobertura, Janelas e Sombreamento e Ventilação continuam a trabalhar sobre a barra; as alas entram na exportação 3D.',
   'roof-albedo':
     'A cor da cobertura decide quanto do sol a cobertura absorve. Segue as mesmas três classes de cor das paredes no separador Local — clara α 0,4, média 0,5, escura 0,8 (RCCTE, Quadro V.5, retomado no REH pelo Despacho n.º 15793-K/2013) — e o albedo indicado é a parte reflectida, 1 − α. De toda a envolvente, a cobertura é a que recebe mais de frente o sol alto de Verão, pelo que a sua cor pesa na estação de arrefecimento pelo menos tanto como a das paredes; superfícies claras são o conselho corrente para climas quentes (Lechner; Gonçalves &amp; Graça). O <b>Ajuste albedo</b> lê-a exactamente como as paredes, contra o verão deste local — de Junho a Setembro a média é <b>%1 °C</b>, um verão <b>%2</b> — sem peso a 17 °C ou menos e com peso total a 23 °C ou mais; a caixa de baixo dá o próprio albedo. Esta aplicação lê uma telha cerâmica pelo seu tom: uma telha pálida ou envelhecida como vermelho-claro, uma telha carregada como vermelho-escuro. A cobertura toma a cor em todas as vistas 3D.',
   'site-windows':
