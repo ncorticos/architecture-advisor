@@ -609,7 +609,7 @@ footer{border-top:1px solid var(--line); margin-top:26px; background:var(--wash)
 /* ------------------------------------------------------------ 0. IDENTITY -- */
 const APP = {
   name:        'Architecture Advisor',
-  version:     '1.66.0',
+  version:     '1.67.0',
   author:      'Nuno Dinis Cortiços',
   institution: 'Lisbon School of Architecture, Universidade de Lisboa',
   builtWith:   'Claude Opus 5 (Anthropic)',
@@ -1524,6 +1524,39 @@ const PLANTING = {
     bushes:['urzeA', 'uvaserra', 'folhadoA'] }
 };
 
+/**
+ * Wall finishes, sorted into the three colour classes of the Portuguese
+ * thermal regulation (RCCTE Quadro V.5, carried into the REH by Despacho
+ * n.º 15793-K/2013): solar absorptance α 0.4 light, 0.5 medium, 0.8 dark.
+ * The albedo — the share of the sun an opaque finish reflects — is 1 − α.
+ * Swatches are indicative; the class, not the swatch, carries the number.
+ */
+const FINISH_ALPHA = { light:0.4, medium:0.5, dark:0.8 };
+const FINISHES = [
+  { key:'white',      en:'white',       pt:'branco',          hex:'#F4F3EE', cls:'light' },
+  { key:'cream',      en:'cream',       pt:'creme',           hex:'#EFE3C2', cls:'light' },
+  { key:'yellow',     en:'yellow',      pt:'amarelo',         hex:'#E9C85A', cls:'light' },
+  { key:'orange',     en:'orange',      pt:'laranja',         hex:'#E08A3C', cls:'light' },
+  { key:'lightred',   en:'light red',   pt:'vermelho-claro',  hex:'#D9776B', cls:'light' },
+  { key:'darkred',    en:'dark red',    pt:'vermelho-escuro', hex:'#8E2F2A', cls:'medium' },
+  { key:'lightgreen', en:'light green', pt:'verde-claro',     hex:'#9CC58E', cls:'medium' },
+  { key:'lightblue',  en:'light blue',  pt:'azul-claro',      hex:'#8FB7D9', cls:'medium' },
+  { key:'brown',      en:'brown',       pt:'castanho',        hex:'#6B4A32', cls:'dark' },
+  { key:'darkgreen',  en:'dark green',  pt:'verde-escuro',    hex:'#2F5A3A', cls:'dark' },
+  { key:'brightblue', en:'bright blue', pt:'azul-vivo',       hex:'#1F5FBF', cls:'dark' },
+  { key:'darkblue',   en:'dark blue',   pt:'azul-escuro',     hex:'#1F2F5A', cls:'dark' }
+];
+const finishOf = key => FINISHES.find(f => f.key === key) || null;
+/** A wall's fill in every 3D view: the finish chosen on Site, shaded by
+    face (k), or the neutral grey at its usual strength when none is. */
+function wallFill(grey, k) {
+  const f = MASS && finishOf(MASS.col);
+  if (!f) return 'rgba(20,23,26,' + grey + ')';
+  const h = f.hex.replace('#', '');
+  const v = [0, 2, 4].map(i => Math.round(clamp(parseInt(h.slice(i, i + 2), 16) * (k || 1), 0, 255)));
+  return 'rgba(' + v.join(',') + ',0.62)';
+}
+
 /* ============================================ 5. THE SITE ENGINE ==
    A site here is a position, an altitude and a year of monthly normals.
    Everything the pages read follows from those three.
@@ -2227,6 +2260,7 @@ function buildSite(host) {
   const pillOri = el('span', { class:'pill ok' });
   const pillForm = el('span', { class:'pill ok' });
   host.appendChild(el('div', { class:'limitrow' }, [pillOri, pillForm]));
+  let refreshCol = () => {};   // the wall-colour pill, set up with its section below
   function refreshLab() {
     const dev = circDev(G.rot, OI.az), fc = formClass(), r = labRatio();
     if (dev <= 10) { pillOri.className = 'pill ok'; pillOri.textContent = t('At the Olgyay optimum'); }
@@ -2237,6 +2271,7 @@ function buildSite(host) {
     else if (fc === 'sq') { pillForm.className = 'pill empty'; pillForm.textContent = t('Square — never the optimum'); }
     else if (fc === 'ew') { pillForm.className = 'pill empty'; pillForm.textContent = t('East–west — stretch toward 1 : ') + fmt(OI.r, 1); }
     else { pillForm.className = 'pill empty'; pillForm.textContent = t('Diagonal — settle the long axis east–west'); }
+    refreshCol();
   }
 
   let labPanel = null;
@@ -2298,6 +2333,53 @@ function buildSite(host) {
   }});
   host.appendChild(controls([cL, cD, cR, cF, cFH, snap]));
   host.appendChild(controls([segDay, cH, playBtn]));
+
+  /* --- the wall colour, read as albedo against this site's summer ----------
+     Colour sets how much sun the walls absorb. It is a summer decision: the
+     REH counts the sun absorbed by opaque walls only in the cooling season,
+     and light surfaces are the standard warm-climate advice. So the fit
+     weighs each step above the light class by how hot this summer is — the
+     June-to-September mean of the normals (December to March south of the
+     equator): no weight at 17 °C or below, full weight at 23 °C or above. */
+  const sumIdx = lat < 0 ? [11, 0, 1, 2] : [5, 6, 7, 8];
+  const sumT = sumIdx.reduce((a, i) => a + C.t[i], 0) / 4;
+  const sumW = clamp((sumT - 17) / 6, 0, 1);
+  const sumBand = sumT >= 22 ? 'hot' : sumT >= 19 ? 'warm' : 'cool';
+  /** 0–100 fit of the wall colour to this summer; null until one is chosen. */
+  const albedoFit = () => {
+    const f = finishOf(G.col);
+    return f ? Math.round(clamp(100 * (1 - sumW * (FINISH_ALPHA[f.cls] - 0.4) / 0.4), 0, 100)) : null;
+  };
+  host.appendChild(section('Wall colour — albedo', 'How much of the sun the walls reflect, read against this site’s summer'));
+  const colRow = host.appendChild(el('div', { class:'controls', style:'flex-wrap:wrap;gap:4px' }));
+  const colBtns = [];
+  const syncCol = () => colBtns.forEach(b => b.classList.toggle('solid', b.dataset.col === G.col));
+  ['light', 'medium', 'dark'].forEach(cls => {
+    colRow.appendChild(el('span', { class:'hint', text:t({ light:'Light', medium:'Medium', dark:'Dark' }[cls]) + ' · α ' + fmt(FINISH_ALPHA[cls], 1) }));
+    FINISHES.filter(f => f.cls === cls).forEach(f => {
+      const b = el('button', { class:'btn small', 'data-col':f.key,
+        title:f.pt + ' — α ' + fmt(FINISH_ALPHA[cls], 1) + ' · ' + t('albedo') + ' ' + fmt(1 - FINISH_ALPHA[cls], 1) });
+      b.appendChild(el('span', { style:'display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-2px;border:1px solid rgba(20,23,26,.35);background:' + f.hex }));
+      b.appendChild(document.createTextNode(LANG === 'pt' ? f.pt : f.en));
+      b.onclick = () => { G.col = G.col === f.key ? null : f.key; syncCol(); labDraw(); };
+      colRow.appendChild(b);
+      colBtns.push(b);
+    });
+  });
+  syncCol();
+  const pillCol = el('span', { class:'pill empty' });
+  host.appendChild(el('div', { class:'limitrow' }, [pillCol]));
+  host.appendChild(hint('site-albedo',
+    'The wall colour decides how much of the sun the envelope absorbs. The finishes follow the three colour classes of the Portuguese thermal regulation — light α 0.4, medium 0.5, dark 0.8 (RCCTE Quadro V.5, carried into the REH by Despacho n.º 15793-K/2013) — and the albedo shown is the part reflected, 1 − α. Colour is a summer decision: the REH counts the sun absorbed by opaque walls only in the cooling season, and light surfaces are the standard warm-climate advice (Lechner; Gonçalves &amp; Graça). So <b>Albedo fit</b> weighs every step above the light class by this site’s summer — June to September averages <b>%1 °C</b> here, a <b>%2</b> summer — with no weight at 17 °C or below and full weight at 23 °C or above. The box beneath it gives the albedo itself and names the summer it is read against. Within a class the regulation gives one value; a fresh lime wash reflects more than a cream paint. The 80/50 colour bands are this application’s teaching cuts. The walls take the colour in every 3D view; the roof keeps its own finish.',
+    [fmt(sumT, 1), t(sumBand)]));
+  refreshCol = () => {
+    const f = finishOf(G.col), sc = albedoFit();
+    if (!f) { pillCol.className = 'pill empty'; pillCol.textContent = t('Pick a wall colour to read its albedo here'); return; }
+    const head = t({ light:'Light', medium:'Medium', dark:'Dark' }[f.cls]) + ' · ' + t('albedo') + ' ' + fmt(1 - FINISH_ALPHA[f.cls], 2) + ' — ';
+    if (sc >= 80) { pillCol.className = 'pill ok'; pillCol.textContent = head + t(sumW < 0.3 ? 'the summer here is cool, colour is a minor call' : 'suits the summer here'); }
+    else if (sc >= 50) { pillCol.className = 'pill empty'; pillCol.textContent = head + t('lighten it for the summer here'); }
+    else { pillCol.className = 'pill bad'; pillCol.textContent = head + t('the summer here will overheat these walls'); }
+  };
 
   labPanel = makePanel(host, {
     title: 'Your plan against the optimum',
@@ -2439,7 +2521,7 @@ function buildSite(host) {
           ctx.beginPath();
           ctx.moveTo(bottomA[0], bottomA[1]); ctx.lineTo(bottomB[0], bottomB[1]);
           ctx.lineTo(topB[0], topB[1]); ctx.lineTo(topA[0], topA[1]); ctx.closePath();
-          ctx.fillStyle = i % 2 === 0 ? 'rgba(20,23,26,.14)' : 'rgba(20,23,26,.08)';
+          ctx.fillStyle = wallFill(i % 2 === 0 ? 0.14 : 0.08, i % 2 === 0 ? 0.82 : 1);
           ctx.fill();
           stroke(ctx, CH.ink, 1.4); ctx.stroke();
         }
@@ -2490,6 +2572,17 @@ function buildSite(host) {
       stroke(ctx, fcol, 1.5); ctx.strokeRect(W - 92, 64, 84, 52);
       label(ctx, fmt(ff.ff, 2), W - 50, 89, fcol, FM(24), 'center', 'middle');
       label(ctx, t('Form factor'), W - 50, 107, CH.muted, F(9), 'center', 'middle');
+      // the wall colour: its fit to this summer, then the albedo it reads as
+      const af = albedoFit(), fin = finishOf(G.col);
+      const acol = af === null ? CH.faint : af >= 80 ? GREEN : af >= 50 ? '#D97706' : '#DC2626';
+      [[122, af === null ? '–' : String(af), t('Albedo fit') + ' /100'],
+       [180, fin ? fmt(1 - FINISH_ALPHA[fin.cls], 2) : '–', t('Albedo · ' + sumBand + ' summer')]].forEach(([y, v, cap]) => {
+        ctx.fillStyle = '#fff';
+        ctx.fillRect(W - 92, y, 84, 52);
+        stroke(ctx, acol, 1.5); ctx.strokeRect(W - 92, y, 84, 52);
+        label(ctx, v, W - 50, y + 25, acol, FM(24), 'center', 'middle');
+        label(ctx, cap, W - 50, y + 44, CH.muted, F(y > 150 ? 8 : 9), 'center', 'middle');
+      });
       swatchKey(ctx, 8, H - 30,
         [{ color:CH.ink, label:'Your plan' }, { color:GREEN, label:'Olgyay optimum' },
          { color:'#D97706', label:'Sun' }, { color:'rgba(20,23,26,.45)', label:'Shadow' }],
@@ -2505,6 +2598,11 @@ function buildSite(host) {
       ['Olgyay elongation (long:short)', +OI.r.toFixed(2)],
       ['Deviation (°)', +circDev(G.rot, OI.az).toFixed(0)],
       ['Olgyay fit (0–100)', labScore().total],
+      ['Wall colour', finishOf(G.col) ? finishOf(G.col).en + ' (' + finishOf(G.col).cls + ')' : 'not chosen'],
+      ['Wall solar absorptance α', finishOf(G.col) ? FINISH_ALPHA[finishOf(G.col).cls] : ''],
+      ['Wall albedo (1 − α)', finishOf(G.col) ? +(1 - FINISH_ALPHA[finishOf(G.col).cls]).toFixed(2) : ''],
+      ['Summer mean, Jun–Sep (°C)', +sumT.toFixed(1)],
+      ['Albedo fit (0–100)', albedoFit() === null ? '' : albedoFit()],
       ['Floors above ground', G.fl],
       ['Floor height (m)', +G.fh.toFixed(1)],
       ['Building height (m)', +(G.fl * G.fh).toFixed(1)],
@@ -2748,12 +2846,12 @@ function buildRoof(host) {
 
       // south wall — always a plain rectangle to the eave
       poly([[-G.L/2, -G.D/2, 0], [G.L/2, -G.D/2, 0], [G.L/2, -G.D/2, H0], [-G.L/2, -G.D/2, H0]],
-           'rgba(20,23,26,.14)', CH.ink, 1.4);
+           wallFill(0.14, 0.85), CH.ink, 1.4);
 
       // west wall — a rectangle (flat/shed/hip) or a pentagon with a gable
       const westBreaks = RF.n === 2 ? [G.D / 2, 0, -G.D / 2] : [G.D / 2, -G.D / 2];
       const westPts = [[-G.L/2, -G.D/2, 0], [-G.L/2, G.D/2, 0]].concat(westBreaks.map(y => [-G.L/2, y, topZ(y)]));
-      poly(westPts, 'rgba(20,23,26,.08)', CH.ink, 1.4);
+      poly(westPts, wallFill(0.08, 1), CH.ink, 1.4);
 
       // the roof surface(s) a south-west viewer can see
       if (RF.n === 0) {
@@ -3389,10 +3487,10 @@ function buildOpenings(host) {
 
       // south/west or north/east wall, whichever pair the current camera shows
       const frontY = camS === 1 ? -G.D / 2 : G.D / 2, sideX = camS === 1 ? -G.L / 2 : G.L / 2;
-      poly([[-G.L/2,frontY,0],[G.L/2,frontY,0],[G.L/2,frontY,topZ(frontY)],[-G.L/2,frontY,topZ(frontY)]], 'rgba(20,23,26,.14)', CH.ink, 1.4);
+      poly([[-G.L/2,frontY,0],[G.L/2,frontY,0],[G.L/2,frontY,topZ(frontY)],[-G.L/2,frontY,topZ(frontY)]], wallFill(0.14, 0.85), CH.ink, 1.4);
       const sideBreaks = RF.n === 2 ? [G.D/2, 0, -G.D/2] : [G.D/2, -G.D/2];
       const sidePts = [[sideX,-G.D/2,0],[sideX,G.D/2,0]].concat(sideBreaks.map(y => [sideX, y, topZ(y)]));
-      poly(sidePts, 'rgba(20,23,26,.08)', CH.ink, 1.4);
+      poly(sidePts, wallFill(0.08, 1), CH.ink, 1.4);
 
       if (RF.n === 0) {
         poly([[-G.L/2,-G.D/2,H0],[G.L/2,-G.D/2,H0],[G.L/2,G.D/2,H0],[-G.L/2,G.D/2,H0]], 'rgba(20,23,26,.05)', CH.ink, 2);
@@ -5232,17 +5330,17 @@ function buildVentilation(host) {
     const southTop = RF.n === 1 ? H0 : H0, northTop = RF.n === 1 ? ridge : H0;
     const drawNE = () => {
       poly([[-G.L/2, G.D/2, 0], [G.L/2, G.D/2, 0], [G.L/2, G.D/2, northTop], [-G.L/2, G.D/2, northTop]],
-           'rgba(20,23,26,.05)', CH.ink, 1.2);
+           wallFill(0.05, 0.72), CH.ink, 1.2);
       const eastBreaks = RF.n === 2 ? [G.D/2, 0, -G.D/2] : [G.D/2, -G.D/2];
       poly([[G.L/2, -G.D/2, 0], [G.L/2, G.D/2, 0]].concat(eastBreaks.map(y => [G.L/2, y, topZ(y)])),
-           'rgba(20,23,26,.05)', CH.ink, 1.2);
+           wallFill(0.05, 0.92), CH.ink, 1.2);
     };
     const drawSW = () => {
       poly([[-G.L/2, -G.D/2, 0], [G.L/2, -G.D/2, 0], [G.L/2, -G.D/2, southTop], [-G.L/2, -G.D/2, southTop]],
-           'rgba(20,23,26,.14)', CH.ink, 1.4);
+           wallFill(0.14, 0.85), CH.ink, 1.4);
       const westBreaks = RF.n === 2 ? [G.D/2, 0, -G.D/2] : [G.D/2, -G.D/2];
       poly([[-G.L/2, -G.D/2, 0], [-G.L/2, G.D/2, 0]].concat(westBreaks.map(y => [-G.L/2, y, topZ(y)])),
-           'rgba(20,23,26,.08)', CH.ink, 1.4);
+           wallFill(0.08, 1), CH.ink, 1.4);
     };
     if (camS === 1) { drawNE(); drawSW(); } else { drawSW(); drawNE(); }
 
@@ -5752,6 +5850,8 @@ const REFS = [
    'The Portuguese reading of bioclimatic strategy, and the character of the country’s own climatic zones.', null],
   ['IPMA (2022). <i>Fichas Climatológicas 1981–2010</i>, v2.2. Divisão de Clima e Alterações Climáticas.',
    'The observed monthly means and totals embedded for 28 stations — homogeneous series plus WRF-modelled infill after WMO-No. 1203.', 'https://www.ipma.pt/pt/oclima/normais.clima/'],
+  ['Despacho n.º 15793-K/2013, de 3 de dezembro. Parâmetros térmicos do REH. Diário da República, 2.ª série. (Colour classes as in RCCTE, Decreto-Lei n.º 80/2006, Quadro V.5.)',
+   'The three colour classes of solar absorptance — light 0.4, medium 0.5, dark 0.8 — the wall colour on Site reads its albedo from.', null],
   ['Portarias n.º 52/2019 a 58/2019, de 11 de fevereiro, alteradas pela Portaria n.º 18/2022. <i>Programas Regionais de Ordenamento Florestal</i> (PROF LVT, ALG, ALT, CI, CL, TMAD, EDM). Diário da República, 1.ª série.',
    'The regional forest programme each site region answers to. The Ventilation palette names the region\u2019s PROF and the protected areas inside it (ICNF, IFCN, Governo dos Açores) whose flora its species were read from — nothing from outside the region.', 'https://www.icnf.pt/florestas/prof/profemvigor']
 ];
@@ -6214,7 +6314,7 @@ function mountApp(site, clim, keepTab) {
 
   PANELS.forEach(p => { p.ro && p.ro.disconnect(); p.io && p.io.disconnect(); });
   PANELS = [];
-  MASS = { L:12, D:8, rot:180, fl:1, fh:3.0 };
+  MASS = { L:12, D:8, rot:180, fl:1, fh:3.0, col:null };
   ROOF = { n:2, th:Math.round(Math.abs(site.lat)) };
   /* One entry per local facade (S/N/E/W, matching the Roof tab's convention
      of true-south regardless of the plan's chosen rotation), each holding
@@ -6747,6 +6847,25 @@ Object.assign(PT, {
   "Left": "Esquerda",
   "Right": "Direita",
   "Both": "Ambos",
+  /* wall colour on Site */
+  "Wall colour — albedo": "Cor das paredes — albedo",
+  "How much of the sun the walls reflect, read against this site’s summer": "Quanto do sol as paredes reflectem, lido contra o verão deste local",
+  "Light": "Clara",
+  "Medium": "Média",
+  "Dark": "Escura",
+  "albedo": "albedo",
+  "hot": "quente",
+  "warm": "ameno",
+  "cool": "fresco",
+  "Albedo fit": "Ajuste albedo",
+  "Albedo · hot summer": "Albedo · verão quente",
+  "Albedo · warm summer": "Albedo · verão ameno",
+  "Albedo · cool summer": "Albedo · verão fresco",
+  "Pick a wall colour to read its albedo here": "Escolha uma cor de parede para ler aqui o seu albedo",
+  "suits the summer here": "adequa-se ao verão deste local",
+  "the summer here is cool, colour is a minor call": "o verão aqui é fresco, a cor pesa pouco",
+  "lighten it for the summer here": "aclare-a para o verão deste local",
+  "the summer here will overheat these walls": "o verão deste local vai sobreaquecer estas paredes",
   /* planting on Ventilation: the regional palette and its species */
   "Native planting for": "Plantação autóctone para",
   "sources for this region only": "fontes apenas desta região",
@@ -6822,6 +6941,8 @@ Object.assign(PT_HINT, {
     'A nota é um índice didáctico, não uma previsão energética: 60 % orientação — nota máxima sobre a normal verde, zero a 90° de desvio — mais 40 % forma — proximidade do alongamento 1:X, com desconto para plantas quadradas, diagonais e norte–sul. Duas plantas podem partilhar a nota e comportar-se de modo diferente; leia-a com as pastilhas.',
   'ori-height':
     'As duas caixas extrudem a planta — pisos acima do solo vezes uma altura de piso editável. O sol abaixo é comandado, não decorativo: escolha 21 de Dezembro, 20 de Março ou 21 de Junho, arraste a hora solar — ou carregue em reproduzir — e a sombra segue a trajectória, longa e para norte na manhã de Dezembro, curta e contida no meio-dia de Junho. A sombra do meio-dia de Dezembro continua a ser o caso condicionante para afastamentos. A altura não move a nota de ajuste, que só conhece orientação e forma da planta.',
+  'site-albedo':
+    'A cor das paredes decide quanto do sol a envolvente absorve. Os acabamentos seguem as três classes de cor da regulamentação térmica portuguesa — clara α 0,4, média 0,5, escura 0,8 (RCCTE, Quadro V.5, retomado no REH pelo Despacho n.º 15793-K/2013) — e o albedo indicado é a parte reflectida, 1 − α. A cor é uma decisão de Verão: o REH só conta o sol absorvido pelas paredes opacas na estação de arrefecimento, e as superfícies claras são o conselho corrente para climas quentes (Lechner; Gonçalves &amp; Graça). Por isso o <b>Ajuste do albedo</b> pesa cada degrau acima da classe clara pelo verão deste local — de Junho a Setembro a média é aqui de <b>%1 °C</b>, um verão <b>%2</b> — sem peso a 17 °C ou menos e com peso total a 23 °C ou mais. A caixa abaixo dá o próprio albedo e nomeia o verão contra o qual é lido. Dentro de cada classe a regulamentação dá um só valor; uma caiação fresca reflecte mais do que uma tinta creme. As faixas de cor 80/50 são cortes didácticos desta aplicação. As paredes tomam a cor em todas as vistas 3D; a cobertura mantém o seu acabamento.',
   'roof-score':
     'As duas caixas do canto lêem a inclinação tal como Galloway e Lechner fixam os ideais. <b>Inclinação solar</b> mede a sua inclinação contra o alvo próprio deste local, <b>%1°</b>: o valor de Inverno (%2°) e o de Verão (%3°) ponderados pelo balanço do Clima, %4 meses de aquecimento (média abaixo de 18 °C) para %5 de arrefecimento (acima de 22 °C). Dá 100 sobre o alvo e 0 a 30° dele, a distância inteira entre os ideais sazonais. <b>Sol de %6</b> é a fracção do feixe do meio-dia dessa estação que a vertente sul recebe de frente — o cosseno do ângulo de incidência, pelo que um telhado plano lê o que leria um colector horizontal. Muda devagar junto ao ideal: 10° de desvio custam menos de 2 %. As faixas de cor 80/50 e 95/85 são cortes didácticos desta aplicação, não números das fontes. Um telhado plano não tem inclinação a julgar: os seus colectores pedem estrutura própria.',
   'ori-roof':
