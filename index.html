@@ -632,7 +632,7 @@ footer{border-top:1px solid var(--line); margin-top:26px; background:var(--wash)
 /* ------------------------------------------------------------ 0. IDENTITY -- */
 const APP = {
   name:        'Architecture Advisor',
-  version:     '1.72.0',
+  version:     '1.73.0',
   author:      'Nuno Dinis Cortiços',
   institution: 'Lisbon School of Architecture, Universidade de Lisboa',
   builtWith:   'Claude Opus 5 (Anthropic)',
@@ -3288,7 +3288,7 @@ function buildSite(host) {
   };
   refreshShade();
   host.appendChild(hint('site-form',
-    'Break the volume with the buttons above the model: an <b>L</b> adds a wing at one end, a <b>T</b> one at the middle, an <b>H</b> one at each end reaching both ways. The black points on the model are its vertices — drag the bar’s corners to stretch it, and a wing’s free corner to size the wing and swing it behind the bar or in front of the main facade; <b>Mirror the L</b> moves its wing to the other end. A broken plan changes two things the badges read at once. <b>Own shade · winter %</b> is the share of the 21 December sun on the walls that the building takes off itself — every wall sampled every 0.75 m at three heights, the sun every half hour, each sample weighed by how squarely the sun meets it, and counted lost when the ray back to the sun meets any wing (eaves height; pitched roofs shade a little more). The same test on 21 June gives the summer shade in the pill: wings that shade an east or west wall in summer earn it, wings that shade the main facade in winter cost it. <b>Form factor</b> is recalculated for the whole outline — walls to the eaves round its perimeter, the roof over its area at the pitch set on Roof, the roof space estimated wing by wing — so a break almost always raises it: more envelope for the same volume. The Olgyay fit still reads the bar. Roof, Windows &amp; Shading and Ventilation keep working on the bar; the wings go into the 3D export.'));
+    'Break the volume with the buttons above the model: an <b>L</b> adds a wing at one end, a <b>T</b> one at the middle, an <b>H</b> one at each end reaching both ways. The black points on the model are its vertices — drag the bar’s corners to stretch it, and a wing’s free corner to size the wing and swing it behind the bar or in front of the main facade; <b>Mirror the L</b> moves its wing to the other end. A broken plan changes two things the badges read at once. <b>Own shade · winter %</b> is the share of the 21 December sun on the walls that the building takes off itself — every wall sampled every 0.75 m at three heights, the sun every half hour, each sample weighed by how squarely the sun meets it, and counted lost when the ray back to the sun meets any wing (eaves height; pitched roofs shade a little more). The same test on 21 June gives the summer shade in the pill: wings that shade an east or west wall in summer earn it, wings that shade the main facade in winter cost it. <b>Form factor</b> is recalculated for the whole outline — walls to the eaves round its perimeter, the roof over its area at the pitch set on Roof, the roof space estimated wing by wing — so a break almost always raises it: more envelope for the same volume. The Olgyay fit still reads the bar. Roof and Windows &amp; Shading keep working on the bar; Ventilation draws the wings as boxes to the eaves — they shade the garden and keep planting off their footprint, while its airflow scores still read the bar — and the wings go into the 3D export.'));
   host.appendChild(hint('ori-score',
     'The badge is a didactic index, not an energy prediction: 60 % orientation — full marks on the green normal, zero at 90° off — plus 40 % form — closeness to the 1:X elongation, discounted for square, diagonal and north–south plans. Two plans can share a score and behave differently; read it with the pills.'));
   host.appendChild(hint('ori-height',
@@ -4649,6 +4649,9 @@ function buildVentilation(host) {
 
   const G = MASS, RF = ROOF;
   if (!G) { host.appendChild(el('p', { text:t('Define the site first — go to the Site tab.') })); return; }
+  /** The plan's reach from the centre along x and y — the bar's half sizes,
+      or more where Site has broken the volume into wings. */
+  const reachXY = () => { const rs = planRects(G); return [Math.max.apply(null, rs.map(r => Math.max(-r[0], r[2]))), Math.max.apply(null, rs.map(r => Math.max(-r[1], r[3])))]; };
   /* OPEN is global, set by the Openings tab; initialise if null */
   if (!OPEN) OPEN = {
     S:{wwr:0.25, sillZ:0.9, headZ:2.1, ovD:0, ovN:1, finD:0, finN:0, finSide:'both'},
@@ -5633,7 +5636,8 @@ function buildVentilation(host) {
     const maxH = Math.max(ridge, H0, vegH, wallH) + 2;
     const garden = 8;
     const sunDepth = (typeof SUNSP !== 'undefined' && SUNSP && SUNSP.on) ? SUNSP.depth : 0;
-    const half = G.L / 2 + G.D / 2 + garden + sunDepth;
+    const [hxV, hyV] = reachXY();
+    const half = hxV + hyV + garden + sunDepth;
     const top = W < 600 ? 88 : 40, bottom = H - 34;   // room for the readout (and, on a phone, the badges) above
     const availV = Math.max(40, bottom - top);
     const sByW = (W / 2 - 16) / ((half + sunDepth) * ISO_C);
@@ -6095,12 +6099,14 @@ function buildVentilation(host) {
 
     /* ---- garden ground (big enough for shadows, trees and walls) ---- */
     const gm = FR.garden;
-    poly([[-G.L/2-gm, -G.D/2-gm, 0], [G.L/2+gm, -G.D/2-gm, 0],
-          [G.L/2+gm, G.D/2+gm, 0], [-G.L/2-gm, G.D/2+gm, 0]],
+    const [gx, gy] = reachXY();
+    poly([[-gx-gm, -gy-gm, 0], [gx+gm, -gy-gm, 0],
+          [gx+gm, gy+gm, 0], [-gx-gm, gy+gm, 0]],
          'rgba(20,23,26,.03)', CH.line, 1.2);
 
     /* ---- sun shadow of the whole volume on the garden ---- */
     let shadowTag = null;
+    const wingRects = planRects(G).slice(1);   // the wings a volume break adds on Site
     const sun = sunPos(SH.doy, SH.h, lat, lon, tz);
     const topZ = y => RF.n === 0 ? H0 : RF.n === 1 ? H0 + (y + G.D/2) * Math.tan(roofTh) : RF.n === 3 ? H0 : H0 + Math.max(0, G.D/2 - Math.abs(y)) * Math.tan(roofTh);
     if (showShadow && sun.alt > 0.5) {
@@ -6112,7 +6118,13 @@ function buildVentilation(host) {
       ctx.beginPath();
       hp.forEach((p, i) => { const q = proj(p[0], p[1], 0); i ? ctx.lineTo(q[0], q[1]) : ctx.moveTo(q[0], q[1]); });
       ctx.closePath();
-      ctx.fillStyle = 'rgba(20,23,26,.13)'; ctx.fill();
+      const kW = shadowLenV(H0, sun.alt) / Math.max(1e-6, Lsh);   // the wings rise to the eaves only
+      wingRects.forEach(r => {
+        const c = [[r[0], r[1]], [r[2], r[1]], [r[2], r[3]], [r[0], r[3]]];
+        hullV(c.concat(c.map(p => [p[0] + ox * kW, p[1] + oy * kW]))).forEach((p, i) => { const q = proj(p[0], p[1], 0); i ? ctx.lineTo(q[0], q[1]) : ctx.moveTo(q[0], q[1]); });
+        ctx.closePath();
+      });
+      ctx.fillStyle = 'rgba(20,23,26,.13)'; ctx.fill('nonzero');
       stroke(ctx, 'rgba(20,23,26,.35)', 1); ctx.stroke();
       /* labelled at the end, beside the shadow's farthest corners still in
          sight — never on the building drawn over it */
@@ -6160,6 +6172,21 @@ function buildVentilation(host) {
       poly([[-G.L/2, -G.D/2, 0], [-G.L/2, G.D/2, 0]].concat(westBreaks.map(y => [-G.L/2, y, topZ(y)])),
            wallFill(0.08, 1), CH.ink, 1.4);
     };
+    /* The wings a volume break adds on Site, as boxes to the eaves with a
+       flat top in the roof colour: the ones behind the bar go down before
+       it, the ones in front after its windows. They shade the garden and
+       keep planting off their footprint; the airflow scores still read the
+       bar alone. */
+    const wingDepth = r => camS * ((r[0] + r[2]) / 2 + (r[1] + r[3]) / 2);
+    const drawWing = r => {
+      const [x0, y0, x1, y1] = r;
+      [{ n:[0, -1], q:[[x0,y0,0],[x1,y0,0],[x1,y0,H0],[x0,y0,H0]] }, { n:[0, 1], q:[[x1,y1,0],[x0,y1,0],[x0,y1,H0],[x1,y1,H0]] },
+       { n:[1, 0], q:[[x1,y0,0],[x1,y1,0],[x1,y1,H0],[x1,y0,H0]] }, { n:[-1, 0], q:[[x0,y1,0],[x0,y0,0],[x0,y0,H0],[x0,y1,H0]] }]
+        .filter(f => -camS * (f.n[0] + f.n[1]) > 0)
+        .forEach(f => poly(f.q, wallFill(f.n[1] ? 0.14 : 0.08, f.n[1] ? 0.85 : 1), CH.ink, 1.3));
+      poly([[x0,y0,H0],[x1,y0,H0],[x1,y1,H0],[x0,y1,H0]], roofFill(0.05, 1), CH.ink, 1.6);
+    };
+    wingRects.filter(r => wingDepth(r) > 0).forEach(drawWing);
     if (camS === 1) { drawNE(); drawSW(); } else { drawSW(); drawNE(); }
 
     /* ---- roof from Roof tab: both slopes so the stack height reads ---- */
@@ -6240,6 +6267,8 @@ function buildVentilation(host) {
         stroke(ctx, '#2563EB', 1.1, [5,4]); const pa = proj(a[0],a[1],a[2]), pb = proj(b[0],b[1],b[2]); seg(ctx, pa[0], pa[1], pb[0], pb[1]);
       });
     }
+
+    wingRects.filter(r => wingDepth(r) <= 0).forEach(drawWing);
 
     /* ---- planting stands on open garden ground (world metres, centred):
        trees rise on a bole into their crown, bushes sit on their spot — the
@@ -6444,7 +6473,7 @@ function buildVentilation(host) {
     const X = (sx - FR.cx) / (ISO_C * FR.s), Y = (FR.cy - sy) / (ISO_S * FR.s);
     return { x: camS * (X + Y) / 2, y: camS * (Y - X) / 2 };
   };
-  const onBuilding = (x, y) => Math.abs(x) <= G.L/2 + 0.3 && Math.abs(y) <= G.D/2 + 0.3;
+  const onBuilding = (x, y) => planRects(G).some(r => x >= r[0] - 0.3 && x <= r[2] + 0.3 && y >= r[1] - 0.3 && y <= r[3] + 0.3);
   const distSeg = (px, py, ax, ay, bx, by) => {
     const dx = bx - ax, dy = by - ay, L2 = dx * dx + dy * dy;
     let u = L2 ? ((px - ax) * dx + (py - ay) * dy) / L2 : 0;
@@ -6509,7 +6538,7 @@ function buildVentilation(host) {
   const clickHandler = ev => {
     if (!plantArmed && !wallArmed) return;
     const pos = getWorldPos(ev.clientX, ev.clientY);
-    const lim = { x:G.L/2 + FR.garden, y:G.D/2 + FR.garden };
+    const lim = { x:reachXY()[0] + FR.garden, y:reachXY()[1] + FR.garden };
     pos.x = clamp(pos.x, -lim.x, lim.x);
     pos.y = clamp(pos.y, -lim.y, lim.y);
     if (onBuilding(pos.x, pos.y)) { toast('Plant and build on open ground, not on the building'); return; }
@@ -6583,7 +6612,7 @@ function buildVentilation(host) {
     if (dragV) {
       ev.preventDefault();
       const pos = getWorldPos(ev.clientX, ev.clientY);
-      const lim = { x:G.L/2 + FR.garden, y:G.D/2 + FR.garden };
+      const lim = { x:reachXY()[0] + FR.garden, y:reachXY()[1] + FR.garden };
       const nx = clamp(pos.x + dragV.ox, -lim.x, lim.x);
       const ny = clamp(pos.y + dragV.oy, -lim.y, lim.y);
       if (onBuilding(nx, ny)) return;   // keep the last open-ground spot
@@ -6599,7 +6628,7 @@ function buildVentilation(host) {
     }
     if (plantArmed || wallArmed) {
       const pos = getWorldPos(ev.clientX, ev.clientY);
-      const lim = { x:G.L/2 + FR.garden, y:G.D/2 + FR.garden };
+      const lim = { x:reachXY()[0] + FR.garden, y:reachXY()[1] + FR.garden };
       const gx = clamp(pos.x, -lim.x, lim.x), gy = clamp(pos.y, -lim.y, lim.y);
       ghost = { x:gx, y:gy, ok:!onBuilding(gx, gy) };
       cv.style.cursor = ghost.ok ? 'cell' : 'not-allowed';
@@ -8296,7 +8325,7 @@ Object.assign(PT, {
 /* --- the long captions, keyed by identifier ----------------------------- */
 Object.assign(PT_HINT, {
   'site-form':
-    'Quebre o volume com os botões por cima do modelo: um <b>L</b> acrescenta uma ala numa ponta, um <b>T</b> uma ao meio, um <b>H</b> uma em cada ponta, para os dois lados. Os pontos pretos no modelo são os seus vértices — arraste os cantos da barra para a esticar, e o canto livre de uma ala para a dimensionar e a rodar para trás da barra ou para a frente da fachada principal; <b>Espelhar o L</b> passa a sua ala para a outra ponta. Uma planta quebrada muda duas coisas que as caixas lêem ao mesmo tempo. <b>Sombra própria · inverno %</b> é a parte do sol de 21 de Dezembro nas paredes que o edifício retira a si próprio — cada parede amostrada a cada 0,75 m em três alturas, o sol a cada meia hora, cada amostra pesada por quão de frente o sol a atinge, e contada como perdida quando o raio de volta ao sol encontra uma ala (altura do beirado; coberturas inclinadas sombreiam um pouco mais). O mesmo teste a 21 de Junho dá a sombra de verão no indicador: alas que sombreiam uma parede a nascente ou a poente no verão ganham com isso, alas que sombreiam a fachada principal no inverno pagam por isso. O <b>fator de forma</b> é recalculado para todo o contorno — paredes até ao beirado em todo o perímetro, a cobertura sobre a sua área com a inclinação definida em Cobertura, o desvão estimado ala a ala — pelo que uma quebra quase sempre o aumenta: mais envolvente para o mesmo volume. O ajuste a Olgyay continua a ler a barra. Cobertura, Janelas e Sombreamento e Ventilação continuam a trabalhar sobre a barra; as alas entram na exportação 3D.',
+    'Quebre o volume com os botões por cima do modelo: um <b>L</b> acrescenta uma ala numa ponta, um <b>T</b> uma ao meio, um <b>H</b> uma em cada ponta, para os dois lados. Os pontos pretos no modelo são os seus vértices — arraste os cantos da barra para a esticar, e o canto livre de uma ala para a dimensionar e a rodar para trás da barra ou para a frente da fachada principal; <b>Espelhar o L</b> passa a sua ala para a outra ponta. Uma planta quebrada muda duas coisas que as caixas lêem ao mesmo tempo. <b>Sombra própria · inverno %</b> é a parte do sol de 21 de Dezembro nas paredes que o edifício retira a si próprio — cada parede amostrada a cada 0,75 m em três alturas, o sol a cada meia hora, cada amostra pesada por quão de frente o sol a atinge, e contada como perdida quando o raio de volta ao sol encontra uma ala (altura do beirado; coberturas inclinadas sombreiam um pouco mais). O mesmo teste a 21 de Junho dá a sombra de verão no indicador: alas que sombreiam uma parede a nascente ou a poente no verão ganham com isso, alas que sombreiam a fachada principal no inverno pagam por isso. O <b>fator de forma</b> é recalculado para todo o contorno — paredes até ao beirado em todo o perímetro, a cobertura sobre a sua área com a inclinação definida em Cobertura, o desvão estimado ala a ala — pelo que uma quebra quase sempre o aumenta: mais envolvente para o mesmo volume. O ajuste a Olgyay continua a ler a barra. Cobertura e Janelas e Sombreamento continuam a trabalhar sobre a barra; a Ventilação desenha as alas como volumes até ao beirado — sombreiam o jardim e afastam delas a plantação, enquanto as pontuações de escoamento continuam a ler a barra — e as alas entram na exportação 3D.',
   'roof-albedo':
     'A cor da cobertura decide quanto do sol a cobertura absorve. Segue as mesmas três classes de cor das paredes no separador Local — clara α 0,4, média 0,5, escura 0,8 (RCCTE, Quadro V.5, retomado no REH pelo Despacho n.º 15793-K/2013) — e o albedo indicado é a parte reflectida, 1 − α. De toda a envolvente, a cobertura é a que recebe mais de frente o sol alto de Verão, pelo que a sua cor pesa na estação de arrefecimento pelo menos tanto como a das paredes; superfícies claras são o conselho corrente para climas quentes (Lechner; Gonçalves &amp; Graça). O <b>Ajuste albedo</b> lê-a exactamente como as paredes, contra o verão deste local — de Junho a Setembro a média é <b>%1 °C</b>, um verão <b>%2</b> — sem peso a 17 °C ou menos e com peso total a 23 °C ou mais; a caixa de baixo dá o próprio albedo. Esta aplicação lê uma telha cerâmica pelo seu tom: uma telha pálida ou envelhecida como vermelho-claro, uma telha carregada como vermelho-escuro. A cobertura toma a cor em todas as vistas 3D.',
   'site-windows':
