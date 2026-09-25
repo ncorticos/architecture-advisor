@@ -632,7 +632,7 @@ footer{border-top:1px solid var(--line); margin-top:26px; background:var(--wash)
 /* ------------------------------------------------------------ 0. IDENTITY -- */
 const APP = {
   name:        'Architecture Advisor',
-  version:     '1.73.0',
+  version:     '1.74.0',
   author:      'Nuno Dinis Cortiços',
   institution: 'Lisbon School of Architecture, Universidade de Lisboa',
   builtWith:   'Claude Opus 5 (Anthropic)',
@@ -1679,6 +1679,176 @@ const finishOf = key => FINISHES.find(f => f.key === key) || null;
 function summerOf(C, lat) {
   const T = (lat < 0 ? [11, 0, 1, 2] : [5, 6, 7, 8]).reduce((a, i) => a + C.t[i], 0) / 4;
   return { T, w:clamp((T - 17) / 6, 0, 1), band:T >= 22 ? 'hot' : T >= 19 ? 'warm' : 'cool' };
+}
+/* --- the sun on a collector: the monthly-average-day method ----------------
+   Duffie & Beckman (2013, ch. 2): each month's mean daily global irradiation
+   on the horizontal — the site's own, from the ERA5 reanalysis — is split
+   into beam and diffuse by the Erbs, Klein & Duffie (1982) monthly
+   correlation on the clearness index, then carried onto the tilted plane
+   with the isotropic sky: the beam by the ratio R̄b integrated over the
+   month's mean day (Klein 1977), the diffuse by the sky the plane sees,
+   (1 + cos β)/2, and the ground's reflection by ρ (1 − cos β)/2, ρ = 0.2.
+   Azimuths are compass bearings, 180 due south. */
+const MEAN_DAY = [17, 47, 75, 105, 135, 162, 198, 228, 258, 288, 318, 344];
+const MONTH_DAYS = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+/** Declination, sunset hour angle (rad) and extraterrestrial daily
+    irradiation on the horizontal (MJ/m²) for a month's mean day. */
+function solarMonth(lat, m) {
+  const n = MEAN_DAY[m], d = 23.45 * RAD * Math.sin(2 * Math.PI * (284 + n) / 365), f = lat * RAD;
+  const ws = Math.acos(clamp(-Math.tan(f) * Math.tan(d), -1, 1));
+  const H0 = 24 * 3600 * 1367 / Math.PI * (1 + 0.033 * Math.cos(2 * Math.PI * n / 365))
+    * (Math.cos(f) * Math.cos(d) * Math.sin(ws) + ws * Math.sin(f) * Math.sin(d)) / 1e6;
+  return { d, ws, H0 };
+}
+/** Monthly mean daily irradiation on a plane (MJ/m²) and its year (kWh/m²). */
+function tiltedYear(Hh, lat, tilt, az) {
+  const f = lat * RAD, b = tilt * RAD, g = (az - 180) * RAD, rho = 0.2;
+  const mon = [];
+  let year = 0;
+  for (let m = 0; m < 12; m++) {
+    const { d, ws, H0 } = solarMonth(lat, m), H = Hh[m];
+    const K = clamp(H / Math.max(1e-6, H0), 0.3, 0.8);
+    const fd = ws / RAD <= 81.4 ? 1.391 - 3.560 * K + 4.189 * K * K - 2.137 * K * K * K
+                                : 1.311 - 3.022 * K + 3.427 * K * K - 1.821 * K * K * K;
+    const Hd = H * clamp(fd, 0, 1), Hb = H - Hd;
+    let num = 0, den = 0;
+    for (let w = -ws; w <= ws; w += 0.25 * RAD) {
+      const cz = Math.cos(f) * Math.cos(d) * Math.cos(w) + Math.sin(f) * Math.sin(d);
+      if (cz <= 0) continue;
+      const ct = Math.sin(d) * Math.sin(f) * Math.cos(b) - Math.sin(d) * Math.cos(f) * Math.sin(b) * Math.cos(g)
+        + Math.cos(d) * Math.cos(f) * Math.cos(b) * Math.cos(w) + Math.cos(d) * Math.sin(f) * Math.sin(b) * Math.cos(g) * Math.cos(w)
+        + Math.cos(d) * Math.sin(b) * Math.sin(g) * Math.sin(w);
+      den += cz; num += Math.max(0, ct);
+    }
+    const HT = Hb * (den > 0 ? num / den : 0) + Hd * (1 + Math.cos(b)) / 2 + H * rho * (1 - Math.cos(b)) / 2;
+    mon.push(HT);
+    year += HT * MONTH_DAYS[m];
+  }
+  return { mon, year:year / 3.6 };
+}
+/* The two collectors, as a teaching model. PV: modules of about 20 %
+   efficiency (≈ 0.20 kWp per m²) with a performance ratio of 0.80 for the
+   system's losses (IEC 61724-1 defines the ratio). Thermal: a flat-plate
+   collector read by the EN ISO 9806 efficiency curve with typical
+   coefficients — η0 0.78, a1 3.5 W/m²K, a2 0.015 W/m²K² — at a 50 °C mean
+   fluid (domestic hot water) against each month's mean air temperature and
+   its mean daytime irradiance. A real module's or collector's datasheet
+   replaces all of these. */
+const SOLAR_TECH = {
+  pv:      { w:1.13, h:1.72, gap:0.02, eff:0.20, pr:0.80 },
+  thermal: { w:1.00, h:2.00, gap:0.06, eta0:0.78, a1:3.5, a2:0.015, tm:50 }
+};
+/** Yearly useful output per m² of collector (kWh/m²) from the plane's months. */
+function solarYield(tech, mon, lat, Ta) {
+  if (tech === 'pv') return mon.reduce((a, h, m) => a + h * MONTH_DAYS[m], 0) / 3.6 * SOLAR_TECH.pv.eff * SOLAR_TECH.pv.pr;
+  const c = SOLAR_TECH.thermal;
+  let q = 0;
+  for (let m = 0; m < 12; m++) {
+    const hours = 2 * solarMonth(lat, m).ws / RAD / 15;
+    const G = mon[m] * 1e6 / Math.max(1, hours * 3600), dT = c.tm - Ta[m];
+    const eta = G > 1 ? clamp(c.eta0 - c.a1 * dT / G - c.a2 * dT * dT / G, 0, 1) : 0;
+    q += eta * mon[m] * MONTH_DAYS[m];
+  }
+  return q / 3.6;
+}
+/**
+ * The site's horizontal irradiation, month by month: daily shortwave
+ * radiation 1991–2020 from the ERA5 reanalysis via Open-Meteo, fetched once
+ * per site — only the coordinates leave the browser. Until it arrives (or
+ * when it cannot), a clearly labelled estimate stands in: the extraterrestrial
+ * value times an assumed clearness index of 0.55.
+ */
+const RADIATION = {};
+function radiationFor(site, onReady) {
+  const key = site.lat.toFixed(2) + ',' + site.lon.toFixed(2);
+  if (RADIATION[key]) return RADIATION[key];
+  const rec = RADIATION[key] = { pending:true, H:null };
+  const ctrl = {};
+  try { if (typeof AbortSignal !== 'undefined' && AbortSignal.timeout) ctrl.signal = AbortSignal.timeout(60000); } catch (e) {}
+  fetch('https://archive-api.open-meteo.com/v1/archive?latitude=' + site.lat.toFixed(3) + '&longitude=' + site.lon.toFixed(3)
+    + '&start_date=1991-01-01&end_date=2020-12-31&daily=shortwave_radiation_sum&timezone=auto', ctrl)
+    .then(r => r.json())
+    .then(j => {
+      const tt = j && j.daily && j.daily.time, v = j && j.daily && j.daily.shortwave_radiation_sum;
+      if (!Array.isArray(tt) || !Array.isArray(v) || tt.length < 3000) throw new Error('radiation');
+      const acc = Array.from({ length:12 }, () => [0, 0]);
+      tt.forEach((ds, i) => {
+        const m = +String(ds).slice(5, 7) - 1, x = v[i];
+        if (m >= 0 && m < 12 && typeof x === 'number' && isFinite(x)) { acc[m][0] += x; acc[m][1]++; }
+      });
+      if (acc.some(a => a[1] < 100)) throw new Error('radiation');
+      rec.H = acc.map(a => a[0] / a[1]);
+      rec.src = 'ERA5 1991–2020 (Open-Meteo)';
+    })
+    .catch(() => { rec.failed = true; })
+    .then(() => { rec.pending = false; if (onReady) onReady(); });
+  return rec;
+}
+/** The pitch that collects most in a year for one technology, facing az. */
+const SOLAR_OPT = {};
+function solarOptimum(site, tech, az, Ta) {
+  const hm = horizontalMonths(site);
+  const key = [tech, az, site.lat, site.lon, hm.measured].join('|');
+  if (SOLAR_OPT[key]) return SOLAR_OPT[key];
+  let best = { tilt:0, y:-1, plane:0 };
+  for (let b = 0; b <= 90; b++) {
+    const tv = tiltedYear(hm.H, site.lat, b, az), y = solarYield(tech, tv.mon, site.lat, Ta);
+    if (y > best.y) best = { tilt:b, y, plane:tv.year };
+  }
+  return (SOLAR_OPT[key] = Object.assign(best, { measured:hm.measured }));
+}
+/**
+ * The collector field on the roof, in the bar's own metres (x along the main
+ * facade, y toward the back, z up): modules flush on the slope that faces
+ * the main facade — portrait, in columns and rows, 0.4 m up from the eave,
+ * clear of the ridge and, on a hip roof, of the hips — or, on a flat roof,
+ * rows racked at the optimum pitch and spaced so the winter-noon sun clears
+ * the row in front. Returns the modules as quads, the corner point that
+ * resizes the field, and what fits.
+ */
+function solarField(G, RF, lat, optTilt) {
+  const sol = RF.sol;
+  if (!sol || sol.tech === 'none') return null;
+  const md = SOLAR_TECH[sol.tech], H0 = G.fl * G.fh, g = md.gap, mods = [];
+  if (RF.n === 0) {
+    const beta = optTilt * RAD, altMin = Math.max(5, 90 - Math.abs(lat) - 23.44) * RAD;
+    const row = md.h * Math.cos(beta) + md.h * Math.sin(beta) / Math.tan(altMin);
+    const maxC = Math.floor((G.L - 0.8 + g) / (md.w + g)), maxR = Math.floor((G.D - 0.8 - md.h * Math.cos(beta)) / row) + 1;
+    if (maxC < 1 || maxR < 1) return { fits:false, maxC, maxR, c:0, r:0, mods, md };
+    const c = clamp(sol.cols, 1, maxC), r = clamp(sol.rows, 1, maxR);
+    const W = c * md.w + (c - 1) * g, y0 = -G.D / 2 + 0.4, z0 = H0 + 0.3;
+    for (let j = 0; j < r; j++) for (let i = 0; i < c; i++) {
+      const x0 = -W / 2 + i * (md.w + g), x1 = x0 + md.w, ya = y0 + j * row, yb = ya + md.h * Math.cos(beta), zb = z0 + md.h * Math.sin(beta);
+      mods.push({ i, j, q:[[x0, ya, z0], [x1, ya, z0], [x1, yb, zb], [x0, yb, zb]] });
+    }
+    return { fits:true, flat:true, c, r, maxC, maxR, md, beta, row, y0, z0, W, tilt:optTilt, mods,
+      handle:[W / 2, y0 + (r - 1) * row + md.h * Math.cos(beta), z0 + md.h * Math.sin(beta)] };
+  }
+  const th = RF.th * RAD, span = (RF.n === 2 || RF.n === 3) ? G.D / 2 : G.D, Ls = span / Math.cos(th), s0 = 0.4;
+  const P = (x, sl) => [x, -G.D / 2 + sl * Math.cos(th), H0 + sl * Math.sin(th) + 0.03];
+  const maxR = Math.floor((Ls - s0 - 0.2 + g) / (md.h + g));
+  const r = clamp(sol.rows, 1, Math.max(1, maxR));
+  const sTop = s0 + r * md.h + (r - 1) * g;
+  const avail = RF.n === 3 ? G.L - 2 * sTop * Math.cos(th) : G.L;
+  const maxC = Math.floor((avail - 0.6 + g) / (md.w + g));
+  if (maxR < 1 || maxC < 1) return { fits:false, maxC, maxR, c:0, r:0, mods, md };
+  const c = clamp(sol.cols, 1, maxC), W = c * md.w + (c - 1) * g;
+  for (let j = 0; j < r; j++) for (let i = 0; i < c; i++) {
+    const x0 = -W / 2 + i * (md.w + g), sa = s0 + j * (md.h + g);
+    mods.push({ i, j, q:[P(x0, sa), P(x0 + md.w, sa), P(x0 + md.w, sa + md.h), P(x0, sa + md.h)] });
+  }
+  return { fits:true, flat:false, c, r, maxC, maxR, md, th, s0, W, tilt:RF.th, mods, P, handle:P(W / 2, sTop) };
+}
+/** Forget a failed fetch so the next call tries again. */
+function retryRadiation(site) {
+  const key = site.lat.toFixed(2) + ',' + site.lon.toFixed(2);
+  if (RADIATION[key] && RADIATION[key].failed) delete RADIATION[key];
+}
+/** The months to compute with: the site's own when loaded, the estimate otherwise. */
+function horizontalMonths(site) {
+  const rec = radiationFor(site);
+  if (rec.H) return { H:rec.H, measured:true };
+  return { H:MEAN_DAY.map((_, m) => 0.55 * solarMonth(site.lat, m).H0), measured:false };
 }
 /** 0–100 fit of a finish to that summer — every step above the light class
     weighed by the summer's weight; null until a finish is chosen. */
@@ -3503,10 +3673,42 @@ function buildRoof(host) {
     else if (sc >= 50) { pillRoofCol.className = 'pill empty'; pillRoofCol.textContent = head + t('lighten it for the summer here'); }
     else { pillRoofCol.className = 'pill bad'; pillRoofCol.textContent = head + t('the summer here will overheat this roof'); }
   }
+  /* --- solar collection on the roof: PV panels or thermal collectors -------
+     The collecting slope is the one over the main facade, so it faces the
+     azimuth set on Site. The site's irradiation is fetched once; until it
+     arrives the numbers stand on the labelled estimate. */
+  if (!RF.sol) RF.sol = { tech:'none', cols:4, rows:2 };
+  const slopeAz = () => G.rot;
+  let solarRedraw = () => {};
+  radiationFor(S, () => solarRedraw());
+  /** Everything the page says about the field: what fits, its area, the
+      sun on its plane and at the optimum, and the year's output. */
+  const solarNow = () => {
+    const sol = RF.sol;
+    if (!sol || sol.tech === 'none') return null;
+    const opt = solarOptimum(S, sol.tech, slopeAz(), C.t);
+    const fld = solarField(G, RF, lat, opt.tilt);
+    const tilt = RF.n === 0 ? opt.tilt : RF.th;
+    const hm = horizontalMonths(S), tp = tiltedYear(hm.H, lat, tilt, slopeAz());
+    const perM2 = solarYield(sol.tech, tp.mon, lat, C.t);
+    const md = SOLAR_TECH[sol.tech], n = fld && fld.fits ? fld.c * fld.r : 0, area = n * md.w * md.h;
+    return { sol, opt, fld, tilt, plane:tp.year, perM2, n, area, out:area * perM2,
+      kWp:sol.tech === 'pv' ? area * md.eff : null, ratio:opt.y > 0 ? perM2 / opt.y : 0, measured:hm.measured };
+  };
+  const scoresRoofBase = SCORES.roof;
+  SCORES.roof = () => {
+    const o = scoresRoofBase(), sn = solarNow();
+    if (sn) Object.assign(o, { 'Solar collection':sn.sol.tech === 'pv' ? 'PV panels' : 'thermal collectors', 'Collector area (m²)':+sn.area.toFixed(1),
+      'Sun on the collector plane (kWh/m²·year)':Math.round(sn.plane), 'Collector pitch (°)':sn.tilt, 'Optimum pitch (°)':sn.opt.tilt,
+      '% of the optimum':Math.round(100 * sn.ratio), [sn.sol.tech === 'pv' ? 'PV electricity (kWh/year)' : 'Useful heat (kWh/year)']:Math.round(sn.out),
+      'Irradiation':sn.measured ? 'ERA5 1991–2020 (Open-Meteo)' : 'estimate, clearness 0.55' });
+    return o;
+  };
   /* The pill and the corner box read the same score, so the page never
      gives two verdicts on one pitch. */
   function refreshRoof() {
     refreshRoofCol();
+    refreshSolar();
     if (RF.n === 0) { pillRoof.className = 'pill empty'; pillRoof.textContent = t('Flat — frame the collectors, insulate for summer'); return; }
     const sc = roofFit();
     if (sc >= 80) { pillRoof.className = 'pill ok'; pillRoof.textContent = t('Near this site’s solar pitch'); }
@@ -3528,8 +3730,8 @@ function buildRoof(host) {
     const fanTop = H0 + span * Math.tan(idealW * RAD);   // winter is always the steepest ideal marker
     const margin = 3;                          // room for the sun rays
     const half = G.L / 2 + G.D / 2 + margin;
-    const narrow = W < 600;   // phone width: the badges run in a row across the top
-    const top = narrow ? 74 : 14, bottom = H - 34;
+    const narrow = W < 600;   // phone width: the badges run in two rows across the top
+    const top = narrow ? 142 : 14, bottom = H - 34;
     const availV = Math.max(40, bottom - top);
     const sByW = (W / 2 - 16) / (half * ISO_C);
     const sByH = availV / (half * ISO_S * 2 + Math.max(ridge, fanTop));
@@ -3544,7 +3746,7 @@ function buildRoof(host) {
   roofPanel = makePanel(host, {
     title: 'The roof in three dimensions',
     note: 'Isometric view, matching the Site tab — the plan comes from there. Drag the black handle to re-pitch the roof; the green gauge shows each ideal pitch — from the east ridge end on a hip roof, the eave corner otherwise — drag until the slope runs parallel to the season ray. The lines behind the ridge are the hidden north eave and east rake, closed by the east eave.',
-    heightFn: w => w < 600 ? Math.round(w * 0.95 + 70) : Math.round(w / 1.7),
+    heightFn: w => w < 600 ? Math.round(w * 0.95 + 140) : Math.round(w / 1.7),
     render(ctx, W, H) {
       const FR = roofFrame(W, H), narrow = W < 600;
       const { H0, th, ridge } = FR;
@@ -3623,6 +3825,37 @@ function buildRoof(host) {
         const hee0 = proj(G.L/2, -G.D/2, H0), hee1 = proj(G.L/2, G.D/2, H0);
         stroke(ctx, CH.ink, 1.4); seg(ctx, hee0[0], hee0[1], hee1[0], hee1[1]);
       }
+      /* the collector field: dark-blue PV modules with their cell lines, or
+         flat-plate collectors with an aluminium frame and their risers;
+         racked rows on a flat roof go down back to front, each on its legs */
+      const sn = solarNow();
+      if (sn && sn.fld && sn.fld.fits) {
+        const pv = sn.sol.tech === 'pv', fl = sn.fld;
+        const mods = fl.flat ? fl.mods.slice().sort((a, b) => b.j - a.j || a.i - b.i) : fl.mods;
+        const lerp = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
+        mods.forEach(mo => {
+          const q = mo.q;
+          if (fl.flat) {   // the rack's two legs under the raised edge
+            stroke(ctx, '#64748b', 1);
+            [q[2], q[3]].forEach(p => { const a = proj(p[0], p[1], p[2]), b = proj(p[0], p[1], H0); seg(ctx, a[0], a[1], b[0], b[1]); });
+          }
+          poly(q, pv ? '#1e3a8a' : '#111827', pv ? '#0f172a' : '#cbd5e1', pv ? 0.9 : 1.3);
+          stroke(ctx, pv ? 'rgba(255,255,255,.28)' : 'rgba(203,213,225,.55)', 0.7);
+          if (pv) {
+            [1 / 3, 2 / 3].forEach(t0 => { const a = proj(...lerp(q[0], q[3], t0)), b = proj(...lerp(q[1], q[2], t0)); seg(ctx, a[0], a[1], b[0], b[1]); });
+            { const a = proj(...lerp(q[0], q[1], 0.5)), b = proj(...lerp(q[3], q[2], 0.5)); seg(ctx, a[0], a[1], b[0], b[1]); }
+          } else {
+            [0.2, 0.4, 0.6, 0.8].forEach(t0 => { const a = proj(...lerp(q[0], q[1], t0)), b = proj(...lerp(q[3], q[2], t0)); seg(ctx, a[0], a[1], b[0], b[1]); });
+          }
+        });
+        // the field's corner point: drag it to add or take away columns and rows
+        const hq = proj(fl.handle[0], fl.handle[1], fl.handle[2]);
+        ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(hq[0], hq[1], 7.5, 0, 6.284); ctx.fill();
+        stroke(ctx, CH.ink, 1); ctx.stroke();
+        ctx.fillStyle = '#D97706'; ctx.beginPath(); ctx.arc(hq[0], hq[1], 4.2, 0, 6.284); ctx.fill();
+        desk.block(hq[0] - 9, hq[1] - 9, hq[0] + 9, hq[1] + 9);
+      }
+
       // the ridge (or top edge) the height label will sit beside
       const ridgeY = (RF.n === 2 || RF.n === 3) ? 0 : G.D / 2;
       const ridgeHalf = RF.n === 3 ? Math.max(0, G.L / 2 - G.D / 2) : G.L / 2;
@@ -3673,18 +3906,21 @@ function buildRoof(host) {
       label(ctx, 'θ ' + fmt(RF.n === 0 ? 0 : RF.th, 0) + '° · ' + t('South collector') + ' ' + fmt(coll, 0) + ' m² · '
         + t('ridge') + ' ' + fmt(ridge, 1) + ' m' + (narrow ? '' : (hitTag ? ' · = ' + t(hitTag) + ' ideal' : '')
         + ' · ' + t('site target') + ' ' + fmt(target, 0) + '°'),
-        8, narrow ? 62 : 12, CH.ink2, FM(narrow ? 9.5 : 11), 'left', 'middle');
+        8, narrow ? 112 : 12, CH.ink2, FM(narrow ? 9.5 : 11), 'left', 'middle');
 
       // corner boxes — the same convention as Site, Windows & Shading and
       // Ventilation: the pitch's fit to this site's target, and the sun its
       // south slope catches in the season that matters here
-      const bw = narrow ? Math.min(84, (W - 8 - 12) / 4) : 84, bh = narrow ? 46 : 52;
+      const bw = narrow ? Math.min(100, (W - 16) / 3) : 84, bh = narrow ? 46 : 52;
       const badge = (i, value, col, caption) => {
-        const bx = narrow ? 4 + i * (bw + 4) : W - 92, by = narrow ? 4 : 6 + i * 58;
+        const bx = narrow ? 4 + (i % 3) * (bw + 4) : W - 92, by = narrow ? 4 + Math.floor(i / 3) * (bh + 4) : 6 + i * 58;
         ctx.fillStyle = '#fff';
         ctx.fillRect(bx, by, bw, bh);
         stroke(ctx, col, 1.5); ctx.strokeRect(bx, by, bw, bh);
-        label(ctx, value === null ? '–' : String(value), bx + bw / 2, by + (narrow ? 19 : 25), col, FM(narrow ? 18 : 24), 'center', 'middle');
+        let vs = narrow ? 18 : 24;   // a long number shrinks to stay inside the box
+        ctx.font = FM(vs);
+        while (vs > 11 && ctx.measureText(value === null ? '–' : String(value)).width > bw - 8) { vs -= 1; ctx.font = FM(vs); }
+        label(ctx, value === null ? '–' : String(value), bx + bw / 2, by + (narrow ? 19 : 25), col, FM(vs), 'center', 'middle');
         let cs = narrow ? 8 : 9;   // longer captions shrink to stay inside the box
         ctx.font = F(cs);
         while (cs > 6 && ctx.measureText(t(caption)).width > bw - 6) { cs -= 0.5; ctx.font = F(cs); }
@@ -3698,11 +3934,26 @@ function buildRoof(host) {
       const racol = raf === null ? CH.faint : raf >= 80 ? '#16A34A' : raf >= 50 ? '#D97706' : '#DC2626';
       badge(2, raf, racol, t('Albedo fit') + ' /100');
       badge(3, rfin ? fmt(1 - FINISH_ALPHA[rfin.cls], 2) : null, racol, t('Albedo · ' + sumBand + ' summer'));
-      for (let i = 0; i < 4; i++) {
-        const bx = narrow ? 4 + i * (bw + 4) : W - 92, by = narrow ? 4 : 6 + i * 58;
+      // the collectors: the year's output, and how much of the optimum the pitch keeps
+      let nb = 4;
+      if (sn) {
+        const good = sn.fld && sn.fld.fits;
+        badge(4, good ? Math.round(sn.out).toLocaleString(LANG === 'pt' ? 'pt-PT' : 'en-GB') : null, good ? '#2563EB' : CH.faint,
+          t(sn.sol.tech === 'pv' ? 'PV kWh/year' : 'Heat kWh/year'));
+        const rp = Math.round(100 * sn.ratio);
+        badge(5, rp, rp >= 97 ? '#16A34A' : rp >= 90 ? '#D97706' : '#DC2626', t('% of the optimum'));
+        nb = 6;
+        const line = t(sn.sol.tech === 'pv' ? 'PV' : 'Thermal') + ' · ' + (good ? sn.fld.c + ' × ' + sn.fld.r + ' = ' + sn.n + ' · ' + fmt(sn.area, 1) + ' m²'
+          + (sn.kWp !== null ? ' · ' + fmt(sn.kWp, 1) + ' kWp' : '') : t('no room on this slope'))
+          + ' · ' + fmt(sn.plane, 0) + ' kWh/m² ' + t('at') + ' ' + sn.tilt + '° · ' + t('optimum') + ' ' + sn.opt.tilt + '°' + (sn.measured ? '' : ' · ' + t('estimate'));
+        const lineN = t(sn.sol.tech === 'pv' ? 'PV' : 'Thermal') + ' · ' + (good ? sn.n + ' · ' + fmt(sn.area, 1) + ' m²' : '–') + ' · ' + fmt(sn.plane, 0) + ' kWh/m² · ' + sn.tilt + '°/' + sn.opt.tilt + '°';
+        label(ctx, narrow ? lineN : line, 8, narrow ? 130 : 30, '#1D4ED8', FM(narrow ? 9 : 10.5), 'left', 'middle');
+      }
+      for (let i = 0; i < nb; i++) {
+        const bx = narrow ? 4 + (i % 3) * (bw + 4) : W - 92, by = narrow ? 4 + Math.floor(i / 3) * (bh + 4) : 6 + i * 58;
         desk.block(bx - 2, by - 2, bx + bw + 2, by + bh + 2);
       }
-      desk.block(0, 0, 12 + W * 0.55, narrow ? 72 : 22);   // the readout line
+      desk.block(0, 0, 12 + W * 0.6, narrow ? 138 : (sn ? 40 : 22));   // the readout lines
 
       /* --- the numbers, last, each beside its line and on its own pad ------ */
       {
@@ -3739,9 +3990,63 @@ function buildRoof(host) {
       ['Roof albedo (1 − α)', finishOf(RF.col) ? +(1 - FINISH_ALPHA[finishOf(RF.col).cls]).toFixed(2) : ''],
       ['Summer mean, Jun–Sep (°C)', +sumT.toFixed(1)],
       ['Roof albedo fit (0–100)', roofAlbFit() === null ? '' : roofAlbFit()],
+      ...solarCsvRows(),
       ['Köppen–Geiger', STATE.clim.k.code]]);
     }
   });
+
+  /* --- the solar bar, right above the model: the technology, the field in
+     columns and rows (or its corner point on the model), and what it reads */
+  const cCols = numCtl('Columns', 1, 30, 1, RF.sol.cols, v => { RF.sol.cols = v; roofDraw(); }, null);
+  const cRows = numCtl('Rows', 1, 12, 1, RF.sol.rows, v => { RF.sol.rows = v; roofDraw(); }, null);
+  const syncField = () => {
+    const sn = solarNow(), on = !!sn;
+    cCols.hidden = cRows.hidden = !on;
+    if (sn && sn.fld && sn.fld.fits) { cCols.input.value = sn.fld.c; cRows.input.value = sn.fld.r; }
+  };
+  const cTech = segCtl('Solar collection', [{ value:'none', label:'None' }, { value:'pv', label:'PV panels' }, { value:'thermal', label:'Thermal collectors' }],
+    RF.sol.tech, v => {
+      /* a household-sized start: 8 PV modules (about 3 kWp), or two
+         collectors (4 m²) — the student sizes it from there */
+      if (v !== RF.sol.tech) { if (v === 'pv') { RF.sol.cols = 4; RF.sol.rows = 2; } else if (v === 'thermal') { RF.sol.cols = 2; RF.sol.rows = 1; } }
+      if (radiationFor(S).failed) { retryRadiation(S); radiationFor(S, () => solarRedraw()); }
+      RF.sol.tech = v; roofDraw();
+    });
+  roofPanel.body.insertBefore(el('div', { class:'controls', style:'margin:0 0 8px' },
+    [cTech, cCols, cRows, el('span', { class:'hint', text:t('Drag the amber point at the field’s corner to size it on the roof') })]), roofPanel.body.firstChild);
+  const pillSolar = el('span', { class:'pill empty' });
+  host.appendChild(el('div', { class:'limitrow' }, [pillSolar]));
+  function refreshSolar() {
+    syncField();
+    const sn = solarNow();
+    if (!sn) { pillSolar.className = 'pill empty'; pillSolar.textContent = t('No collectors — choose PV panels or thermal collectors above the model'); return; }
+    const facing = COMPASS8[Math.round(slopeAz() / 45) % 8];
+    const what = t(sn.sol.tech === 'pv' ? 'PV panels' : 'Thermal collectors');
+    if (!sn.fld || !sn.fld.fits) { pillSolar.className = 'pill bad'; pillSolar.textContent = what + ' — ' + t('no room on this slope for one module'); return; }
+    const rp = Math.round(100 * sn.ratio);
+    const where = RF.n === 0 ? t('racked on the flat roof at the optimum') + ' ' + sn.tilt + '°'
+      : t('on the roof at') + ' ' + sn.tilt + '° ' + t('facing') + ' ' + facing + (Math.abs(sn.tilt - sn.opt.tilt) <= 2 ? ' — ' + t('the roof pitch is the optimum') : ' — ' + t('optimum') + ' ' + sn.opt.tilt + '°, ' + rp + ' % ' + t('of its yield'));
+    pillSolar.className = 'pill ' + (rp >= 97 ? 'ok' : rp >= 90 ? 'empty' : 'bad');
+    pillSolar.textContent = what + ' ' + where + ' · ' + fmt(sn.plane, 0) + ' kWh/m²·' + t('year on the plane') + ' · '
+      + Math.round(sn.out).toLocaleString(LANG === 'pt' ? 'pt-PT' : 'en-GB') + ' kWh/' + t('year of') + ' ' + t(sn.sol.tech === 'pv' ? 'electricity' : 'heat at 50 °C')
+      + (sn.measured ? '' : ' · ' + t(radiationFor(S).failed ? 'estimate — the site’s irradiation could not be loaded; choose the collector again to retry' : 'estimate until the site’s irradiation loads'));
+  }
+  function solarCsvRows() {
+    const sn = solarNow();
+    if (!sn) return [['Solar collection', 'none']];
+    return [['Solar collection', sn.sol.tech === 'pv' ? 'PV panels' : 'thermal collectors'],
+      ['Collector field (columns × rows)', sn.fld && sn.fld.fits ? sn.fld.c + ' × ' + sn.fld.r : 'does not fit'],
+      ['Collector area (m²)', +sn.area.toFixed(2)], ['Collector azimuth (°)', slopeAz()], ['Collector pitch (°)', sn.tilt],
+      ['Optimum pitch (°)', sn.opt.tilt], ['Sun on the collector plane (kWh/m²·year)', Math.round(sn.plane)],
+      ['Sun at the optimum pitch (kWh/m²·year)', Math.round(sn.opt.plane)], ['Share of the optimum yield (%)', Math.round(100 * sn.ratio)],
+      [sn.sol.tech === 'pv' ? 'PV peak power (kWp)' : 'Collector gross area (m²)', sn.sol.tech === 'pv' ? +sn.kWp.toFixed(2) : +sn.area.toFixed(2)],
+      [sn.sol.tech === 'pv' ? 'PV electricity (kWh/year)' : 'Useful heat at 50 °C (kWh/year)', Math.round(sn.out)],
+      ['Horizontal irradiation (kWh/m²·year)', Math.round(horizontalMonths(S).H.reduce((a, h, m) => a + h * MONTH_DAYS[m], 0) / 3.6)],
+      ['Irradiation source', sn.measured ? 'ERA5 1991–2020 via Open-Meteo' : 'estimate: clearness index 0.55 × extraterrestrial']];
+  }
+  solarRedraw = () => { roofDraw(); };
+  host.appendChild(hint('roof-solar',
+    'Choose <b>PV panels</b> or <b>thermal collectors</b> above the model, then size the field — by its columns and rows, or by dragging the amber point at its corner across the roof. The modules lie flush on the slope over the main facade, so they face the direction set on Site; on a flat roof they stand in racked rows at the optimum pitch, spaced so the 21 December noon sun clears the row in front. The sun on the collector plane is read from the site’s own horizontal irradiation — daily shortwave radiation 1991–2020 from the ERA5 reanalysis (Hersbach et al., 2020), via Open-Meteo — carried onto the tilted plane month by month with the method of Duffie &amp; Beckman: the Erbs, Klein &amp; Duffie monthly split into beam and diffuse, the beam ratio over each month’s mean day (Klein), the isotropic sky and 20 % ground reflection. <b>% of the optimum</b> compares the yield at the roof’s pitch with the best pitch for that technology here, found by trying every degree. PV: modules of about 20 % efficiency (0.20 kWp per m²) and a performance ratio of 0.80 (IEC 61724-1) give the electricity. Thermal: a flat-plate collector read by the EN ISO 9806 efficiency curve with typical coefficients (η0 0.78, a1 3.5, a2 0.015) at a 50 °C mean fluid against each month’s air temperature gives the heat it can collect — more than a house draws in summer, so a real system’s solar fraction is lower. A real module’s or collector’s datasheet replaces these figures. Without the site’s data the numbers rest on an assumed clearness index of 0.55 and say so.'));
   refreshRoof();
 
   /* --- direct pitch: drag the west slope up or down -------------------------
@@ -3796,10 +4101,47 @@ function buildRoof(host) {
     syncCtl(cP, RF.th, v => fmt(v, 0) + '°');
     roofDraw();
   };
-  let rdrag = false;
+  let rdrag = false, fdrag = false;
+  /** Is the pointer on the collector field's corner point? */
+  const fieldHandleAt = (clientX, clientY) => {
+    const sn = solarNow();
+    if (!sn || !sn.fld || !sn.fld.fits || !roofPanel.W) return false;
+    const r = rcv.getBoundingClientRect(), FR = roofFrame(roofPanel.W, roofPanel.H);
+    const q = projF(FR, sn.fld.handle[0], sn.fld.handle[1], sn.fld.handle[2]);
+    return Math.hypot(clientX - r.left - q[0], clientY - r.top - q[1]) <= 12;
+  };
+  /** The corner point follows the pointer on the roof plane — the slope, or
+      the racks' top edge on a flat roof — and the field snaps to whole
+      modules, centred along the eave. */
+  const doFieldDrag = (clientX, clientY) => {
+    const sn = solarNow();
+    if (!sn || !sn.fld || !sn.fld.fits) return;
+    const r = rcv.getBoundingClientRect(), FR = roofFrame(roofPanel.W, roofPanel.H), fl = sn.fld, md = fl.md;
+    const a = (clientX - r.left - FR.cx) / (ISO_C * FR.s), bb = (FR.cy - (clientY - r.top)) / FR.s;   // x − y = a, (x + y)·sin30 + z = bb
+    let x, rows;
+    if (fl.flat) {
+      const sum = (bb - fl.handle[2]) / ISO_S, y = (sum - a) / 2;
+      x = (a + sum) / 2;
+      rows = 1 + Math.round((y - fl.y0 - md.h * Math.cos(fl.beta)) / fl.row);
+    } else {
+      const sl = (bb - a * ISO_S + ISO_S * G.D - FR.H0 - 0.03) / (2 * ISO_S * Math.cos(fl.th) + Math.sin(fl.th));
+      x = a + (-G.D / 2 + sl * Math.cos(fl.th));
+      rows = Math.round((sl - fl.s0 + md.gap) / (md.h + md.gap));
+    }
+    RF.sol.cols = clamp(Math.round((2 * Math.abs(x) + md.gap) / (md.w + md.gap)), 1, Math.max(1, fl.maxC));
+    RF.sol.rows = clamp(rows, 1, Math.max(1, fl.maxR));
+    roofDraw();
+  };
 
   /* --- pointer events (pen / touch) --- */
   rcv.addEventListener('pointerdown', ev => {
+    if (fieldHandleAt(ev.clientX, ev.clientY)) {
+      ev.preventDefault();
+      fdrag = true;
+      try { rcv.setPointerCapture(ev.pointerId); } catch (err) {}
+      rcv.style.cursor = 'grabbing';
+      return;
+    }
     if (!nearSlope(ev.clientX, ev.clientY)) return;
     ev.preventDefault();
     rdrag = true;
@@ -3807,19 +4149,20 @@ function buildRoof(host) {
     rcv.style.cursor = 'grabbing';
   });
   rcv.addEventListener('pointermove', ev => {
+    if (fdrag) { ev.preventDefault(); doFieldDrag(ev.clientX, ev.clientY); return; }
     if (!rdrag) {
-      rcv.style.cursor = nearSlope(ev.clientX, ev.clientY) ? 'grab' : 'ns-resize';
+      rcv.style.cursor = fieldHandleAt(ev.clientX, ev.clientY) ? 'move' : nearSlope(ev.clientX, ev.clientY) ? 'grab' : 'ns-resize';
       return;
     }
     ev.preventDefault();
     doDrag(ev.clientX, ev.clientY);
   });
-  rcv.addEventListener('pointerup', () => { rdrag = false; rcv.style.cursor = 'ns-resize'; });
-  rcv.addEventListener('pointercancel', () => { rdrag = false; rcv.style.cursor = 'ns-resize'; });
+  rcv.addEventListener('pointerup', () => { rdrag = fdrag = false; rcv.style.cursor = 'ns-resize'; });
+  rcv.addEventListener('pointercancel', () => { rdrag = fdrag = false; rcv.style.cursor = 'ns-resize'; });
 
   /* --- mouse fallback (trackpad / old browsers) --- */
   rcv.addEventListener('mousedown', ev => {
-    if (!nearSlope(ev.clientX, ev.clientY)) return;
+    if (fieldHandleAt(ev.clientX, ev.clientY) || !nearSlope(ev.clientX, ev.clientY)) return;
     ev.preventDefault();
     rdrag = true;
     rcv.style.cursor = 'grabbing';
@@ -6767,6 +7110,18 @@ const REFS = [
    'The bioclimatic method itself, and the reading of orientation and form as climate responses before they are anything else.', null],
   ['DeKay, M., &amp; Brown, G. Z. (2014). <i>Sun, wind, and light: Architectural design strategies</i> (3rd ed.). Wiley.',
    'Design strategies stated as quantities a student can test a plan against — building depth for daylight, orientation, glazing area and the organisation of the plan.', null],
+  ['Duffie, J. A., &amp; Beckman, W. A. (2013). <i>Solar engineering of thermal processes</i> (4th ed.). Wiley.',
+   'The monthly-average-day method the Roof tab carries the site’s irradiation onto a collector with: clearness index, beam and diffuse split, the beam ratio over the mean day, the isotropic sky.', null],
+  ['Erbs, D. G., Klein, S. A., &amp; Duffie, J. A. (1982). Estimation of the diffuse radiation fraction for hourly, daily and monthly-average global radiation. <i>Solar Energy, 28</i>(4), 293–302.',
+   'The monthly correlation that splits the horizontal irradiation into its beam and diffuse parts.', null],
+  ['Klein, S. A. (1977). Calculation of monthly average insolation on tilted surfaces. <i>Solar Energy, 19</i>(4), 325–329.',
+   'The mean day of each month and the beam ratio on a tilted surface.', null],
+  ['Hersbach, H., et al. (2020). The ERA5 global reanalysis. <i>Quarterly Journal of the Royal Meteorological Society, 146</i>(730), 1999–2049.',
+   'The reanalysis behind the site’s daily solar radiation, 1991–2020, read through Open-Meteo.', 'https://doi.org/10.1002/qj.3803'],
+  ['EN ISO 9806:2017. <i>Solar energy — Solar thermal collectors — Test methods</i>. CEN.',
+   'The efficiency curve — η0, a1, a2 — a thermal collector is read by; the Roof tab uses typical flat-plate values.', null],
+  ['IEC 61724-1:2021. <i>Photovoltaic system performance — Part 1: Monitoring</i>. IEC.',
+   'The performance ratio the PV output is reduced by for a real system’s losses.', null],
   ['Lechner, N. (2015). <i>Heating, cooling, lighting: Sustainable design methods for architects</i> (4th ed.). Wiley.',
    'Solar geometry, shading design, and the ordering of passive strategy before mechanical provision.', null],
   ['Hyde, R. (Ed.). (2008). <i>Bioclimatic housing: Innovative designs for warm climates</i>. Earthscan.',
@@ -7011,6 +7366,18 @@ function exportModel() {
     add('slab', 'Ground floor', 'AA-FLOOR', pl.cells.map(c => [[[c[0], c[1], 0], [c[2], c[1], 0], [c[2], c[3], 0], [c[0], c[3], 0]], [0, 0, -1]]));
   }
 
+  /* the collector field chosen on Roof, module by module, as it sits on the
+     slope over the main facade or racked on a flat roof */
+  if (RF.sol && RF.sol.tech !== 'none') {
+    const opt = solarOptimum(STATE.site, RF.sol.tech, G.rot, STATE.clim.t);
+    const fld = solarField(G, RF, STATE.site.lat, opt.tilt);
+    if (fld && fld.fits) {
+      const b0 = (fld.flat ? fld.tilt : RF.th) * RAD, nrm = [0, -Math.sin(b0), Math.cos(b0)];
+      fld.mods.forEach((mo, k) => add('solar', (RF.sol.tech === 'pv' ? 'PV module ' : 'Solar collector ') + (k + 1), 'AA-SOLAR', [[mo.q, nrm]],
+        { solarType:RF.sol.tech === 'pv' ? 'SOLARPANEL' : 'SOLARCOLLECTOR', pitch:fld.tilt }));
+    }
+  }
+
   /* the attached sunspace, a glazed box on its facade */
   if (SUNSP && SUNSP.on) {
     const f = SUNSP.face, n = FN[f], W = (f === 'S' || f === 'N' ? L : D) * SUNSP.widthFrac, hS = Math.min(H0, 3), d = SUNSP.depth;
@@ -7046,7 +7413,7 @@ const cadStem = () => slugify(sitePrefix() + 'architecture-advisor') || 'archite
 
 /** DXF, AutoCAD R12 flavour: one 3DFACE per triangle or quad, on layers. */
 function toDXF(els) {
-  const layers = { 'AA-WALLS':8, 'AA-GLAZING':5, 'AA-ROOF':1, 'AA-FLOOR':9, 'AA-SHADING':30, 'AA-SUNSPACE':4,
+  const layers = { 'AA-WALLS':8, 'AA-GLAZING':5, 'AA-ROOF':1, 'AA-FLOOR':9, 'AA-SHADING':30, 'AA-SUNSPACE':4, 'AA-SOLAR':150,
     'AA-SITE-WALLS':6, 'AA-PLANTING':3, 'AA-NORTH':7 };
   const o = ['0', 'SECTION', '2', 'HEADER', '9', '$ACADVER', '1', 'AC1009', '9', '$INSUNITS', '70', '6', '0', 'ENDSEC',
     '0', 'SECTION', '2', 'TABLES', '0', 'TABLE', '2', 'LAYER', '70', String(Object.keys(layers).length)];
@@ -7127,6 +7494,7 @@ function toIFC(els) {
       : x.kind === 'slab' ? e('IFCSLAB(' + head + '$,' + pl2 + ',' + shape + ',$,.FLOOR.)')
       : x.kind === 'shading' ? e('IFCSHADINGDEVICE(' + head + str(x.device) + ',' + pl2 + ',' + shape + ',$,.USERDEFINED.)')
       : x.kind === 'plant' ? e('IFCGEOGRAPHICELEMENT(' + head + str(x.plantKind === 'bush' ? 'Bush' : 'Tree') + ',' + pl2 + ',' + shape + ',$,.USERDEFINED.)')
+      : x.kind === 'solar' ? e('IFCSOLARDEVICE(' + head + '$,' + pl2 + ',' + shape + ',$,.' + x.solarType + '.)')
       : e('IFCBUILDINGELEMENTPROXY(' + head + "'Sunspace'," + pl2 + ',' + shape + ',$,.USERDEFINED.)');
     (onSiteKind ? onSite : inStorey).push(ent);
   });
@@ -7153,7 +7521,8 @@ function toDecisionsJSON() {
       plan:{ length:MASS.L, depth:MASS.D, mainFacadeAzimuth:MASS.rot, floors:MASS.fl, floorHeight:MASS.fh,
         form:MASS.form || 'rect', wing:MASS.form && MASS.form !== 'rect' && MASS.wing ? Object.assign({}, MASS.wing) : null,
         wallColour:colourOf(fin) },
-      roof:{ type:['flat', 'shed', 'gable', 'hip'][ROOF.n], pitch:ROOF.n === 0 ? 0 : ROOF.th, roofColour:colourOf(rfin) },
+      roof:{ type:['flat', 'shed', 'gable', 'hip'][ROOF.n], pitch:ROOF.n === 0 ? 0 : ROOF.th, roofColour:colourOf(rfin),
+        solar:ROOF.sol && ROOF.sol.tech !== 'none' ? { technology:ROOF.sol.tech === 'pv' ? 'photovoltaic panels' : 'flat-plate thermal collectors', columns:ROOF.sol.cols, rows:ROOF.sol.rows } : null },
       openings:OPEN, sunspace:SUNSP, roofWindows:RWIN,
       planting:SCENE.veg.map(v => { const q = SCENE.plant ? SCENE.plant(v) : null;
         return { species:q ? q.name : v.type, sci:q ? q.sci : null, x:v.x, y:v.y, height:v.height, trunk:v.trunk, canopy:v.canopy, density:v.density }; }),
@@ -7649,7 +8018,7 @@ function mountApp(site, clim, keepTab, keepModel) {
   if (!(keepModel && MASS)) {   // a language switch keeps the student's model; a new site starts afresh
   SCENE.veg.length = 0; SCENE.walls.length = 0;
   MASS = { L:12, D:8, rot:180, fl:1, fh:3.0, col:null, form:'rect', wing:null };
-  ROOF = { n:2, th:Math.round(Math.abs(site.lat)), col:null };
+  ROOF = { n:2, th:Math.round(Math.abs(site.lat)), col:null, sol:{ tech:'none', cols:4, rows:2 } };
   /* One entry per local facade (S/N/E/W, matching the Roof tab's convention
      of true-south regardless of the plan's chosen rotation), each holding
      the window and its shading devices. wwr is a fraction of that facade's
@@ -8215,6 +8584,34 @@ Object.assign(PT, {
   "How much of the sun the roof reflects, read against this site’s summer": "Quanto do sol a cobertura reflecte, lido contra o verão deste local",
   "Pick a roof colour to read its albedo here": "Escolha uma cor de cobertura para ler aqui o seu albedo",
   "the summer here will overheat this roof": "o verão deste local vai sobreaquecer esta cobertura",
+  /* solar collection on Roof */
+  "Solar collection": "Captação solar",
+  "PV panels": "Painéis fotovoltaicos",
+  "Thermal collectors": "Colectores térmicos",
+  "Columns": "Colunas",
+  "Rows": "Filas",
+  "Drag the amber point at the field’s corner to size it on the roof": "Arraste o ponto âmbar no canto do campo para o dimensionar sobre a cobertura",
+  "No collectors — choose PV panels or thermal collectors above the model": "Sem colectores — escolha painéis fotovoltaicos ou colectores térmicos por cima do modelo",
+  "no room on this slope for one module": "não cabe um módulo nesta vertente",
+  "no room on this slope": "não cabe nesta vertente",
+  "racked on the flat roof at the optimum": "em estrutura na cobertura plana, à inclinação óptima de",
+  "on the roof at": "na cobertura a",
+  "facing": "virados a",
+  "the roof pitch is the optimum": "a inclinação da cobertura é a óptima",
+  "optimum": "óptimo",
+  "of its yield": "da sua produção",
+  "year on the plane": "ano no plano",
+  "year of": "ano de",
+  "electricity": "electricidade",
+  "heat at 50 °C": "calor a 50 °C",
+  "estimate until the site’s irradiation loads": "estimativa até carregar a irradiação do local",
+  "estimate — the site’s irradiation could not be loaded; choose the collector again to retry": "estimativa — não foi possível carregar a irradiação do local; escolha de novo o colector para tentar outra vez",
+  "PV kWh/year": "FV kWh/ano",
+  "Heat kWh/year": "Calor kWh/ano",
+  "% of the optimum": "% do óptimo",
+  "PV": "FV",
+  "Thermal": "Térmico",
+  "estimate": "estimativa",
   /* plan forms on Site */
   "Break the volume": "Quebrar o volume",
   "Mirror the L": "Espelhar o L",
@@ -8324,6 +8721,8 @@ Object.assign(PT, {
 
 /* --- the long captions, keyed by identifier ----------------------------- */
 Object.assign(PT_HINT, {
+  'roof-solar':
+    'Escolha <b>painéis fotovoltaicos</b> ou <b>colectores térmicos</b> por cima do modelo e dimensione o campo — pelas colunas e filas, ou arrastando o ponto âmbar no seu canto sobre a cobertura. Os módulos assentam na vertente sobre a fachada principal, pelo que ficam virados para a orientação definida no separador Local; numa cobertura plana ficam em filas sobre estrutura, à inclinação óptima, espaçadas para que o sol do meio-dia de 21 de Dezembro passe por cima da fila da frente. O sol no plano dos colectores é lido da irradiação horizontal do próprio local — radiação de onda curta diária 1991–2020 da reanálise ERA5 (Hersbach et al., 2020), via Open-Meteo — levada para o plano inclinado mês a mês pelo método de Duffie &amp; Beckman: a separação mensal em directa e difusa de Erbs, Klein &amp; Duffie, a razão da directa no dia médio de cada mês (Klein), o céu isotrópico e 20 % de reflexão do solo. A <b>% do óptimo</b> compara a produção à inclinação da cobertura com a da melhor inclinação para essa tecnologia neste local, encontrada grau a grau. FV: módulos de cerca de 20 % de rendimento (0,20 kWp por m²) e um índice de desempenho de 0,80 (IEC 61724-1) dão a electricidade. Térmico: um colector plano lido pela curva de rendimento da EN ISO 9806 com coeficientes típicos (η0 0,78, a1 3,5, a2 0,015), a uma temperatura média do fluido de 50 °C contra a temperatura do ar de cada mês, dá o calor que consegue captar — mais do que uma casa consome no verão, pelo que a fracção solar de um sistema real é menor. A ficha técnica de um módulo ou colector real substitui estes valores. Sem os dados do local, os números assentam num índice de limpidez assumido de 0,55 e dizem-no.',
   'site-form':
     'Quebre o volume com os botões por cima do modelo: um <b>L</b> acrescenta uma ala numa ponta, um <b>T</b> uma ao meio, um <b>H</b> uma em cada ponta, para os dois lados. Os pontos pretos no modelo são os seus vértices — arraste os cantos da barra para a esticar, e o canto livre de uma ala para a dimensionar e a rodar para trás da barra ou para a frente da fachada principal; <b>Espelhar o L</b> passa a sua ala para a outra ponta. Uma planta quebrada muda duas coisas que as caixas lêem ao mesmo tempo. <b>Sombra própria · inverno %</b> é a parte do sol de 21 de Dezembro nas paredes que o edifício retira a si próprio — cada parede amostrada a cada 0,75 m em três alturas, o sol a cada meia hora, cada amostra pesada por quão de frente o sol a atinge, e contada como perdida quando o raio de volta ao sol encontra uma ala (altura do beirado; coberturas inclinadas sombreiam um pouco mais). O mesmo teste a 21 de Junho dá a sombra de verão no indicador: alas que sombreiam uma parede a nascente ou a poente no verão ganham com isso, alas que sombreiam a fachada principal no inverno pagam por isso. O <b>fator de forma</b> é recalculado para todo o contorno — paredes até ao beirado em todo o perímetro, a cobertura sobre a sua área com a inclinação definida em Cobertura, o desvão estimado ala a ala — pelo que uma quebra quase sempre o aumenta: mais envolvente para o mesmo volume. O ajuste a Olgyay continua a ler a barra. Cobertura e Janelas e Sombreamento continuam a trabalhar sobre a barra; a Ventilação desenha as alas como volumes até ao beirado — sombreiam o jardim e afastam delas a plantação, enquanto as pontuações de escoamento continuam a ler a barra — e as alas entram na exportação 3D.',
   'roof-albedo':
