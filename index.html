@@ -617,7 +617,7 @@ footer{border-top:1px solid var(--line); margin-top:26px; background:var(--wash)
 /* ------------------------------------------------------------ 0. IDENTITY -- */
 const APP = {
   name:        'Architecture Advisor',
-  version:     '1.68.0',
+  version:     '1.69.0',
   author:      'Nuno Dinis Cortiços',
   institution: 'Lisbon School of Architecture, Universidade de Lisboa',
   builtWith:   'Claude Opus 5 (Anthropic)',
@@ -872,6 +872,103 @@ function label(ctx, text, x, y, color, font, align, base) {
 }
 /** Crisp hairline: canvas strokes straddle the coordinate, so offset by ½ px. */
 const px = v => Math.round(v) + 0.5;
+
+/**
+ * Labels that keep off the drawing. Register the lines and boxes already
+ * drawn; each label then tries its candidate spots in order and takes the
+ * first whose box touches none of them — or, when every spot is taken, the
+ * one that touches least — and sits on a white pad, so no line runs through
+ * a number. A placed label becomes an obstacle for the next one.
+ */
+function labelDesk(ctx, W, H) {
+  const segs = [], boxes = [], areas = [];
+  const inside = (x, y, poly) => {
+    let c = false;
+    for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+      const a = poly[i], b = poly[j];
+      if ((a[1] > y) !== (b[1] > y) && x < (b[0] - a[0]) * (y - a[1]) / (b[1] - a[1]) + a[0]) c = !c;
+    }
+    return c;
+  };
+  /** Liang–Barsky: does the segment touch the box? */
+  const touches = (b, s) => {
+    const x1 = s[0], y1 = s[1], dx = s[2] - x1, dy = s[3] - y1;
+    const p = [-dx, dx, -dy, dy], q = [x1 - b.x0, b.x1 - x1, y1 - b.y0, b.y1 - y1];
+    let t0 = 0, t1 = 1;
+    for (let i = 0; i < 4; i++) {
+      if (p[i] === 0) { if (q[i] < 0) return false; continue; }
+      const r = q[i] / p[i];
+      if (p[i] < 0) { if (r > t1) return false; if (r > t0) t0 = r; }
+      else { if (r < t0) return false; if (r < t1) t1 = r; }
+    }
+    return true;
+  };
+  const overlap = (a, b) => Math.max(0, Math.min(a.x1, b.x1) - Math.max(a.x0, b.x0))
+    * Math.max(0, Math.min(a.y1, b.y1) - Math.max(a.y0, b.y0));
+  const sizeOf = font => parseFloat(/([\d.]+)px/.exec(font)[1]);
+  const desk = {
+    line(x1, y1, x2, y2) { segs.push([x1, y1, x2, y2]); return desk; },
+    path(pts, closed) {
+      for (let i = 1; i < pts.length; i++) segs.push([pts[i - 1][0], pts[i - 1][1], pts[i][0], pts[i][1]]);
+      if (closed && pts.length > 2) segs.push([pts[pts.length - 1][0], pts[pts.length - 1][1], pts[0][0], pts[0][1]]);
+      return desk;
+    },
+    block(x0, y0, x1, y1) { boxes.push({ x0, y0, x1, y1 }); return desk; },
+    /** A solid seen in front of the ground: labels keep out of it too. */
+    area(poly) { areas.push(poly); return desk; },
+    /** Is a screen point inside any registered solid? */
+    covered(x, y) { return areas.some(a => inside(x, y, a)); },
+    /** Width and half-height of a label as it will be drawn. */
+    measure(text, font) { ctx.font = font; return { w:ctx.measureText(t(text)).width, hh:sizeOf(font) * 0.62 }; },
+    /**
+     * Spots beside a screen segment, on the side away from `from`: the label's
+     * nearest corner stands `gap` px off the line, at each fraction along it,
+     * one row after another.
+     */
+    beside(text, font, a, b, from, fracs, gap, rows) {
+      const m = desk.measure(text, font);
+      const dx = b[0] - a[0], dy = b[1] - a[1], len = Math.hypot(dx, dy) || 1;
+      let nx = -dy / len, ny = dx / len;
+      const mx = (a[0] + b[0]) / 2, my = (a[1] + b[1]) / 2;
+      if ((mx - from[0]) * nx + (my - from[1]) * ny < 0) { nx = -nx; ny = -ny; }
+      const reach = (m.w / 2 + 2.5) * Math.abs(nx) + (m.hh + 2.5) * Math.abs(ny);
+      const out = [];
+      for (let r = 0; r < (rows || 1); r++)
+        fracs.forEach(f => {
+          const d = reach + gap + r * (2 * m.hh + 6);
+          out.push([a[0] + dx * f + nx * d, a[1] + dy * f + ny * d, 'center']);
+        });
+      return out;
+    },
+    /** Places a label at the best candidate [x, y, align] and draws it on its pad. */
+    place(text, cands, color, font) {
+      const m = desk.measure(text, font);
+      let best = null;
+      cands.forEach((c, i) => {
+        const x0 = c[2] === 'right' ? c[0] - m.w : c[2] === 'center' ? c[0] - m.w / 2 : c[0];
+        const b = { x0:x0 - 2.5, x1:x0 + m.w + 2.5, y0:c[1] - m.hh - 2, y1:c[1] + m.hh + 2 };
+        let cost = i;   // earlier spots win ties
+        segs.forEach(s => { if (touches(b, s)) cost += 1000; });
+        boxes.forEach(o => { cost += 100 * overlap(b, o); });
+        areas.forEach(a => [[b.x0, b.y0], [b.x1, b.y0], [b.x1, b.y1], [b.x0, b.y1], [(b.x0 + b.x1) / 2, (b.y0 + b.y1) / 2]]
+          .forEach(q => { if (inside(q[0], q[1], a)) cost += 400; }));
+        if (b.x0 < 2 || b.y0 < 2 || b.x1 > W - 2 || b.y1 > H - 2) cost += 1e7;
+        if (!best || cost < best.cost) best = { cost, b, c };
+      });
+      if (!best) return null;
+      const b = best.b;
+      ctx.fillStyle = 'rgba(255,255,255,.92)';
+      ctx.beginPath();
+      if (ctx.roundRect) ctx.roundRect(b.x0, b.y0, b.x1 - b.x0, b.y1 - b.y0, 3);
+      else ctx.rect(b.x0, b.y0, b.x1 - b.x0, b.y1 - b.y0);
+      ctx.fill();
+      label(ctx, text, best.c[0], best.c[1], color, font, best.c[2], 'middle');
+      boxes.push(b);
+      return b;
+    }
+  };
+  return desk;
+}
 
 /**
  * Draw the axis furniture of a cartesian plot: recessive grid, tick labels,
@@ -2247,8 +2344,53 @@ function buildSite(host) {
     return { H:H0 + rise, V, A, ff:A / V };
   };
   const SUN_DEC = noonSun(355), SUN_JUN = noonSun(172);   // site constants, CSV only
+
+  /* --- the windows, as set on Windows & Shading ----------------------------
+     The same rectangle as windowRect() there — area = WWR × facade width ×
+     wall height, sill and head as set, width capped at 92 % of the facade —
+     so the windows drawn here are the windows sized there. Facades keep
+     their local keys (S is the main facade, the one the black arrow leaves
+     from); the compass name is the way each one really faces once the plan
+     is turned. */
+  const WIN_KEYS = ['S', 'N', 'E', 'W'];
+  const WIN_NORM = { S:[0, -1], N:[0, 1], E:[1, 0], W:[-1, 0] };
+  const winOf = f => {
+    const o = OPEN && OPEN[f];
+    if (!o || !(o.wwr > 0)) return null;
+    const width = (f === 'S' || f === 'N') ? G.L : G.D;
+    const h = Math.max(0.3, o.headZ - o.sillZ), glass = o.wwr * width * G.fl * G.fh;
+    const w = Math.min(width * 0.92, glass / h);
+    /* glass is the area the WWR asks for; the drawn strip, capped at 92 % of
+       the facade, can hold less once the plan has more than one floor */
+    return { w, h, sill:o.sillZ, head:o.headZ, wwr:o.wwr, glass };
+  };
+  /** Azimuth a local facade faces once the plan is turned, clockwise from north. */
+  const faceAz = f => (G.rot + { S:0, N:180, E:270, W:90 }[f]) % 360;
+  const faceDir = f => COMPASS8[Math.round(faceAz(f) / 45) % 8];
+  const EQ_AZ = lat < 0 ? 0 : 180;   // the equator-facing azimuth
+  /**
+   * Where the glass points: every window an arrow out of its facade, as long
+   * as the glass its WWR asks for; the fit reads the sum against the equator — 100 due south
+   * (north below the equator), 50 east or west, 0 facing the pole. Null with
+   * no glass, or with glass so balanced on opposite sides that it points
+   * nowhere. The sizes are set on Windows & Shading; the plan's turn, here,
+   * decides where they look.
+   */
+  const winAim = () => {
+    let vx = 0, vy = 0, tot = 0;
+    WIN_KEYS.forEach(f => {
+      const w = winOf(f);
+      if (!w) return;
+      const a = faceAz(f) * RAD;
+      vx += w.glass * Math.sin(a); vy += w.glass * Math.cos(a); tot += w.glass;
+    });
+    if (tot <= 0 || Math.hypot(vx, vy) < 0.05 * tot) return null;
+    const az = (Math.atan2(vx, vy) / RAD + 360) % 360;
+    return { fit:Math.round(50 * (1 + Math.cos((az - EQ_AZ) * RAD))), az };
+  };
   SCORES.site = () => ({ 'Olgyay fit /100':labScore().total, 'Form factor':+labFF().ff.toFixed(2),
-    'Albedo fit /100':albedoFit(), 'Wall albedo':finishOf(G.col) ? +(1 - FINISH_ALPHA[finishOf(G.col).cls]).toFixed(2) : null });
+    'Albedo fit /100':albedoFit(), 'Wall albedo':finishOf(G.col) ? +(1 - FINISH_ALPHA[finishOf(G.col).cls]).toFixed(2) : null,
+    'Window fit /100':winAim() ? winAim().fit : null });
   /** Frame shared by the render and the pointer handlers; the shadow is clipped to the ring. */
   /* Isometric camera: the ground plane is viewed from the south-west at a
      30° tilt, so a world offset (x east, y north, z up) projects as
@@ -2264,19 +2406,39 @@ function buildSite(host) {
     const half = Math.max(Math.hypot(G.L, G.D), Math.hypot(Li, Di)) / 2;
     const need = half + arr + 1.5;             // world footprint radius, metres
     const Hgt = G.fl * G.fh;                    // world height to clear above the ring
-    const top = 14, bottom = H - 34;             // leave room for the legend strip
+    /* a phone-width canvas is taller, with its badges in a row across the
+       top and a two-row key at the foot — the drawing sits between them */
+    const narrow = W < 600;
+    const top = narrow ? 96 : 14, bottom = H - (narrow ? 46 : 34);
     const availV = Math.max(40, bottom - top);
     const sByW = (W / 2 - 16) / (need * ISO_C * Math.SQRT2);
     const sByH = availV / (need * ISO_S * Math.SQRT2 * 2 + Hgt);
     const s = Math.max(4, Math.min(sByW, sByH));
-    const cy = bottom - need * ISO_S * Math.SQRT2 * s;
+    // when the width sets the scale, centre the drawing in the height left over
+    const ringV = need * ISO_S * Math.SQRT2 * s, slack = Math.max(0, availV - (2 * ringV + Hgt * s));
+    const cy = bottom - slack / 2 - ringV;
     return { cx, cy, s, R:need };
   };
 
   const pillOri = el('span', { class:'pill ok' });
   const pillForm = el('span', { class:'pill ok' });
-  host.appendChild(el('div', { class:'limitrow' }, [pillOri, pillForm]));
+  const pillWin = el('span', { class:'pill ok' });
+  host.appendChild(el('div', { class:'limitrow' }, [pillOri, pillForm, pillWin]));
   let refreshCol = () => {};   // the wall-colour pill, set up with its section below
+  /** Largest and smallest window, named by the way they face (ties joined). */
+  function refreshWin() {
+    const ws = WIN_KEYS.map(f => ({ f, w:winOf(f) })).filter(o => o.w);
+    if (!ws.length) { pillWin.className = 'pill empty'; pillWin.textContent = t('No windows yet — size them on Windows & Shading'); return; }
+    const amax = Math.max.apply(null, ws.map(o => o.w.glass)), amin = Math.min.apply(null, ws.map(o => o.w.glass));
+    const dirs = a => ws.filter(o => Math.abs(o.w.glass - a) <= 0.01 * amax).map(o => faceDir(o.f)).join('/');
+    let txt = t('Largest window faces') + ' ' + dirs(amax);
+    if (amax - amin > 0.01 * amax) txt += ' · ' + t('smallest faces') + ' ' + dirs(amin);
+    const aim = winAim(), south = lat < 0 ? 'north' : 'south';
+    if (!aim) { pillWin.className = 'pill empty'; pillWin.textContent = txt + ' — ' + t('opposite windows are equal: make the ' + south + ' one larger'); }
+    else if (aim.fit >= 80) { pillWin.className = 'pill ok'; pillWin.textContent = txt + ' — ' + t('the right way round'); }
+    else if (aim.fit >= 50) { pillWin.className = 'pill empty'; pillWin.textContent = txt + ' — ' + t('turn the large glass toward the ' + south); }
+    else { pillWin.className = 'pill bad'; pillWin.textContent = txt + ' — ' + t('the large glass faces away from the ' + south); }
+  }
   function refreshLab() {
     const dev = circDev(G.rot, OI.az), fc = formClass(), r = labRatio();
     if (dev <= 10) { pillOri.className = 'pill ok'; pillOri.textContent = t('At the Olgyay optimum'); }
@@ -2287,8 +2449,10 @@ function buildSite(host) {
     else if (fc === 'sq') { pillForm.className = 'pill empty'; pillForm.textContent = t('Square — never the optimum'); }
     else if (fc === 'ew') { pillForm.className = 'pill empty'; pillForm.textContent = t('East–west — stretch toward 1 : ') + fmt(OI.r, 1); }
     else { pillForm.className = 'pill empty'; pillForm.textContent = t('Diagonal — settle the long axis east–west'); }
+    refreshWin();
     refreshCol();
   }
+  host._refresh = () => refreshLab();   // the windows may have changed on Windows & Shading
 
   let labPanel = null;
   const labDraw = () => { if (labPanel) labPanel.draw(); refreshLab(); };
@@ -2399,10 +2563,11 @@ function buildSite(host) {
 
   labPanel = makePanel(host, {
     title: 'Your plan against the optimum',
-    note: 'Isometric view, tilted from the south-west. Drag the plan to stretch it, drag the black knob to turn it, drive the sun through its day below.',
-    aspect: 1.5,
+    note: 'Isometric view, tilted from the south-west. Drag the plan to stretch it, drag the black knob to turn it, drive the sun through its day below. The windows are the ones sized on Windows & Shading.',
+    heightFn: w => w < 600 ? Math.round(w * 1.2 + 70) : Math.round(w / 1.5),
     render(ctx, W, H) {
-      const GREEN = '#16A34A';
+      const GREEN = '#16A34A', BLUE = '#2563EB', narrow = W < 600;
+      const desk = labelDesk(ctx, W, H);   // every number is placed last, clear of the lines
       const { cx, cy, s, R } = labFrame(W, H);
       const A = G.L * G.D;
       const Li = Math.sqrt(A * OI.r), Di = Math.sqrt(A / OI.r);
@@ -2416,8 +2581,17 @@ function buildSite(host) {
       const arrow = (x1, y1, x2, y2, color, dash) => {
         stroke(ctx, color, 2, dash || null); seg(ctx, x1, y1, x2, y2);
         const a0 = Math.atan2(y2 - y1, x2 - x1), hl = 8;
-        seg(ctx, x2, y2, x2 - hl * Math.cos(a0 - 0.45), y2 - hl * Math.sin(a0 - 0.45));
-        seg(ctx, x2, y2, x2 - hl * Math.cos(a0 + 0.45), y2 - hl * Math.sin(a0 + 0.45));
+        const h1 = [x2 - hl * Math.cos(a0 - 0.45), y2 - hl * Math.sin(a0 - 0.45)];
+        const h2 = [x2 - hl * Math.cos(a0 + 0.45), y2 - hl * Math.sin(a0 + 0.45)];
+        seg(ctx, x2, y2, h1[0], h1[1]); seg(ctx, x2, y2, h2[0], h2[1]);
+        desk.line(x1, y1, x2, y2).line(x2, y2, h1[0], h1[1]).line(x2, y2, h2[0], h2[1]);
+      };
+      /** A drawn outline, registered so no label lands on it. */
+      const outline = (pts, closed) => {
+        ctx.beginPath();
+        pts.forEach((p, i) => i ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1]));
+        if (closed) ctx.closePath();
+        desk.path(pts, closed);
       };
       const ring = (rad, z) => {
         const pts = [];
@@ -2431,19 +2605,23 @@ function buildSite(host) {
       };
 
       // the ground plane, tilted into an isometric ellipse
-      ringPath(ring(R, 0));
+      const groundRing = ring(R, 0);
+      ringPath(groundRing);
       ctx.fillStyle = 'rgba(20,23,26,.025)'; ctx.fill();
       stroke(ctx, CH.line, 1.2); ctx.stroke();
+      desk.path(groundRing, true);
       for (let a = 0; a < 360; a += 15) {
         const big = a % 45 === 0, r1 = R * (big ? 0.90 : 0.95);
         stroke(ctx, big ? CH.muted : CH.line, 1);
         const p0 = proj(r1 * Math.sin(a * RAD), r1 * Math.cos(a * RAD), 0);
         const p1 = proj(R * Math.sin(a * RAD), R * Math.cos(a * RAD), 0);
         seg(ctx, p0[0], p0[1], p1[0], p1[1]);
+        desk.line(p0[0], p0[1], p1[0], p1[1]);
       }
       [['N', 0], ['E', 90], ['S', 180], ['W', 270]].forEach(([c, a]) => {
         const p = proj((R + 1.3) * Math.sin(a * RAD), (R + 1.3) * Math.cos(a * RAD), 0);
         label(ctx, c, p[0], p[1], a === 0 ? CH.ink : CH.muted, F(11, '600'), 'center', 'middle');
+        desk.block(p[0] - 8, p[1] - 8, p[0] + 8, p[1] + 8);
       });
 
       // the driven sun, lifted off the ring by its altitude
@@ -2455,6 +2633,7 @@ function buildSite(host) {
       ctx.beginPath(); ctx.arc(sp[0], sp[1], 5, 0, 6.284); ctx.fill();
       ctx.fillStyle = '#fff';
       ctx.beginPath(); ctx.arc(sp[0], sp[1], 2, 0, 6.284); ctx.fill();
+      desk.block(sp[0] - 7, sp[1] - 7, sp[0] + 7, sp[1] + 7);
 
       // live shadow on the ground, clipped to the ring
       const hull = pts => {
@@ -2474,19 +2653,23 @@ function buildSite(host) {
       const hp = hull(scs.concat(scs.map(p => [p[0] + ox, p[1] + oy])));
       ctx.save();
       ringPath(ring(R * 0.985, 0)); ctx.clip();
-      ctx.beginPath();
-      hp.forEach((p, i) => { const q = proj(p[0], p[1], 0); i ? ctx.lineTo(q[0], q[1]) : ctx.moveTo(q[0], q[1]); });
-      ctx.closePath();
+      const hpS = hp.map(p => proj(p[0], p[1], 0));
+      outline(hpS, true);
       ctx.fillStyle = 'rgba(20,23,26,.13)'; ctx.fill();
       stroke(ctx, 'rgba(20,23,26,.35)', 1); ctx.stroke();
       ctx.restore();
       let far = scs[0], best = -1e9;
       scs.forEach(p => { const d = p[0] * ox + p[1] * oy; if (d > best) { best = d; far = p; } });
-      let tq = proj(far[0] + ox, far[1] + oy, 0);
-      const vx = tq[0] - cx, vy = tq[1] - cy, vd = Math.hypot(vx, vy);
-      const clampR = R * s * (ISO_C + ISO_S) * 0.92;
-      if (vd > clampR) tq = [cx + vx / vd * clampR, cy + vy / vd * clampR];
-      label(ctx, fmt(Lsh, 1) + ' m', tq[0] + 5, tq[1] - 5, CH.ink2, FM(9.5), 'left', 'middle');
+      /* The shadow's tip, or where the shadow leaves the ring when it runs
+         past it — walked back along the shadow itself, in plan metres. Its
+         length is labelled there at the end, once every line is down. */
+      let tk = 1;
+      const Rin = R * 0.95, sa2 = ox * ox + oy * oy;
+      if (Math.hypot(far[0] + ox, far[1] + oy) > Rin && sa2 > 0) {
+        const sb = 2 * (far[0] * ox + far[1] * oy), sc2 = far[0] * far[0] + far[1] * far[1] - Rin * Rin;
+        tk = clamp((-sb + Math.sqrt(Math.max(0, sb * sb - 4 * sa2 * sc2))) / (2 * sa2), 0, 1);
+      }
+      const tq = proj(far[0] + ox * tk, far[1] + oy * tk, 0);
 
       // only the two faces the south-west camera can see get drawn on either box
       const camDir = { x:-1, y:-1 };
@@ -2506,21 +2689,18 @@ function buildSite(host) {
           if (mx * camDir.x + my * camDir.y <= 0) continue;   // back-facing: hidden
           const bottomA = baseS[i], bottomB = baseS[(i + 1) % 4];
           const topA = topS[i], topB = topS[(i + 1) % 4];
-          ctx.beginPath();
-          ctx.moveTo(bottomA[0], bottomA[1]); ctx.lineTo(bottomB[0], bottomB[1]);
-          ctx.lineTo(topB[0], topB[1]); ctx.lineTo(topA[0], topA[1]); ctx.closePath();
+          outline([bottomA, bottomB, topB, topA], true);
           ctx.fillStyle = 'rgba(22,163,74,.06)'; ctx.fill();
           stroke(ctx, color, 1.6, [6, 4]); ctx.stroke();
         }
         for (let i = 0; i < 4; i++) {   // vertical edges, so the volume reads even on hidden sides
           stroke(ctx, color, 1.6, [6, 4]);
           seg(ctx, baseS[i][0], baseS[i][1], topS[i][0], topS[i][1]);
+          desk.line(baseS[i][0], baseS[i][1], topS[i][0], topS[i][1]);
         }
-        stroke(ctx, color, 2.2, [7, 5]);
         [baseS, topS].forEach(ring => {
-          ctx.beginPath();
-          ring.forEach((p, i) => i ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1]));
-          ctx.closePath(); ctx.stroke();
+          outline(ring, true);
+          stroke(ctx, color, 2.2, [7, 5]); ctx.stroke();
         });
       };
       drawBoxOutline(Li, Di, OI.az - 180, Hgt, GREEN);
@@ -2534,75 +2714,177 @@ function buildSite(host) {
           if (mx * camDir.x + my * camDir.y <= 0) continue;   // back-facing: hidden
           const bottomA = baseS[i], bottomB = baseS[(i + 1) % 4];
           const topA = topS[i], topB = topS[(i + 1) % 4];
-          ctx.beginPath();
-          ctx.moveTo(bottomA[0], bottomA[1]); ctx.lineTo(bottomB[0], bottomB[1]);
-          ctx.lineTo(topB[0], topB[1]); ctx.lineTo(topA[0], topA[1]); ctx.closePath();
+          outline([bottomA, bottomB, topB, topA], true);
           ctx.fillStyle = wallFill(i % 2 === 0 ? 0.14 : 0.08, i % 2 === 0 ? 0.82 : 1);
           ctx.fill();
           stroke(ctx, CH.ink, 1.4); ctx.stroke();
         }
-        ctx.beginPath();
-        topS.forEach((p, i) => i ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1]));
-        ctx.closePath();
+        outline(topS, true);
         ctx.fillStyle = 'rgba(20,23,26,.05)'; ctx.fill();
         stroke(ctx, CH.ink, 2); ctx.stroke();
       };
       drawBox(G.L, G.D, beta, Hgt);
+      { const fv = faceVerts(G.L, G.D, beta, Hgt); desk.area(hull(fv.baseS.concat(fv.topS))); }   // labels keep off the volume
+
+      /* The windows, as sized on Windows & Shading, on the walls they belong
+         to. The two walls facing the camera show glass and mullions; the two
+         behind show dashed at their true place, as on Windows & Shading, so
+         no window vanishes behind the volume. */
+      const faceSeen = f => { const q = rot(WIN_NORM[f][0], WIN_NORM[f][1], beta); return q[0] * camDir.x + q[1] * camDir.y; };
+      /** A point on local facade f: u along it from its middle, z up. */
+      const onFace = (f, u, z) => {
+        const l = f === 'S' ? [u, -G.D / 2] : f === 'N' ? [u, G.D / 2] : f === 'E' ? [G.L / 2, u] : [-G.L / 2, u];
+        return at(l[0], l[1], beta, z);
+      };
+      /** The facade's two ends along the ground, in local plan metres. */
+      const faceEnds = f => f === 'S' ? [[-G.L / 2, -G.D / 2], [G.L / 2, -G.D / 2]]
+        : f === 'N' ? [[-G.L / 2, G.D / 2], [G.L / 2, G.D / 2]]
+        : f === 'E' ? [[G.L / 2, -G.D / 2], [G.L / 2, G.D / 2]]
+        : [[-G.L / 2, -G.D / 2], [-G.L / 2, G.D / 2]];
+      WIN_KEYS.forEach(f => {
+        const w = winOf(f);
+        if (!w) return;
+        const hid = faceSeen(f) <= 1e-6;
+        const q = [onFace(f, -w.w / 2, w.sill), onFace(f, w.w / 2, w.sill), onFace(f, w.w / 2, w.head), onFace(f, -w.w / 2, w.head)];
+        outline(q, true);
+        ctx.fillStyle = hid ? 'rgba(37,99,235,.05)' : 'rgba(219,234,254,.92)'; ctx.fill();
+        stroke(ctx, hid ? 'rgba(37,99,235,.6)' : BLUE, hid ? 1.1 : 1.4, hid ? [5, 4] : null); ctx.stroke();
+        if (hid) return;
+        const n = Math.max(1, Math.round(w.w / 1.2));   // one pane to about every 1.2 m
+        stroke(ctx, BLUE, 1);
+        for (let k = 1; k < n; k++) {
+          const u = -w.w / 2 + k * w.w / n, a = onFace(f, u, w.sill), b = onFace(f, u, w.head);
+          seg(ctx, a[0], a[1], b[0], b[1]); desk.line(a[0], a[1], b[0], b[1]);
+        }
+      });
+
+      /* Dimension lines on the two walls facing the camera: extension lines
+         off the corners, the line 0.9 m out, architect's ticks at the ends;
+         the numbers go beside the line, placed at the end with the rest. */
+      const dims = [];
+      const dimLine = f => {
+        const [p0, p1] = faceEnds(f), n = WIN_NORM[f], off = 0.9;
+        const P = (p, d) => at(p[0] + n[0] * d, p[1] + n[1] * d, beta, 0);
+        stroke(ctx, CH.ink2, 1);
+        [p0, p1].forEach(p => { const e0 = P(p, 0.25), e1 = P(p, off + 0.35); seg(ctx, e0[0], e0[1], e1[0], e1[1]); desk.line(e0[0], e0[1], e1[0], e1[1]); });
+        const A = P(p0, off), B = P(p1, off);
+        seg(ctx, A[0], A[1], B[0], B[1]); desk.line(A[0], A[1], B[0], B[1]);
+        const len = Math.hypot(B[0] - A[0], B[1] - A[1]) || 1;
+        const ux = (B[0] - A[0]) / len, uy = (B[1] - A[1]) / len;
+        const tx = (ux + uy) * 4.2 * Math.SQRT1_2, ty = (uy - ux) * 4.2 * Math.SQRT1_2;   // the 45° slash
+        stroke(ctx, CH.ink, 1.4);
+        [A, B].forEach(Q => seg(ctx, Q[0] - tx, Q[1] - ty, Q[0] + tx, Q[1] + ty));
+        dims.push({ f, A, B, len:(f === 'S' || f === 'N') ? G.L : G.D });
+      };
+      const fL = faceSeen('S') >= faceSeen('N') ? 'S' : 'N', fD = faceSeen('E') >= faceSeen('W') ? 'E' : 'W';
+      dimLine(fL); dimLine(fD);
 
       // facade-normal arrows, at ground level so they clear the box
       const normalArrow = (L, D, beta, color, dashed, tag) => {
         const mq = rot(0, -D / 2, beta), nq = rot(0, -1, beta);
         const a = proj(mq[0], mq[1], 0), b = proj(mq[0] + nq[0] * arr, mq[1] + nq[1] * arr, 0);
         arrow(a[0], a[1], b[0], b[1], color, dashed ? [6, 4] : null);
-        if (tag) label(ctx, tag, b[0], b[1] - 9, color, F(10, '600'), 'center', 'middle');
         return { a, b };
       };
-      normalArrow(Li, Di, OI.az - 180, GREEN, true, 'Olgyay optimum');
-      const sa = normalArrow(G.L, G.D, beta, CH.ink, false, null);
+      const ga = normalArrow(Li, Di, OI.az - 180, GREEN, true);
+      const sa = normalArrow(G.L, G.D, beta, CH.ink, false);
       // the rotation knob: a black dot on the student's arrow-tip
       ctx.fillStyle = '#fff';
       ctx.beginPath(); ctx.arc(sa.b[0], sa.b[1], 9, 0, 6.284); ctx.fill();
       ctx.fillStyle = CH.ink;
       ctx.beginPath(); ctx.arc(sa.b[0], sa.b[1], 5.5, 0, 6.284); ctx.fill();
+      desk.block(sa.b[0] - 11, sa.b[1] - 11, sa.b[0] + 11, sa.b[1] + 11);
 
-      // dimensions of the student's plan, at ground level
-      const dl = at(0, -G.D / 2 - 1.4, beta, 0);
-      label(ctx, fmt(G.L, 1) + ' m', dl[0], dl[1], CH.ink2, FM(9.5), 'center', 'middle');
-      const ds = at(G.L / 2 + 1.4, 0, beta, 0);
-      label(ctx, fmt(G.D, 1) + ' m', ds[0], ds[1], CH.ink2, FM(9.5), 'center', 'middle');
-
-      // readout and score badge
-      label(ctx, fmt(A, 0) + ' m² · 1 : ' + fmt(labRatio(), 2) + ' · Δ ' + fmt(circDev(G.rot, OI.az), 0) + '°'
-        + ' · H ' + fmt(G.fl * G.fh, 1) + ' m · ' + SH.key + ' ' + fmt(SH.h, 2) + ' h',
-        8, 12, CH.ink2, FM(11), 'left', 'middle');
+      // readout, the rule for the windows, and the score badges
+      const readout = fmt(A, 0) + ' m² · 1 : ' + fmt(labRatio(), 2) + ' · Δ ' + fmt(circDev(G.rot, OI.az), 0) + '°'
+        + ' · H ' + fmt(G.fl * G.fh, 1) + ' m · ' + t(SH.key) + ' ' + fmt(SH.h, 2) + ' h';
+      const ry = narrow ? 64 : 12, rf = narrow ? FM(9.5) : FM(11);
+      label(ctx, readout, 8, ry, CH.ink2, rf, 'left', 'middle');
+      desk.block(4, ry - 9, 12 + desk.measure(readout, rf).w, ry + 9);
+      const rule = lat < 0 ? 'Larger windows face north, smaller ones south' : 'Larger windows face south, smaller ones north';
+      label(ctx, rule, 8, ry + 17, BLUE, F(narrow ? 10 : 10.5, '600'), 'left', 'middle');
+      desk.block(4, ry + 9, 12 + desk.measure(rule, F(10.5, '600')).w, ry + 26);
+      /* Five badges down the right edge, or in one row across the top of a
+         phone-width canvas. */
+      const bw = narrow ? Math.min(84, (W - 8 - 16) / 5) : 84, bh = narrow ? 46 : 52;
+      const badge = (i, v, cap, col, capSize) => {
+        const bx = narrow ? 4 + i * (bw + 4) : W - 92, by = narrow ? 4 : 6 + i * 58;
+        ctx.fillStyle = '#fff';
+        ctx.fillRect(bx, by, bw, bh);
+        stroke(ctx, col, 1.5); ctx.strokeRect(bx, by, bw, bh);
+        label(ctx, v, bx + bw / 2, by + (narrow ? 19 : 25), col, FM(narrow ? 18 : 24), 'center', 'middle');
+        let cs = narrow ? 8 : capSize || 9;   // longer captions shrink to stay inside the box
+        while (cs > 6 && desk.measure(cap, F(cs)).w > bw - 6) cs -= 0.5;
+        label(ctx, cap, bx + bw / 2, by + (narrow ? 37 : 44), CH.muted, F(cs), 'center', 'middle');
+        desk.block(bx - 2, by - 2, bx + bw + 2, by + bh + 2);
+      };
       const sc = labScore(), ff = labFF();
-      const bcol = sc.total >= 80 ? GREEN : sc.total >= 50 ? '#D97706' : '#DC2626';
-      const fcol = ff.ff <= 0.7 ? GREEN : ff.ff <= 1.1 ? '#D97706' : '#DC2626';
-      ctx.fillStyle = '#fff';
-      ctx.fillRect(W - 92, 6, 84, 52);
-      stroke(ctx, bcol, 1.5); ctx.strokeRect(W - 92, 6, 84, 52);
-      label(ctx, String(sc.total), W - 50, 31, bcol, FM(24), 'center', 'middle');
-      label(ctx, t('Olgyay fit') + ' /100', W - 50, 50, CH.muted, F(9), 'center', 'middle');
-      ctx.fillStyle = '#fff';
-      ctx.fillRect(W - 92, 64, 84, 52);
-      stroke(ctx, fcol, 1.5); ctx.strokeRect(W - 92, 64, 84, 52);
-      label(ctx, fmt(ff.ff, 2), W - 50, 89, fcol, FM(24), 'center', 'middle');
-      label(ctx, t('Form factor'), W - 50, 107, CH.muted, F(9), 'center', 'middle');
+      badge(0, String(sc.total), t('Olgyay fit') + ' /100', sc.total >= 80 ? GREEN : sc.total >= 50 ? '#D97706' : '#DC2626');
+      badge(1, fmt(ff.ff, 2), t('Form factor'), ff.ff <= 0.7 ? GREEN : ff.ff <= 1.1 ? '#D97706' : '#DC2626');
       // the wall colour: its fit to this summer, then the albedo it reads as
       const af = albedoFit(), fin = finishOf(G.col);
       const acol = af === null ? CH.faint : af >= 80 ? GREEN : af >= 50 ? '#D97706' : '#DC2626';
-      [[122, af === null ? '–' : String(af), t('Albedo fit') + ' /100'],
-       [180, fin ? fmt(1 - FINISH_ALPHA[fin.cls], 2) : '–', t('Albedo · ' + sumBand + ' summer')]].forEach(([y, v, cap]) => {
-        ctx.fillStyle = '#fff';
-        ctx.fillRect(W - 92, y, 84, 52);
-        stroke(ctx, acol, 1.5); ctx.strokeRect(W - 92, y, 84, 52);
-        label(ctx, v, W - 50, y + 25, acol, FM(24), 'center', 'middle');
-        label(ctx, cap, W - 50, y + 44, CH.muted, F(y > 150 ? 8 : 9), 'center', 'middle');
-      });
+      badge(2, af === null ? '–' : String(af), t('Albedo fit') + ' /100', acol);
+      badge(3, fin ? fmt(1 - FINISH_ALPHA[fin.cls], 2) : '–', t('Albedo · ' + sumBand + ' summer'), acol, 8);
+      // the windows: where their glass points, set by this plan's turn
+      const aim = winAim();
+      badge(4, aim ? String(aim.fit) : '–', t('Window fit') + ' /100',
+        !aim ? CH.faint : aim.fit >= 80 ? GREEN : aim.fit >= 50 ? '#D97706' : '#DC2626');
       swatchKey(ctx, 8, H - 30,
-        [{ color:CH.ink, label:'Your plan' }, { color:GREEN, label:'Olgyay optimum' },
+        [{ color:CH.ink, label:'Your plan' }, { color:GREEN, label:'Olgyay optimum' }, { color:BLUE, label:'Windows' },
          { color:'#D97706', label:'Sun' }, { color:'rgba(20,23,26,.45)', label:'Shadow' }],
-        { cols:4, colWidth:140, rowHeight:14 });
+        { cols:narrow ? 3 : 5, colWidth:narrow ? (W - 16) / 3 : Math.min(140, (W - 16) / 5), rowHeight:14 });
+      desk.block(0, H - (narrow ? 38 : 34), W, H);
+
+      /* --- the numbers, last, each beside its line and on its own pad ------ */
+      const mid = [cx, cy], midTop = proj(0, 0, Hgt);
+      const FR = [0.5, 0.35, 0.65, 0.2, 0.8];
+      dims.forEach(d => {
+        const txt = fmt(d.len, 1) + ' m';
+        desk.place(txt, desk.beside(txt, FM(10), d.A, d.B, mid, FR, 3, 2), CH.ink, FM(10));
+      });
+      /* Each window's tag: the way that facade really faces, then the window
+         itself in metres. Walls facing the camera carry it beside their
+         dimension line; walls behind, beside their eave line. */
+      WIN_KEYS.forEach(f => {
+        const w = winOf(f);
+        const txt = faceDir(f) + ' · ' + (w ? t('window') + ' ' + fmt(w.w, 1) + ' × ' + fmt(w.h, 1) + ' m · ' + fmt(w.wwr * 100, 0) + ' %' : t('no window'));
+        const font = F(10, '600'), col = w ? BLUE : CH.muted;
+        const d = dims.find(o => o.f === f);
+        const cands = d ? desk.beside(txt, font, d.A, d.B, mid, FR, 3, 3)
+          : (() => { const e = faceEnds(f); return desk.beside(txt, font, at(e[0][0], e[0][1], beta, Hgt), at(e[1][0], e[1][1], beta, Hgt), midTop, FR, 4, 3); })();
+        desk.place(txt, cands, col, font);
+      });
+      {
+        const ux = ga.b[0] - ga.a[0], uy = ga.b[1] - ga.a[1], ul = Math.hypot(ux, uy) || 1;
+        const m = desk.measure('Olgyay optimum', F(10, '600'));
+        desk.place('Olgyay optimum', [
+          [ga.b[0] + ux / ul * (m.w / 2 + 10), ga.b[1] + uy / ul * (m.hh + 10), 'center'],
+          [ga.b[0], ga.b[1] - m.hh - 10, 'center'], [ga.b[0], ga.b[1] + m.hh + 10, 'center'],
+          [ga.b[0] + 12, ga.b[1], 'left'], [ga.b[0] - 12, ga.b[1], 'right']], GREEN, F(10, '600'));
+      }
+      {
+        /* The shadow's length sits at its tip — or, when a tall volume hides
+           the tip, at the nearest part of the shadow still in sight: a corner
+           of it, or where it leaves the ring. */
+        const txt = t('shadow') + ' ' + fmt(Lsh, 1) + ' m';
+        const tipW = [far[0] + ox * tk, far[1] + oy * tk];
+        const pts = hp.filter(p => Math.hypot(p[0], p[1]) < Rin);
+        hp.forEach((p, i) => {
+          const q = hp[(i + 1) % hp.length], dx = q[0] - p[0], dy = q[1] - p[1];
+          const a = dx * dx + dy * dy, b = 2 * (p[0] * dx + p[1] * dy), c = p[0] * p[0] + p[1] * p[1] - Rin * Rin;
+          const disc = b * b - 4 * a * c;
+          if (a > 0 && disc >= 0) [-1, 1].forEach(sg => { const u = (-b + sg * Math.sqrt(disc)) / (2 * a); if (u > 0 && u < 1) pts.push([p[0] + dx * u, p[1] + dy * u]); });
+        });
+        const spots = [tq].concat(pts
+          .sort((a, b) => Math.hypot(a[0] - tipW[0], a[1] - tipW[1]) - Math.hypot(b[0] - tipW[0], b[1] - tipW[1]))
+          .map(p => proj(p[0], p[1], 0)))
+          .filter(q => !desk.covered(q[0], q[1])).slice(0, 4);
+        const around = q => [[q[0] + 8, q[1] - 9, 'left'], [q[0] - 8, q[1] - 9, 'right'],
+          [q[0] + 8, q[1] + 9, 'left'], [q[0] - 8, q[1] + 9, 'right'],
+          [q[0], q[1] - 14, 'center'], [q[0], q[1] + 14, 'center']];
+        desk.place(txt, (spots.length ? spots : [tq]).map(around).reduce((a, b) => a.concat(b), []), CH.ink2, FM(9.5));
+      }
     },
     csv: () => {
       const sn = sunPos(SH.doy, SH.h, lat, lon, tz);
@@ -2618,7 +2900,11 @@ function buildSite(host) {
       ['Wall solar absorptance α', finishOf(G.col) ? FINISH_ALPHA[finishOf(G.col).cls] : ''],
       ['Wall albedo (1 − α)', finishOf(G.col) ? +(1 - FINISH_ALPHA[finishOf(G.col).cls]).toFixed(2) : ''],
       ['Summer mean, Jun–Sep (°C)', +sumT.toFixed(1)],
-      ['Albedo fit (0–100)', albedoFit() === null ? '' : albedoFit()],
+      ['Albedo fit (0–100)', albedoFit() === null ? '' : albedoFit()]]
+      .concat(WIN_KEYS.map(f => { const w = winOf(f);
+        return ['Window ' + f + (f === 'S' ? ' (main facade)' : '') + ' — faces ' + COMPASS8_EN[Math.round(faceAz(f) / 45) % 8] + ', w × h (m)',
+          w ? +w.w.toFixed(2) + ' × ' + +w.h.toFixed(2) : 'none']; }))
+      .concat([['Window fit (0–100)', winAim() ? winAim().fit : ''],
       ['Floors above ground', G.fl],
       ['Floor height (m)', +G.fh.toFixed(1)],
       ['Building height (m)', +(G.fl * G.fh).toFixed(1)],
@@ -2631,13 +2917,15 @@ function buildSite(host) {
       ['Shadow azimuth (°)', +((sn.azi + 180) % 360).toFixed(0)],
       ['Dec noon shadow (m)', +shadowLen(G.fl * G.fh, SUN_DEC.alt).toFixed(1)],
       ['Jun noon shadow (m)', +shadowLen(G.fl * G.fh, SUN_JUN.alt).toFixed(1)],
-      ['Köppen–Geiger', STATE.clim.k.code]]);
+      ['Köppen–Geiger', STATE.clim.k.code]]));
     }
   });
   host.appendChild(hint('ori-score',
     'The badge is a didactic index, not an energy prediction: 60 % orientation — full marks on the green normal, zero at 90° off — plus 40 % form — closeness to the 1:X elongation, discounted for square, diagonal and north–south plans. Two plans can share a score and behave differently; read it with the pills.'));
   host.appendChild(hint('ori-height',
     'The two boxes extrude the plan — floors above ground times an editable floor height. The sun below it is driven, not decorative: pick 21 December, 20 March or 21 June, drag the solar hour — or press play — and the shadow follows the trajectory, long and northern in the December morning, short and tight at the June noon. The December noon shadow stays the governing case for spacing. Height does not move the fit badge, which only knows orientation and plan form.'));
+  host.appendChild(hint('site-windows',
+    'The windows on the model are the ones sized on <b>Windows &amp; Shading</b> — the same width, sill and head, each set by its facade’s window-to-wall ratio — so turning the plan here turns them with it. Each blue tag names the way that window really faces once the plan is turned, then its width × height and the facade’s WWR; on Windows &amp; Shading the facades keep the names they have with the main facade to the south. The rule to read them by: <b>the larger the window, the more it should face south; the smaller, the more it faces north</b> (north and south swap below the equator). South glass collects the low winter sun and is the easiest to shade from the high summer sun; north glass gives even, diffuse light but gains almost no winter sun while it loses heat (Lechner; Gonçalves &amp; Graça). <b>Window fit</b> reads it: every window counts as an arrow out of its facade, as long as the glass its WWR asks for, and the fit is 100 when their sum points due south, 50 east or west, 0 north. The sizes change on Windows &amp; Shading; the plan’s turn, here, decides where they look. Windows &amp; Shading draws each window as one strip on the ground floor, no wider than 92 % of its facade — on two or three floors the strips can reach that limit and look alike while their WWR, and the fit, still differ.'));
   host.appendChild(hint('ori-ff',
     'Form factor FF = exterior envelope ÷ heated volume, in m⁻¹ — walls to the eaves, gable triangles, roof planes and ground floor over the volume they enclose, one single zone, everything exterior. Lower is more compact: the round shepherd shelters of Monchique are the vernacular extreme (Gonçalves & Graça). It is the same ratio the REH calls <i>factor de forma</i>, stated here as pure geometry with no limits attached — Construction Advisor takes it from there. The badge paints it green at or below 0.7 (compact), amber to 1.1 (moderate) and red above (dispersed): didactic bands, not limits. It does not move the fit badge.'));
 
@@ -7042,8 +7330,8 @@ Object.assign(PT, {
   "Snap to the Olgyay optimum": "Acertar pelo óptimo de Olgyay",
   "Snapped to the Olgyay optimum": "Acertado pelo óptimo de Olgyay",
   "Your plan against the optimum": "A sua planta contra o óptimo",
-  "Isometric view, tilted from the south-west. Drag the plan to stretch it, drag the black knob to turn it, drive the sun through its day below.":
-    "Vista isométrica, inclinada a partir de sudoeste. Arraste a planta para a esticar, arraste o botão preto para a rodar, conduza o sol ao longo do seu dia abaixo.",
+  "Isometric view, tilted from the south-west. Drag the plan to stretch it, drag the black knob to turn it, drive the sun through its day below. The windows are the ones sized on Windows & Shading.":
+    "Vista isométrica, inclinada a partir de sudoeste. Arraste a planta para a esticar, arraste o botão preto para a rodar, conduza o sol ao longo do seu dia abaixo. As janelas são as dimensionadas em Janelas e Sombreamento.",
   "Sun day": "Dia de sol",
   "Solar time": "Hora solar",
   "Play the day": "Reproduzir o dia",
@@ -7239,11 +7527,32 @@ Object.assign(PT, {
   "fruiting globe": "globo com fruto",
   "tiered pyramid": "pirâmide em andares",
   "fan-palm clump": "touceira de palmeira",
-  "dragon-tree umbrella": "guarda-sol de dragoeiro"
+  "dragon-tree umbrella": "guarda-sol de dragoeiro",
+  /* windows on the Site model */
+  "Windows": "Janelas",
+  "window": "janela",
+  "21 Dec": "21 Dez",
+  "no window": "sem janela",
+  "shadow": "sombra",
+  "Window fit": "Ajuste vãos",
+  "Larger windows face south, smaller ones north": "Janelas maiores a sul, menores a norte",
+  "Larger windows face north, smaller ones south": "Janelas maiores a norte, menores a sul",
+  "No windows yet — size them on Windows & Shading": "Ainda sem janelas — dimensione-as em Janelas e Sombreamento",
+  "Largest window faces": "Maior janela virada a",
+  "smallest faces": "menor virada a",
+  "the right way round": "no sentido certo",
+  "opposite windows are equal: make the south one larger": "janelas opostas iguais: aumente a de sul",
+  "opposite windows are equal: make the north one larger": "janelas opostas iguais: aumente a de norte",
+  "turn the large glass toward the south": "rode o vidro maior para sul",
+  "turn the large glass toward the north": "rode o vidro maior para norte",
+  "the large glass faces away from the south": "o vidro maior está de costas para sul",
+  "the large glass faces away from the north": "o vidro maior está de costas para norte"
 });
 
 /* --- the long captions, keyed by identifier ----------------------------- */
 Object.assign(PT_HINT, {
+  'site-windows':
+    'As janelas do modelo são as dimensionadas em <b>Janelas e Sombreamento</b> — a mesma largura, peitoril e padieira, cada uma dada pela razão vão/parede da sua fachada — pelo que rodar aqui a planta roda-as com ela. Cada etiqueta azul indica para onde essa janela fica realmente virada depois de rodada a planta, depois a largura × altura e a razão vão/parede da fachada; em Janelas e Sombreamento as fachadas mantêm os nomes que têm com a fachada principal a sul. A regra para as ler: <b>quanto maior a janela, mais deve estar virada a sul; quanto menor, mais fica virada a norte</b> (norte e sul trocam abaixo do equador). O vidro a sul recolhe o sol baixo de Inverno e é o mais fácil de sombrear do sol alto de Verão; o vidro a norte dá luz difusa e uniforme, mas quase não recebe sol de Inverno enquanto perde calor (Lechner; Gonçalves &amp; Graça). O <b>Ajuste vãos</b> lê-a: cada janela conta como uma seta que sai da sua fachada, tão longa quanto o vidro que a sua razão vão/parede pede, e o ajuste é 100 quando a soma aponta a sul, 50 a nascente ou poente, 0 a norte. As dimensões mudam-se em Janelas e Sombreamento; a rotação da planta, aqui, decide para onde olham. Janelas e Sombreamento desenha cada janela como uma faixa única no piso térreo, com no máximo 92 % da fachada — com dois ou três pisos as faixas podem atingir esse limite e parecer iguais, embora a razão vão/parede, e o ajuste, continuem diferentes.',
   'clim-method':
     'A classificação é a de Köppen–Geiger tal como Peel, Finlayson e McMahon (2007) a enunciam — a formalização que escreve cada critério como uma desigualdade e não como uma descrição. Nada aqui foi consultado: o código <b>%1</b> foi calculado a partir das normais que introduziu, e o quadro abaixo mostra que grandeza decidiu cada letra. O semestre de Verão vai de Abril a Setembro no hemisfério norte e de Outubro a Março no sul, o que é uma convenção da classificação e não uma estação.',
   'clim-threshold':
