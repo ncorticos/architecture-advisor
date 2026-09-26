@@ -404,6 +404,7 @@ footer{border-top:1px solid var(--line); margin-top:26px; background:var(--wash)
 details.more{border-top:1px solid var(--line); margin:6px 0 0; padding:2px 0}
 details.more > summary{cursor:pointer; font-size:13px; font-weight:600; color:var(--ink2); padding:9px 0; list-style-position:inside}
 details.more[open] > summary{color:var(--ink)}
+.canvas-wrap canvas.wx{position:absolute; left:0; top:0; width:100%; display:block; pointer-events:none}
 @media(max-width:1100px){.bench.env{grid-template-columns:1fr}.bench.env .stage{order:-1}.bench.env .rail{order:2}}
 @media(max-width:1100px){.bench{grid-template-columns:1fr}.bench .rgroup{flex-direction:row; flex-wrap:wrap}.bench .rgroup .btn{width:auto}
   .bench .props .controls{flex-direction:row; flex-wrap:wrap}}
@@ -649,7 +650,7 @@ details.more[open] > summary{color:var(--ink)}
 /* ------------------------------------------------------------ 0. IDENTITY -- */
 const APP = {
   name:        'Architecture Advisor',
-  version:     '1.79.0',
+  version:     '1.80.0',
   author:      'Nuno Dinis Cortiços',
   institution: 'Lisbon School of Architecture, Universidade de Lisboa',
   builtWith:   'Claude Opus 5 (Anthropic)',
@@ -2703,25 +2704,186 @@ function buildEnvironment(host) {
   const tLo = Math.min(0, Math.floor(Math.min.apply(null, C.t) / 5) * 5);
   const tHi = Math.ceil(Math.max.apply(null, C.t) / 5) * 5;
   const summerM = K.south ? [9, 10, 11, 0, 1, 2] : [3, 4, 5, 6, 7, 8];
-  makePanel(rail, {
+
+  /* --- the weather of the day: the normals read at the date chosen. Each
+     month's value sits at mid-month and the days between are interpolated.
+     The sun's size and colour follow the mean air temperature (0 to 28 °C);
+     the clouds, their shadows and the rain follow the precipitation (cloud
+     from 0 to 150 mm a month, rain from 10 mm) — a reading of the normals,
+     not a record of the sky ------------------------------------------------ */
+  const MID = []; { let c0 = 0; MDAYS.forEach(n => { MID.push(c0 + (n + 1) / 2); c0 += n; }); }
+  const seat = doy => {
+    let i = 11; for (let m = 0; m < 12; m++) if (doy >= MID[m]) i = m;
+    const j = (i + 1) % 12, x = doy < MID[0] ? doy + 365 : doy, x1 = MID[j] + (j === 0 ? 365 : 0);
+    return [i, j, (x - MID[i]) / (x1 - MID[i])];
+  };
+  const atDay = (arr, doy) => { const [i, j, f] = seat(doy); return arr[i] + (arr[j] - arr[i]) * f; };
+  /** The day's place on the month axis, months at whole numbers. */
+  const monthPos = doy => { const [i, , f] = seat(doy); const q = i + f; return q > 11.5 ? q - 12 : q; };
+  const posToDoy = q => {
+    let i = Math.floor(q); const f = q - i; if (i < 0) i += 12;
+    const j = (i + 1) % 12, x1 = MID[j] + (j === 0 ? 365 : 0), d = Math.round(MID[i] + f * (x1 - MID[i]));
+    return ((d - 1) % 365 + 365) % 365 + 1;
+  };
+  const monthOf = doy => { let d = doy, m = 0; while (m < 11 && d > MDAYS[m]) { d -= MDAYS[m]; m++; } return m; };
+  const weatherOf = doy => {
+    const T = atDay(C.t, doy), Pm = Math.max(0, atDay(C.p, doy));
+    return { T, P:Pm, m:monthOf(doy), warm:clamp(T / 28, 0, 1), cloud:clamp(Pm / 150, 0, 1), rain:clamp((Pm - 10) / 140, 0, 1) };
+  };
+  const normalsLine = m => [LANG === 'pt' ? 'Normais de ' + MONTHS[m] : MONTHS[m] + ' normals', fmt(C.t[m], 1) + ' °C · ' + fmt(C.p[m], 0) + ' mm'];
+  /** The sun: bigger, deeper in colour and brighter in its halo the warmer
+      the day; its halo dims under cloud. */
+  const sunCore = w => {
+    const a = [253, 230, 138], b = [245, 158, 11], c = [234, 88, 12], mix = (p, q, f) => p.map((v, i) => Math.round(v + (q[i] - v) * f));
+    return 'rgb(' + (w < 0.6 ? mix(a, b, w / 0.6) : mix(b, c, (w - 0.6) / 0.4)).join(',') + ')';
+  };
+  const sunGlyph = (ctx, x, y, wx, k) => {
+    const r = k * (5.5 + 3.5 * wx.warm), halo = r * (2.2 + 1.6 * wx.warm), a = (0.18 + 0.42 * wx.warm) * (1 - 0.55 * wx.cloud);
+    const g = ctx.createRadialGradient(x, y, r * 0.6, x, y, halo);
+    g.addColorStop(0, 'rgba(251,191,36,' + a.toFixed(3) + ')'); g.addColorStop(1, 'rgba(251,191,36,0)');
+    ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, halo, 0, 6.284); ctx.fill();
+    ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(x, y, r + 3.5 * k, 0, 6.284); ctx.fill();
+    stroke(ctx, '#D97706', 1.4); ctx.stroke();
+    ctx.fillStyle = sunCore(wx.warm); ctx.beginPath(); ctx.arc(x, y, r, 0, 6.284); ctx.fill();
+  };
+  /** A cloud: white when thin, rain-grey when heavy. */
+  const cloudPuff = (ctx, x, y, R, wx, alpha) => {
+    const g = Math.round(250 - 105 * wx.cloud);
+    ctx.fillStyle = 'rgba(' + g + ',' + Math.min(255, g + 4) + ',' + Math.min(255, g + 10) + ',' + alpha.toFixed(3) + ')';
+    ctx.beginPath();
+    [[0, 0, 1], [-0.9, 0.25, 0.7], [0.95, 0.2, 0.75], [-0.35, -0.45, 0.72], [0.4, -0.5, 0.62]].forEach(([dx, dy, rr]) => {
+      ctx.moveTo(x + dx * R + rr * R, y + dy * R); ctx.arc(x + dx * R, y + dy * R, rr * R, 0, 6.284); });
+    ctx.fill();
+  };
+  const drop = (ctx, x, y, len, a) => { stroke(ctx, 'rgba(37,99,235,' + a + ')', 1.1); seg(ctx, x + len * 0.14, y - len, x, y); };
+  const splash = (ctx, x, y, q, flat) => {
+    stroke(ctx, 'rgba(37,99,235,' + (0.45 * (1 - q)).toFixed(3) + ')', 1);
+    ctx.beginPath(); ctx.ellipse(x, y, 1.5 + 4.5 * q, (1.5 + 4.5 * q) * flat, 0, 0, 6.284); ctx.stroke();
+  };
+  const fall = (d, tt, rate) => (d.ph + tt * d.sp * rate) % 1.2;   // 0–1 falling, 1–1.2 splashing
+  const rnd = (() => { let sd = 20240611; return () => (sd = (sd * 16807) % 2147483647) / 2147483647; })();
+  const CLOUDS = Array.from({ length:9 }, () => ({ u:rnd(), v:rnd(), size:0.6 + 0.7 * rnd(), sp:0.6 + 0.8 * rnd(), gy:rnd() }));
+  const DROPS = Array.from({ length:180 }, () => ({ u:rnd(), v:rnd(), ph:rnd() * 1.2, sp:0.85 + 0.5 * rnd() }));
+  /* the moving part rides on a transparent canvas over each chart, so the
+     model under it is not redrawn thirty times a second */
+  const still = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+  const WX = { t0:performance.now(), raf:0, last:0, layers:[] };
+  const wxTime = () => still ? 0 : (performance.now() - WX.t0) / 1000;
+  const wxLayer = (panel, draw) => {
+    const oc = el('canvas', { class:'wx' });
+    panel.canvas.parentNode.appendChild(oc);
+    WX.layers.push({ panel, oc, draw });
+    if ('IntersectionObserver' in window) new IntersectionObserver(es => { if (es.some(e => e.isIntersecting)) wxKick(); }).observe(oc);
+  };
+  const paintLayer = (L, tt) => {
+    const W = L.panel.W, H = L.panel.H, dpr = Math.min(3, window.devicePixelRatio || 1);
+    if (!W || !H) return;
+    const cw = Math.round(W * dpr), chh = Math.round(H * dpr);
+    if (L.oc.width !== cw || L.oc.height !== chh) { L.oc.width = cw; L.oc.height = chh; L.oc.style.height = H + 'px'; }
+    const g = L.oc.getContext('2d'); g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, W, H);
+    L.draw(g, W, H, tt);
+  };
+  const onScreen = c => { const r = c.getBoundingClientRect(); return r.width > 0 && r.bottom > 0 && r.top < (window.innerHeight || 900); };
+  function wxTick(now) {
+    WX.raf = 0;
+    if (!host.isConnected) return;
+    const wx = weatherOf(ENV.doy), moving = !still && (wx.cloud > 0.04 || wx.rain > 0);
+    const shown = WX.layers.filter(L => onScreen(L.oc));
+    if (!shown.length) return;                      // another tab, or scrolled away: the observers wake it
+    if (!moving || now - WX.last >= 33) { WX.last = now; shown.forEach(L => paintLayer(L, wxTime())); }
+    if (moving) WX.raf = requestAnimationFrame(wxTick);
+  }
+  function wxKick() { if (!WX.raf && host.isConnected) WX.raf = requestAnimationFrame(wxTick); }
+  /* the climograph: rain falls under its cloud onto the month's bar */
+  const drawWeatherClim = (ctx, W, H, tt) => {
+    const wx = weatherOf(ENV.doy), nd = Math.round(18 * wx.rain);
+    if (!nd) return;
+    const P = climRect(W, H), xc = P.sx(monthPos(ENV.doy)) + 5, bw = P.w / 12;
+    DROPS.slice(0, nd).forEach(d => {
+      const xEnd = xc + (d.u - 0.5) * bw * 1.3, yEnd = P.y + P.h, top = 22, q = fall(d, tt, 0.9);
+      if (q <= 1) { const y = top + q * (yEnd - top); drop(ctx, xEnd - (yEnd - y) * 0.08, y, 5 + 3 * d.sp, 0.5); }
+      else splash(ctx, xEnd, yEnd, (q - 1) / 0.2, 0.35);
+    });
+  };
+  /* the model: clouds in the sky above the plot, their shadows crossing the
+     ground and the building, and rain landing on the plot */
+  const drawWeatherEnv = (ctx, W, H, tt) => {
+    const FR = envPanel && envPanel.data.FR, wx = weatherOf(ENV.doy);
+    if (!FR) return;
+    const n = Math.round(CLOUDS.length * wx.cloud), nd = Math.round(DROPS.length * wx.rain);
+    const ex = FR.Rg * FR.s, ey = ex * FR.se, kS = clamp(W / 700, 0.6, 1.25);
+    const skyTop = 58, skyBot = FR.cy - ey - 4, sky = !FR.plan && skyBot - skyTop > 36;
+    CLOUDS.slice(0, n).forEach(c => {
+      const R = (12 + 12 * c.size) * kS, x = ((c.u + tt * c.sp * 0.018) % 1) * (W + 4 * R) - 2 * R;
+      const gy = FR.cy + (c.gy * 1.5 - 0.75) * ey, a = 0.1 + 0.16 * wx.cloud;
+      ctx.save();
+      ctx.beginPath(); ctx.ellipse(FR.cx, FR.cy, ex, ey, 0, 0, 6.284); ctx.clip();
+      ctx.translate(x, gy); ctx.scale(1, FR.se);
+      const sg = ctx.createRadialGradient(0, 0, 0, 0, 0, R * 1.7);
+      sg.addColorStop(0, 'rgba(20,23,26,' + a.toFixed(3) + ')'); sg.addColorStop(0.6, 'rgba(20,23,26,' + (a * 0.6).toFixed(3) + ')'); sg.addColorStop(1, 'rgba(20,23,26,0)');
+      ctx.fillStyle = sg; ctx.beginPath(); ctx.arc(0, 0, R * 1.7, 0, 6.284); ctx.fill();
+      ctx.restore();
+      if (sky) cloudPuff(ctx, x, skyTop + R * 0.6 + c.v * Math.max(0, skyBot - skyTop - R * 1.2), R, wx, 0.5 + 0.4 * wx.cloud);
+    });
+    const top = sky ? skyTop + 0.45 * (skyBot - skyTop) : 0;   // from the clouds down
+    DROPS.slice(0, nd).forEach(d => {
+      const yv = (d.v * 2 - 1) * 0.9, yEnd = FR.cy + yv * ey, xEnd = FR.cx + (d.u * 2 - 1) * ex * Math.sqrt(1 - yv * yv) * 0.95;
+      const q = fall(d, tt, 1.1), len = (7 + 6 * d.sp) * kS;
+      if (q <= 1) { const y = top + q * (yEnd - top); drop(ctx, xEnd - (yEnd - y) * 0.14, y, len, 0.5); }
+      else splash(ctx, xEnd, yEnd, (q - 1) / 0.2, FR.se);
+    });
+  };
+  /* the solar chart: clouds along its top, rain down to the horizon, cloud
+     shadows along the ground strip under it */
+  const drawWeatherChart = (ctx, W, H, tt) => {
+    const wx = weatherOf(ENV.doy), P = chartRect(W, H);
+    const n = Math.round(6 * wx.cloud), nd = Math.round(70 * wx.rain), bandB = P.y + P.h * 0.32;
+    if (!n && !nd) return;
+    ctx.save(); ctx.beginPath(); ctx.rect(P.x, P.y, P.w, P.h + 5); ctx.clip();
+    CLOUDS.slice(0, n).forEach(c => {
+      const R = 6 + 6 * c.size, x = P.x + ((c.u + tt * c.sp * 0.018) % 1) * (P.w + 4 * R) - 2 * R;
+      const sg = ctx.createRadialGradient(x, P.y + P.h + 2.5, 0, x, P.y + P.h + 2.5, R * 1.6);
+      sg.addColorStop(0, 'rgba(20,23,26,' + (0.18 + 0.2 * wx.cloud).toFixed(3) + ')'); sg.addColorStop(1, 'rgba(20,23,26,0)');
+      ctx.fillStyle = sg; ctx.fillRect(x - R * 1.6, P.y + P.h, R * 3.2, 5);
+      cloudPuff(ctx, x, P.y + R * 0.8 + c.v * Math.max(0, bandB - P.y - R * 1.2), R, wx, 0.5 + 0.4 * wx.cloud);
+    });
+    DROPS.slice(0, nd).forEach(d => {
+      const xEnd = P.x + d.u * P.w, yEnd = P.y + P.h, top = P.y + (bandB - P.y) * 0.6, q = fall(d, tt, 1.3);
+      if (q <= 1) { const y = top + q * (yEnd - top); drop(ctx, xEnd - (yEnd - y) * 0.14, y, 6 + 4 * d.sp, 0.45); }
+      else splash(ctx, xEnd, yEnd, (q - 1) / 0.2, 0.35);
+    });
+    ctx.restore();
+  };
+
+  const climRect = (W, H) => plotRect(30, 30, W - 30 - 28, H - 30 - 36, -0.5, 11.5, 0, pMax);
+  const clim = makePanel(rail, {
     title: 'The year, month by month',
-    heightFn: w => Math.min(w / 1.05, 250),
-    render(ctx, W, H) {
-      const P = plotRect(30, 10, W - 30 - 28, H - 10 - 36, -0.5, 11.5, 0, pMax);
+    note: 'Drag across the months to move the day.',
+    heightFn: w => Math.min(w / 1.05, 250) + 20,
+    render(ctx, W, H, PN) {
+      const P = climRect(W, H);
       const T = plotRect(P.x, P.y, P.w, P.h, -0.5, 11.5, tLo, tHi);
+      const wx = weatherOf(ENV.doy), xc = P.sx(monthPos(ENV.doy));
       ctx.fillStyle = '#faf7f0';
       summerM.forEach(i => ctx.fillRect(P.sx(i - 0.5), P.y, P.w / 12, P.h));
       stroke(ctx, CH.line2, 1); seg(ctx, P.x, P.y + P.h, P.x + P.w, P.y + P.h);
       niceTicks(0, pMax, 4).ticks.forEach(v => label(ctx, fmt(v, 0), P.x - 4, P.sy(v), '#5b82b0', FM(8.5), 'right', 'middle'));
       niceTicks(tLo, tHi, 4).ticks.forEach(v => label(ctx, fmt(v, 0), P.x + P.w + 4, T.sy(v), '#D97706', FM(8.5), 'left', 'middle'));
       const bw = P.w / 12 * 0.6;
-      C.p.forEach((v, i) => { const y = P.sy(v); ctx.fillStyle = '#bcd2ea'; ctx.fillRect(P.sx(i) - bw / 2, y, bw, Math.max(0, P.y + P.h - y)); });
+      C.p.forEach((v, i) => { const y = P.sy(v); ctx.fillStyle = i === wx.m ? '#7fa7d6' : '#bcd2ea'; ctx.fillRect(P.sx(i) - bw / 2, y, bw, Math.max(0, P.y + P.h - y)); });
       stroke(ctx, '#D97706', 2);
       ctx.beginPath(); C.t.forEach((v, i) => { const x = T.sx(i), y = T.sy(v); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }); ctx.stroke();
-      MON3.forEach((m, i) => label(ctx, m.slice(0, 1), P.sx(i), P.y + P.h + 9, CH.muted, F(8.5), 'center', 'middle'));
+      MON3.forEach((m, i) => label(ctx, m.slice(0, 1), P.sx(i), P.y + P.h + 9, i === wx.m ? CH.ink : CH.muted, F(8.5, i === wx.m ? '700' : '400'), 'center', 'middle'));
       label(ctx, t('mm'), P.x - 4, P.y + P.h + 24, '#5b82b0', FM(8.5), 'right', 'middle');
       label(ctx, '°C', P.x + P.w + 4, P.y + P.h + 24, '#D97706', FM(8.5), 'left', 'middle');
       label(ctx, t('Precipitation') + ' · ' + t('Mean temperature'), P.x + P.w / 2, P.y + P.h + 24, CH.muted, F(8.5), 'center', 'middle');
+      /* the day chosen: its place in the year, its sun and its cloud */
+      stroke(ctx, 'rgba(217,119,6,.8)', 1.2, [3, 3]); seg(ctx, xc, 22, xc, P.y + P.h);
+      ctx.fillStyle = '#D97706'; ctx.beginPath(); ctx.arc(xc, T.sy(atDay(C.t, ENV.doy)), 3.2, 0, 6.284); ctx.fill();
+      sunGlyph(ctx, xc - 7, 13, wx, 0.5);
+      if (wx.cloud > 0.04) cloudPuff(ctx, xc + 5, 15, 3 + 6 * wx.cloud, wx, 0.6 + 0.35 * wx.cloud);
+      if (ctx.canvas !== PN.canvas) drawWeatherClim(ctx, W, H, wxTime());   // the PNG export carries the weather too
+      wxKick();
     },
     csv: () => csvRows([['Month', 'Mean temperature (°C)', 'Precipitation (mm)']].concat(C.t.map((v, i) => [MONTHS_EN[i], v, C.p[i]])))
   });
@@ -2763,11 +2925,13 @@ function buildEnvironment(host) {
   let envPanel = null;
   const redrawEnv = () => { if (envPanel) envPanel.draw(); };
 
-  const renderEnv = (ctx, W, H) => {
-    const FR = envFrame(W, H), M = FR.M, pt = (x, y, z) => P3(FR, x, y, z);
+  const renderEnv = (ctx, W, H, PN) => {
+    const FR = envFrame(W, H), M = FR.M, pt = (x, y, z) => P3(FR, x, y, z), wx = weatherOf(ENV.doy);
+    PN.data.FR = FR;
     const b = (G.rot - 180) * RAD, cb = Math.cos(b), sb = Math.sin(b);
     const toW = (x, y) => [x * cb + y * sb, -x * sb + y * cb];   // the plan as turned on Site
-    ctx.fillStyle = '#fbfbf9'; ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = 'rgb(' + Math.round(251 - 22 * wx.cloud) + ',' + Math.round(251 - 18 * wx.cloud) + ',' + Math.round(249 - 12 * wx.cloud) + ')';
+    ctx.fillRect(0, 0, W, H);                  // the sky greys with the month's cloud
     /* the ground: a disc of map under the building */
     const disc = [];
     for (let a = 0; a <= 360; a += 3) disc.push(pt(FR.Rg * Math.sin(a * RAD), FR.Rg * Math.cos(a * RAD), 0));
@@ -2794,6 +2958,7 @@ function buildEnvironment(host) {
       ctx.restore();
       if (shown) { discPath(); ctx.fillStyle = 'rgba(255,255,255,.14)'; ctx.fill(); attr = src.attr; }
     }
+    if (wx.cloud > 0.04) { discPath(); ctx.fillStyle = 'rgba(52,60,70,' + (0.12 * wx.cloud).toFixed(3) + ')'; ctx.fill(); }   // the ground under an overcast sky
     discPath(); stroke(ctx, CH.line, 1.2); ctx.stroke();
     /* the compass on the horizon */
     for (let a = 0; a < 360; a += 15) {
@@ -2818,7 +2983,7 @@ function buildEnvironment(host) {
         convexHull(pts).forEach((p2, i) => { const q = pt(p2[0], p2[1], 0); i ? ctx.lineTo(q[0], q[1]) : ctx.moveTo(q[0], q[1]); });
         ctx.closePath();
       });
-      ctx.fillStyle = 'rgba(20,23,26,.34)'; ctx.fill('nonzero');
+      ctx.fillStyle = 'rgba(20,23,26,' + (0.34 * (1 - 0.55 * wx.cloud)).toFixed(3) + ')'; ctx.fill('nonzero');   // softer under cloud: more of the light is diffuse
     }
 
     /* the sun paths: the solstices and the equinox, and the day chosen; the
@@ -2905,16 +3070,15 @@ function buildEnvironment(host) {
     if (sun.alt > -0.5) {
       const sp = domePt(FR, sun), q = pt(...sp), c0 = pt(0, 0, M.H0 * 0.7);
       stroke(ctx, 'rgba(217,119,6,.75)', 1.4, [4, 3]); seg(ctx, q[0], q[1], c0[0], c0[1]);
-      ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(q[0], q[1], 11, 0, 6.284); ctx.fill();
-      stroke(ctx, '#D97706', 1.5); ctx.stroke();
-      ctx.fillStyle = '#F59E0B'; ctx.beginPath(); ctx.arc(q[0], q[1], 7, 0, 6.284); ctx.fill();
+      sunGlyph(ctx, q[0], q[1], wx, 1);
     }
     /* the readout, the scale and the credits */
     const narrow = W < 600;
     const ridgeSh = sun.alt > 0.5 ? M.ridge / Math.tan(sun.alt * RAD) : null;
     const line1 = doyLabel(ENV.doy) + ' · ' + hm(ENV.h) + ' ' + t('solar time');
     const line2 = sun.alt > 0 ? t('sun') + ' ' + fmt(sun.alt, 0) + '° · ' + t('azimuth') + ' ' + fmt(sun.azi, 0) + '° · ' + t('ridge shadow') + ' ' + fmt(ridgeSh, 1) + ' m' : t('the sun is below the horizon');
-    [[line1, 14, FM(narrow ? 10 : 11.5, '600')], [line2, 30, FM(narrow ? 9.5 : 10.5)]].forEach(([txt, y, f]) => {
+    const nl = normalsLine(wx.m), line3 = nl[0] + ': ' + nl[1];
+    [[line1, 14, FM(narrow ? 10 : 11.5, '600')], [line2, 30, FM(narrow ? 9.5 : 10.5)], [line3, 46, FM(narrow ? 9.5 : 10.5)]].forEach(([txt, y, f]) => {
       ctx.font = f; const w = ctx.measureText(txt).width;
       ctx.fillStyle = 'rgba(255,255,255,.88)'; ctx.fillRect(6, y - 9, w + 10, 17);
       label(ctx, txt, 11, y, CH.ink, f, 'left', 'middle');
@@ -2940,15 +3104,21 @@ function buildEnvironment(host) {
       ctx.fillStyle = 'rgba(255,255,255,.85)'; ctx.fillRect(W - w - 14, y - 7, w + 10, 13);
       ctx.fillStyle = CH.muted; ctx.textAlign = 'right'; ctx.textBaseline = 'middle'; ctx.fillText(ln, W - 9, y);   // already translated
     });
+    if (ctx.canvas !== PN.canvas) drawWeatherEnv(ctx, W, H, wxTime());   // the PNG export carries the weather too
+    wxKick();
   };
   envPanel = makePanel(stage, {
     title: 'The sun over the building, on its plot',
-    note: 'The building drawn on Site, turned as set there, on a disc of map under the sun paths of the solstices, the equinox and the day chosen. Drag the sun along its path to change the hour, across the paths to change the day; the shadow follows. Drag the ground to set the building on its plot.',
+    note: 'The building from Site on its plot, under the sun paths of the solstices, the equinox and the day chosen. Drag the sun along its path for the hour, across the paths for the day; drag the ground to place the building. The sky follows the month’s normals: the warmer, the stronger the sun; the wetter, the more cloud and rain.',
     heightFn: w => Math.round(clamp(Math.min(w * (w < 600 ? 1.05 : 0.74), (window.innerHeight || 900) - 190), 320, 900)),
     render: renderEnv,
     csv: () => {
       const rows = [['Parameter', 'Value']], sp = sunPos(ENV.doy, ENV.h, lat, lon, tz), pp = plotPos(), ss = sunriseSunset(ENV.doy, lat, lon, tz), M = roofModel(G, RF);
+      const wx = weatherOf(ENV.doy);
       rows.push(['Plot latitude (°)', +pp.lat.toFixed(6)], ['Plot longitude (°)', +pp.lon.toFixed(6)], ['Day', doyLabel(ENV.doy)], ['Solar time (h)', +ENV.h.toFixed(2)],
+        ['Month', MONTHS_EN[wx.m]], ['Mean temperature of the month (°C)', C.t[wx.m]], ['Precipitation of the month (mm)', C.p[wx.m]],
+        ['Mean temperature at the day, interpolated (°C)', +wx.T.toFixed(1)], ['Precipitation at the day, interpolated (mm/month)', +wx.P.toFixed(0)],
+        ['Sun drawn: warmth 0–1 (0 to 28 °C)', +wx.warm.toFixed(2)], ['Cloud drawn: 0–1 (0 to 150 mm)', +wx.cloud.toFixed(2)], ['Rain drawn: 0–1 (10 to 150 mm)', +wx.rain.toFixed(2)],
         ['Sun altitude (°)', +sp.alt.toFixed(1)], ['Sun azimuth (°)', +sp.azi.toFixed(1)],
         ['Sunrise (solar time)', ss ? hm(ss.rise) : ''], ['Sunset (solar time)', ss ? hm(ss.set) : ''], ['Day length (h)', ss ? +(ss.set - ss.rise).toFixed(2) : ''],
         ['Ridge height (m)', +M.ridge.toFixed(2)], ['Ridge shadow length (m)', sp.alt > 0.5 ? +(M.ridge / Math.tan(sp.alt * RAD)).toFixed(2) : ''],
@@ -2967,9 +3137,12 @@ function buildEnvironment(host) {
   const chart = makePanel(props, {
     title: 'Sun path over the site',
     heightFn: w => Math.min(w / 1.25, 230),
-    render(ctx, W, H) {
-      const P = chartRect(W, H);
+    render(ctx, W, H, PN) {
+      const P = chartRect(W, H), wx = weatherOf(ENV.doy);
+      if (wx.cloud > 0.04) { ctx.fillStyle = 'rgba(148,163,184,' + (0.16 * wx.cloud).toFixed(3) + ')'; ctx.fillRect(P.x, P.y, P.w, P.h); }
       ctx.fillStyle = '#faf7f0'; ctx.fillRect(P.sx(135), P.y, P.sx(225) - P.sx(135), P.h);
+      const gr = [Math.round(183 - 58 * wx.cloud), Math.round(199 - 61 * wx.cloud), Math.round(154 - 47 * wx.cloud)];
+      ctx.fillStyle = 'rgb(' + gr.join(',') + ')'; ctx.fillRect(P.x, P.y + P.h, P.w, 4);   // the ground, darker under cloud
       stroke(ctx, CH.line2, 1); seg(ctx, P.x, P.y + P.h, P.x + P.w, P.y + P.h);
       [45, 90, 135, 180, 225, 270, 315].forEach(a => label(ctx, COMPASS8[a / 45], P.sx(a), P.y + P.h + 10, CH.muted, F(8.5), 'center', 'middle'));
       niceTicks(0, yMax, 4).ticks.forEach(v => { label(ctx, fmt(v, 0) + '°', P.x - 4, P.sy(v), CH.muted, FM(8.5), 'right', 'middle'); stroke(ctx, 'rgba(20,23,26,.06)', 1); seg(ctx, P.x, P.sy(v), P.x + P.w, P.sy(v)); });
@@ -2980,10 +3153,10 @@ function buildEnvironment(host) {
       });
       const sp = sunPos(ENV.doy, ENV.h, lat, lon, tz);
       if (sp.alt > -0.5) {
-        const x = P.sx(sp.azi), y = P.sy(Math.max(0, sp.alt));
-        ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(x, y, 8, 0, 6.284); ctx.fill(); stroke(ctx, '#D97706', 1.4); ctx.stroke();
-        ctx.fillStyle = '#F59E0B'; ctx.beginPath(); ctx.arc(x, y, 5, 0, 6.284); ctx.fill();
+        sunGlyph(ctx, P.sx(sp.azi), P.sy(Math.max(0, sp.alt)), wx, 0.72);
       }
+      if (ctx.canvas !== PN.canvas) drawWeatherChart(ctx, W, H, wxTime());
+      wxKick();
     },
     csv: () => {
       const rows = [['Solar time (h)', '21 Jun alt (°)', '21 Jun azi (°)', '20 Mar alt (°)', '20 Mar azi (°)', '21 Dec alt (°)', '21 Dec azi (°)']];
@@ -3034,13 +3207,14 @@ function buildEnvironment(host) {
     readings.innerHTML = '';
     [[t('Sun altitude'), sp.alt > 0 ? fmt(sp.alt, 1) + '°' : t('below the horizon')], [t('Sun azimuth'), fmt(sp.azi, 0) + '° · ' + COMPASS8[Math.round(sp.azi / 45) % 8]],
      [t('Sunrise – sunset'), ss ? hm(ss.rise) + ' – ' + hm(ss.set) : '–'], [t('Day length'), ss ? fmt(ss.set - ss.rise, 1) + ' h' : '–'],
-     [t('Noon altitude'), fmt(noonAlt, 1) + '°'], [t('Ridge shadow'), sp.alt > 0.5 ? fmt(M.ridge / Math.tan(sp.alt * RAD), 1) + ' m' : '–']]
+     [t('Noon altitude'), fmt(noonAlt, 1) + '°'], [t('Ridge shadow'), sp.alt > 0.5 ? fmt(M.ridge / Math.tan(sp.alt * RAD), 1) + ' m' : '–'], normalsLine(monthOf(ENV.doy))]
       .forEach(([k, v]) => readings.appendChild(el('div', { class:'fact' }, [el('span', { text:k }), el('b', { text:v })])));
     const pp = plotPos();
     plotLine.textContent = t('Plot') + ' ' + fmt(Math.abs(pp.lat), 5) + '° ' + (pp.lat < 0 ? 'S' : 'N') + ' · ' + fmt(Math.abs(pp.lon), 5) + '° ' + (pp.lon < 0 ? 'W' : 'E')
       + (ENV.plot ? '' : ' — ' + t('the site coordinates; drag the ground to move the building'));
     resetBtn.style.display = ENV.plot ? '' : 'none';
-    envPanel.draw(); chart.draw();
+    envPanel.draw(); chart.draw(); clim.draw();
+    wxKick();
   }
 
   /* --- dragging: the sun on the dome or on the chart, the ground under the
@@ -3064,7 +3238,8 @@ function buildEnvironment(host) {
     cv.style.touchAction = 'none'; cv.draggable = false;
     cv.addEventListener('dragstart', ev => ev.preventDefault());
     let drag = null;
-    const xy = ev => { const r = cv.getBoundingClientRect(); return [ev.clientX - r.left, ev.clientY - r.top]; };
+    /* pointer to drawing units: a panel narrower than its 220 px minimum is drawn at 220 and shown squeezed */
+    const xy = ev => { const r = cv.getBoundingClientRect(); return [(ev.clientX - r.left) * (r.width ? panel.W / r.width : 1), (ev.clientY - r.top) * (r.height ? panel.H / r.height : 1)]; };
     cv.addEventListener('pointerdown', ev => { const [x, y] = xy(ev); drag = onDown(x, y); if (!drag) return; ev.preventDefault(); try { cv.setPointerCapture(ev.pointerId); } catch (err) {} });
     cv.addEventListener('pointermove', ev => { const [x, y] = xy(ev); if (!drag) { cv.style.cursor = cursorAt(x, y); return; } ev.preventDefault(); onMove(drag, x, y); });
     const end = () => { drag = null; };
@@ -3092,6 +3267,11 @@ function buildEnvironment(host) {
     return Math.hypot(x - P.sx(sp.azi), y - P.sy(Math.max(0, sp.alt))) <= 16 ? { kind:'sun' } : null;
   }, (d, x, y) => { const P = chartRect(chart.W, chart.H); nearestSun(sp => [P.sx(sp.azi), P.sy(sp.alt)])(x, y); },
   (x, y) => { const P = chartRect(chart.W, chart.H), sp = sunPos(ENV.doy, ENV.h, lat, lon, tz); return Math.hypot(x - P.sx(sp.azi), y - P.sy(Math.max(0, sp.alt))) <= 16 ? 'grab' : 'default'; });
+  /* the climograph moves the day: drag across the months */
+  const climDay = x => { const P = climRect(clim.W, clim.H), q = clamp(-0.5 + (x - P.x) / P.w * 12, -0.5, 11.49); ENV.doy = posToDoy(q); clampHour(); refreshEnv(); };
+  const inClim = (x, y) => { const P = climRect(clim.W, clim.H); return x >= P.x - 4 && x <= P.x + P.w + 4 && y >= 4 && y <= P.y + P.h + 14; };
+  bindDrag(clim, (x, y) => { if (!inClim(x, y)) return null; climDay(x); return { kind:'month' }; }, (d, x) => climDay(x), (x, y) => inClim(x, y) ? 'ew-resize' : 'default');
+  wxLayer(clim, drawWeatherClim); wxLayer(envPanel, drawWeatherEnv); wxLayer(chart, drawWeatherChart);
   clampHour();
   refreshEnv();
   host._refresh = () => refreshEnv();   // the building may have changed on Site or Roof
@@ -3190,7 +3370,8 @@ function buildEnvironment(host) {
     hint('clim-normals',
       'These are the twelve pairs you entered, and they are the whole of this application’s knowledge of the climate. If the station they come from is not the site — a coastal station read for an inland valley, a lowland station read for a site 400 m higher — then every page after this one inherits that difference. Name the station and the period in the field on the setup page and the export will carry it, so the reading can be audited later.')
   ]);
-  fold('The map and the sun model', [hint('env-map',
+  fold('The map, the sun and the weather', [hint('env-weather',
+    'The weather over the model is this site’s normals read at the day chosen: each month’s value sits at mid-month and the days between are interpolated. The sun grows and deepens in colour with the mean air temperature, on a scale from 0 to 28 °C; clouds gather with the precipitation, from none at 0 to a full sky at 150 mm a month, and rain falls above 10 mm. Under cloud the building’s shadow softens, since more of the light is diffuse, and each cloud’s shadow crosses the ground and the building below it. Drag across the climograph to move through the year; the model and the solar chart follow, and the day’s place in the year is marked on the climograph. This is a reading of the normals, not a record of the sky: precipitation stands in for cloudiness, which it follows through the Portuguese year but not everywhere — a coastal summer morning can be grey with sea fog and still dry. The Roof tab reads the sun actually received, from the ERA5 reanalysis.'), hint('env-map',
     'The model sets the building drawn on Site — its plan, breaks and patio, turned as set there, under the roof set on Roof — on a disc of base map around its plot: satellite imagery from Esri World Imagery or the street map of OpenStreetMap, each credited on the drawing, loaded from those services by your browser (only the tile addresses leave it). The sun is computed for this site in solar time, as everywhere in this application; its paths for 21 June, 20 March and 21 December are drawn on a sky dome over the building, dashed, with the day chosen solid and its even hours marked. Drag the sun — on the dome or on the solar chart — along its path to change the hour, across the paths to change the day; the shadow on the ground is every piece of the roof dropped along the sun’s ray, as on Ventilation. Drag the ground to slide the map under the building until it stands on its plot; the plot’s coordinates go into the JSON export. <b>Neighbourhood</b> widens the map to 90 m round the plot to read the streets and the buildings around it — their shade is not computed. Imagery can be years old and a little off true position; the dome is a diagram, not to scale with the map.')]);
 }
 
@@ -8896,8 +9077,10 @@ Object.assign(PT, {
     "O clima em que o local assenta e o sol sobre ele: a classe de Köppen calculada a partir das normais, e o percurso do sol sobre o edifício no seu próprio lote. Todas as páginas seguintes estão escritas contra ambos.",
   "Coldest / warmest month": "Mês mais frio / mais quente",
   "The sun over the building, on its plot": "O sol sobre o edifício, no seu lote",
-  "The building drawn on Site, turned as set there, on a disc of map under the sun paths of the solstices, the equinox and the day chosen. Drag the sun along its path to change the hour, across the paths to change the day; the shadow follows. Drag the ground to set the building on its plot.":
-    "O edifício desenhado no Local, rodado como aí definido, sobre um disco de mapa sob os percursos do sol dos solstícios, do equinócio e do dia escolhido. Arraste o sol ao longo do percurso para mudar a hora, através dos percursos para mudar o dia; a sombra acompanha. Arraste o terreno para assentar o edifício no seu lote.",
+  "The building from Site on its plot, under the sun paths of the solstices, the equinox and the day chosen. Drag the sun along its path for the hour, across the paths for the day; drag the ground to place the building. The sky follows the month’s normals: the warmer, the stronger the sun; the wetter, the more cloud and rain.":
+    "O edifício do Local no seu lote, sob os percursos do sol dos solstícios, do equinócio e do dia escolhido. Arraste o sol ao longo do percurso para a hora, através dos percursos para o dia; arraste o terreno para situar o edifício. O céu segue as normais do mês: quanto mais quente, mais forte o sol; quanto mais chuvoso, mais nuvens e chuva.",
+  "Drag across the months to move the day.": "Arraste sobre os meses para mudar o dia.",
+  "The map, the sun and the weather": "O mapa, o sol e o tempo",
   "Sun path": "Percurso do sol",
   "Day": "Dia",
   "{} Sep": "{} set",
@@ -8926,7 +9109,6 @@ Object.assign(PT, {
   "Imagery: Esri World Imagery — Esri, Maxar, Earthstar Geographics and the GIS User Community":
     "Imagem: Esri World Imagery — Esri, Maxar, Earthstar Geographics e a GIS User Community",
   "Map © OpenStreetMap contributors": "Mapa © contribuidores do OpenStreetMap",
-  "The map and the sun model": "O mapa e o modelo solar",
   "Latitude": "Latitude",
   "Solar noon, 21 June": "Meio-dia solar, 21 de Junho",
   "Solar noon, 21 December": "Meio-dia solar, 21 de Dezembro",
@@ -9405,6 +9587,8 @@ Object.assign(PT_HINT, {
     'Estepe semi-árida quente. A amplitude diária continua a ser o recurso, mas a noite já não desce o suficiente para descarregar a massa por si só.',
   'clim-normals':
     'Estes são os doze pares que introduziu, e são todo o conhecimento que esta aplicação tem do clima. Se a estação de onde vêm não for o local — uma estação costeira lida para um vale do interior, uma estação de baixa altitude lida para um local 400 m acima — então todas as páginas seguintes herdam essa diferença. Identifique a estação e o período no campo da página inicial e a exportação levá-los-á consigo, para que a leitura possa ser auditada mais tarde.',
+  'env-weather':
+    'O tempo sobre o modelo são as normais deste local lidas no dia escolhido: o valor de cada mês fica a meio do mês e os dias entre eles são interpolados. O sol cresce e aquece de cor com a temperatura média do ar, numa escala de 0 a 28 °C; as nuvens juntam-se com a precipitação, de nenhuma a 0 a um céu coberto a 150 mm por mês, e a chuva cai acima de 10 mm. Sob nuvens a sombra do edifício suaviza-se, porque mais luz é difusa, e a sombra de cada nuvem atravessa o terreno e o edifício por baixo dela. Arraste sobre o climograma para percorrer o ano; o modelo e o diagrama solar acompanham, e o lugar do dia no ano fica marcado no climograma. É uma leitura das normais, não um registo do céu: a precipitação faz as vezes da nebulosidade, que acompanha ao longo do ano português mas não em todo o lado — uma manhã de Verão na costa pode estar cinzenta de nevoeiro marítimo e continuar seca. O separador Telhado lê o sol realmente recebido, a partir da reanálise ERA5.',
   'env-map':
     'O modelo assenta o edifício desenhado no Local — a sua planta, quebras e pátio, rodado como aí definido, sob o telhado definido em Telhado — num disco de mapa base à volta do seu lote: imagem de satélite da Esri World Imagery ou o mapa de ruas do OpenStreetMap, cada um creditado no desenho, carregados desses serviços pelo seu navegador (só os endereços dos mosaicos saem dele). O sol é calculado para este local em hora solar, como em toda esta aplicação; os seus percursos de 21 de Junho, 20 de Março e 21 de Dezembro são desenhados numa cúpula celeste sobre o edifício, a tracejado, com o dia escolhido a cheio e as suas horas pares marcadas. Arraste o sol — na cúpula ou no diagrama solar — ao longo do percurso para mudar a hora, através dos percursos para mudar o dia; a sombra no terreno é cada peça do telhado projectada segundo o raio solar, como em Ventilação. Arraste o terreno para deslizar o mapa sob o edifício até que este assente no seu lote; as coordenadas do lote seguem na exportação JSON. <b>Vizinhança</b> alarga o mapa a 90 m em torno do lote para ler as ruas e os edifícios à volta — a sombra destes não é calculada. A imagem pode ter anos e estar ligeiramente desviada da posição real; a cúpula é um diagrama, não está à escala do mapa.',
   'ori-method':
