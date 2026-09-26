@@ -393,6 +393,10 @@ footer{border-top:1px solid var(--line); margin-top:26px; background:var(--wash)
 .bench .readings{margin:8px 0 0; gap:6px}
 .bench .readings .pill{white-space:normal; line-height:1.5}
 .bench.env{grid-template-columns:230px minmax(0,1fr) 280px}
+.bench.site{grid-template-columns:320px minmax(0,1fr)}
+.bench.site .stage{position:sticky; top:100px}
+.bench .sidegrp{display:flex; flex-direction:column; gap:4px}
+.bench .side .readings{flex-direction:column; align-items:stretch; margin-top:2px}
 .bench .panel-head{padding:8px 10px}
 .bench .rail .panel-title h3,.bench .props .panel-title h3{font-size:12px}
 .kcode{display:flex; align-items:baseline; gap:10px; margin:2px 0 6px}
@@ -407,7 +411,7 @@ details.more[open] > summary{color:var(--ink)}
 .findplot{display:flex; gap:6px; margin-top:6px}
 .findplot input{flex:1; min-width:0; font:inherit; font-size:12px; color:var(--ink); background:#fff; border:1px solid var(--line); border-radius:5px; padding:5px 7px}
 .canvas-wrap canvas.wx{position:absolute; left:0; top:0; width:100%; display:block; pointer-events:none}
-@media(max-width:1100px){.bench.env{grid-template-columns:1fr}.bench.env .stage{order:-1}.bench.env .rail{order:2}}
+@media(max-width:1100px){.bench.site{grid-template-columns:1fr}.bench.site .stage{position:static; order:-1}.bench.env{grid-template-columns:1fr}.bench.env .stage{order:-1}.bench.env .rail{order:2}}
 @media(max-width:1100px){.bench{grid-template-columns:1fr}.bench .rgroup{flex-direction:row; flex-wrap:wrap}.bench .rgroup .btn{width:auto}
   .bench .props .controls{flex-direction:row; flex-wrap:wrap}}
 </style>
@@ -454,12 +458,12 @@ details.more[open] > summary{color:var(--ink)}
         <div class="fld">
           <label for="selNuts" data-t="fldNuts">Region</label>
           <select id="selNuts"></select>
-          <span class="sub" data-t="fldNutsSub">Used only to seed the latitude and to label the site. Nothing in this application is indexed on it.</span>
+          <span class="sub" data-t="fldNutsSub">Used only to seed the coordinates — the region’s main town — and to label the site. Nothing in this application is indexed on it.</span>
         </div>
         <div class="fld">
           <label for="inpLat" data-t="fldLat">Latitude</label>
           <input type="number" id="inpLat" min="-90" max="90" step="0.01" value="38.7">
-          <span class="sub" id="latSub" data-t="fldLatSub">Degrees, north positive. Seeded from the region; replace it with the building's own.</span>
+          <span class="sub" id="latSub" data-t="fldLatSub">Degrees, north positive. Seeded from the region’s main town; replace it with the building's own.</span>
         </div>
         <div class="fld">
           <label for="inpLon" data-t="fldLon">Longitude</label>
@@ -499,7 +503,7 @@ details.more[open] > summary{color:var(--ink)}
           mean temperatures and the twelve monthly precipitation totals. This application ships none: normals are
           measured data and it has no authority to invent them. Take them from the IPMA <i>normais climatológicas</i>
           for the nearest station, from another national service, or from a gridded product such as WorldClim, and
-          name the source so the export carries it. Pick an IPMA station below and the twelve pairs and the station coordinates are entered for you. Where no station fits the site, press Blend nearest — inverse-distance over the embedded stations — or Fetch web normals — reanalysis for these coordinates.</p>
+          name the source so the export carries it. The boxes fill themselves in this order: the embedded IPMA station within 5 km of the coordinates above; where there is none, a blend of the nearest stations, weighted by inverse distance; and, on request, web normals — reanalysis for these exact coordinates. Blend nearest and Fetch web normals open only where no station lies within 5 km. Change the coordinates and the choice is made again; type in the boxes and they stay yours.</p>
         <div id="normGrid"></div>
         <div class="fld" style="margin-top:12px;max-width:520px">
           <label for="inpSource" data-t="fldSource">Where the normals come from</label>
@@ -541,7 +545,7 @@ details.more[open] > summary{color:var(--ink)}
             <option value="IPMA, Santa Cruz das Flores, 1981–2010"></option>
             <option value="WorldClim v2.1, 1970–2000"></option>
           </datalist>
-          <span class="sub" data-t="fldSourceSub">Written into every CSV and PNG this application exports. Pick an IPMA station — its normals fill in — fichas at ipma.pt/oclima/normais.clima — or name your own source. Blends and web fetches name themselves.</span>
+          <span class="sub" data-t="fldSourceSub">Written into every CSV and PNG this application exports. A station can still be picked from the list — fichas at ipma.pt/oclima/normais.clima — or your own source named. Stations, blends and web fetches name themselves.</span>
           <span class="fieldstatus" id="srcStatus"></span>
         </div>
       </div>
@@ -572,7 +576,7 @@ details.more[open] > summary{color:var(--ink)}
            take it there to be checked.</p>
       </div>
     </div>
-    <p class="note" data-t="privacyNote">Nothing is uploaded. The whole application runs on this computer — the one exception is the optional altitude lookup, which sends only the coordinates you enter to two public elevation services.</p>
+    <p class="note" data-t="privacyNote">Nothing is uploaded; your work stays in this browser. What leaves it, only to fill something in: the coordinates, to two elevation services when you press Look up and to Open-Meteo when you press Fetch web normals; the map area, to Esri and OpenStreetMap for the tiles; the plot’s position, to OpenStreetMap’s Overpass for the neighbouring buildings; an address you search for, to OpenStreetMap’s Nominatim.</p>
   </div>
 
   <div id="app" hidden></div>
@@ -599,7 +603,7 @@ details.more[open] > summary{color:var(--ink)}
         <p data-t="footClassBody">Köppen–Geiger, in the formalisation of Peel, Finlayson and McMahon (2007),
            computed from the normals you enter.</p>
         <h5 style="margin-top:14px" data-t="footPriv">Privacy</h5>
-        <p style="color:var(--muted)" data-t="footPrivBody">No site data leaves the browser, and nothing is uploaded — except the coordinates, and only if you press Look up altitude, sent to two public elevation APIs to suggest a value.</p>
+        <p style="color:var(--muted)" data-t="footPrivBody">Nothing is uploaded or stored outside this browser. Coordinates go only to the services that fill something in: elevation (Look up), Open-Meteo (Fetch web normals), the map tiles (Esri, OpenStreetMap), the neighbouring buildings (Overpass) and the address search (Nominatim).</p>
       </div>
     </div>
 
@@ -652,7 +656,7 @@ details.more[open] > summary{color:var(--ink)}
 /* ------------------------------------------------------------ 0. IDENTITY -- */
 const APP = {
   name:        'Architecture Advisor',
-  version:     '1.81.0',
+  version:     '1.82.0',
   author:      'Nuno Dinis Cortiços',
   institution: 'Lisbon School of Architecture, Universidade de Lisboa',
   builtWith:   'Claude Opus 5 (Anthropic)',
@@ -1628,16 +1632,19 @@ const KOPPEN_NOTE = {
  * right to within a degree; the field stays editable and the page says so.
  * Moved here from Construction Advisor, which no longer has any use for it.
  */
-const NUTS_LAT = {
-  'Minho-Lima':41.8, 'Cávado':41.5, 'Ave':41.4, 'Grande Porto':41.2, 'Tâmega':41.3,
-  'Entre Douro e Vouga':41.0, 'Douro':41.2, 'Alto Trás-os-Montes':41.7,
-  'Baixo Vouga':40.6, 'Baixo Mondego':40.2, 'Pinhal Litoral':39.7,
-  'Pinhal Interior Norte':40.1, 'Pinhal Interior Sul':39.6, 'Dão-Lafões':40.7,
-  'Serra da Estrela':40.4, 'Beira Interior Norte':40.5, 'Beira Interior Sul':39.8,
-  'Cova da Beira':40.3, 'Oeste':39.4, 'Grande Lisboa':38.7, 'Península de Setúbal':38.5,
-  'Médio Tejo':39.6, 'Lezíria do Tejo':39.2, 'Alentejo Litoral':38.0,
-  'Alto Alentejo':39.3, 'Alentejo Central':38.6, 'Baixo Alentejo':38.0, 'Algarve':37.1,
-  'RA da Madeira':32.7, 'RA dos Açores':37.8
+/** Each region's reference point — its main town — to seed the coordinates
+    until the student enters the building's own. Two decimals: a town, not a
+    plot. */
+const NUTS_REF = {
+  'Minho-Lima':[41.69, -8.83], 'Cávado':[41.55, -8.42], 'Ave':[41.44, -8.29], 'Grande Porto':[41.15, -8.61],
+  'Tâmega':[41.21, -8.28], 'Entre Douro e Vouga':[40.93, -8.54], 'Douro':[41.30, -7.74], 'Alto Trás-os-Montes':[41.81, -6.76],
+  'Baixo Vouga':[40.64, -8.65], 'Baixo Mondego':[40.21, -8.43], 'Pinhal Litoral':[39.74, -8.81],
+  'Pinhal Interior Norte':[40.11, -8.25], 'Pinhal Interior Sul':[39.80, -8.10], 'Dão-Lafões':[40.66, -7.91],
+  'Serra da Estrela':[40.42, -7.70], 'Beira Interior Norte':[40.54, -7.27], 'Beira Interior Sul':[39.82, -7.49],
+  'Cova da Beira':[40.28, -7.50], 'Oeste':[39.40, -9.14], 'Grande Lisboa':[38.72, -9.14], 'Península de Setúbal':[38.52, -8.89],
+  'Médio Tejo':[39.60, -8.41], 'Lezíria do Tejo':[39.24, -8.69], 'Alentejo Litoral':[38.02, -8.69],
+  'Alto Alentejo':[39.29, -7.43], 'Alentejo Central':[38.57, -7.91], 'Baixo Alentejo':[38.02, -7.86], 'Algarve':[37.02, -7.93],
+  'RA da Madeira':[32.65, -16.91], 'RA dos Açores':[37.74, -25.67]
 };
 
 /** The thirty NUTS III, taken from the municipality table so that the two
@@ -3634,20 +3641,32 @@ function buildSite(host) {
      p. 58), elongations 1:1.6 and 1:1.3 adopted (p. 88). Rotation is the
      azimuth of the main (glazed) facade, clockwise from north. */
   host.appendChild(section('Plan geometry — stretch it, turn it',
-    'The solid plan is yours; the green dashed plan is the Olgyay optimum for ' + K.code));
+    t('The solid plan is yours; the green dashed plan is the Olgyay optimum for') + ' ' + K.code));
   /* The workbench, as on Ventilation: the plan's tools on the left, the model
      in the middle with its readings under it, sizes, sun and colour on the
      right — every decision taken beside the model, never scrolled away from
      it. The notes follow below. */
-  const bench = host.appendChild(el('div', { class:'bench' }));
-  const rail = bench.appendChild(el('div', { class:'rail' }));
+  /* Two columns: every toggle and every reading on the left, the model on
+     the right, held in view while the left column scrolls */
+  const bench = host.appendChild(el('div', { class:'bench site' }));
+  const side = bench.appendChild(el('div', { class:'props side' }));
   const stage = bench.appendChild(el('div', { class:'stage' }));
-  const props = bench.appendChild(el('div', { class:'props' }));
+  const info = side.appendChild(el('div', { class:'sidegrp' }));      // the optimum and the readings
+  const planBox = side.appendChild(el('div', { class:'sidegrp' }));   // sizes, turn, storeys
+  const rail = side.appendChild(el('div', { class:'sidegrp' }));      // break the volume, patio
+  const props = side.appendChild(el('div', { class:'sidegrp' }));     // sun, wall colour
+  const stick = () => { const hd = document.querySelector('header'); stage.style.top = ((hd ? hd.offsetHeight : 0) + 8) + 'px'; };
   host.appendChild(hint('ori-lab',
     'Olgyay put the most sun on the facade in the underheated period and the least in the overheated one: New York–New Jersey came out <b>17° east of south</b>, Phoenix <b>25° east of south</b>, heat weighted four-to-one (1963, p. 58). For form, the square is never the optimum, north–south elongation is worse than the square, and the optimum always lies somewhere along east–west — 1:1.6 adopted for New York, 1:1.3 for Phoenix (p. 88), with east–west elongation “definitely desirable” in the temperate zone (p. 90). The green form interpolates those anchors for <b>%1</b>; stretch and turn yours against it.',
     [K.code]));
 
-  const OI = { Csa:{ az:160, r:1.3 }, Csb:{ az:163, r:1.6 },
+  /* Csb keeps Olgyay's temperate plan — its winters are milder than his New
+     York anchor, so nothing in his studies asks for a squarer bar — and
+     takes its compactness in section: two storeys, the same floor on half
+     the footprint, half the roof and half the ground floor to lose heat
+     through. The two storeys are this application's reading of a heating-led
+     climate, not an Olgyay figure. */
+  const OI = { Csa:{ az:160, r:1.3 }, Csb:{ az:163, r:1.6, fl:2 },
                Cfb:{ az:170, r:1.4 }, Cfa:{ az:170, r:1.4 }, Csc:{ az:170, r:1.4 },
                BSk:{ az:160, r:1.3 }, BSh:{ az:160, r:1.3 } }[K.code] || { az:163, r:1.4 };
   if (lat < 0) OI.az = (180 + OI.az) % 360;   // southern hemisphere: mirror to east of north
@@ -3687,8 +3706,21 @@ function buildSite(host) {
     const prox = Math.max(0, 1 - Math.abs(labRatio() - OI.r) / 1.5);
     const k = { ew:1, diag:0.8, sq:0.6, ns:0.4 }[formClass()];
     const form = 100 * prox * k;
+    /* where the climate asks for storeys (Csb: two), they weigh a fifth:
+       full marks on the number asked, 60 one above it, none below it */
+    if (OI.fl) {
+      const st = G.fl === OI.fl ? 100 : G.fl > OI.fl ? 60 : 0;
+      return { total:Math.round(0.5 * ori + 0.3 * form + 0.2 * st), ori:Math.round(ori), form:Math.round(form), st };
+    }
     return { total:Math.round(0.6 * ori + 0.4 * form), ori:Math.round(ori), form:Math.round(form) };
   }
+  /** The optimum's box: Olgyay's proportion on the student's floor area,
+      at the storeys the climate asks for (the student's own where it asks
+      for none). */
+  const optBox = () => {
+    const f = OI.fl || G.fl, A = G.L * G.D * G.fl / f;
+    return { Li:Math.sqrt(A * OI.r), Di:Math.sqrt(A / OI.r), H:f * G.fh };
+  };
   /**
    * Form factor of the whole volume: exterior envelope ÷ heated volume, read
    * off the one model of the plan and its roof that Roof and Ventilation also
@@ -3826,13 +3858,12 @@ function buildSite(host) {
   };
   const labFrame = (W, H) => {
     const cx = W / 2;
-    const A = G.L * G.D;
-    const Li = Math.sqrt(A * OI.r), Di = Math.sqrt(A / OI.r);
+    const { Li, Di, H:Hopt } = optBox();
     const arr = Math.max(2.5, 0.3 * Math.min(G.L, G.D));
     const bb = planOf().bbox, reach = Math.max(Math.hypot(bb[0], bb[1]), Math.hypot(bb[2], bb[1]), Math.hypot(bb[0], bb[3]), Math.hypot(bb[2], bb[3]));
     const half = Math.max(reach, Math.hypot(Li, Di) / 2);
     const need = half + arr + 1.5;             // world footprint radius, metres
-    const Hgt = G.fl * G.fh;                    // world height to clear above the ring
+    const Hgt = Math.max(G.fl * G.fh, Hopt);    // world height to clear above the ring
     /* a phone-width canvas is taller, with its badges in a row across the
        top and a two-row key at the foot — the drawing sits between them */
     const narrow = W < 600;
@@ -3850,6 +3881,7 @@ function buildSite(host) {
   const pillOri = el('span', { class:'pill ok' });
   const pillForm = el('span', { class:'pill ok' });
   const pillWin = el('span', { class:'pill ok' });
+  const pillFl = el('span', { class:'pill ok' });
   let refreshCol = () => {};   // the wall-colour pill, set up with its section below
   let refreshShade = () => {};   // the plan-form pill, set up with the model below
   /** The orientations with the most and the least glass, named by the way
@@ -3877,11 +3909,17 @@ function buildSite(host) {
     else if (fc === 'sq') { pillForm.className = 'pill empty'; pillForm.textContent = t('Square — never the optimum'); }
     else if (fc === 'ew') { pillForm.className = 'pill empty'; pillForm.textContent = t('East–west — stretch toward 1 : ') + fmt(OI.r, 1); }
     else { pillForm.className = 'pill empty'; pillForm.textContent = t('Diagonal — settle the long axis east–west'); }
+    pillFl.style.display = OI.fl ? '' : 'none';
+    if (OI.fl) {
+      if (G.fl === OI.fl) { pillFl.className = 'pill ok'; pillFl.textContent = t('Two storeys — the compact section this climate asks for'); }
+      else if (G.fl < OI.fl) { pillFl.className = 'pill bad'; pillFl.textContent = t('One storey — this climate asks for two: the same floor on half the footprint, half the roof'); }
+      else { pillFl.className = 'pill empty'; pillFl.textContent = t('Three storeys — more than this climate needs; two keep the stairs, the wind and the shade down'); }
+    }
     refreshWin();
     refreshCol();
     refreshShade();
   }
-  host._refresh = () => refreshLab();   // the windows may have changed on Windows & Shading
+  host._refresh = () => { stick(); refreshLab(); };   // the windows may have changed on Windows & Shading
 
   let labPanel = null;
   const labDraw = () => { if (labPanel) labPanel.draw(); refreshLab(); };
@@ -3930,9 +3968,10 @@ function buildSite(host) {
     }, 150);
   }});
   const snap = el('button', { class:'btn solid', text:'Snap to the Olgyay optimum', onclick: () => {
-    const A = G.L * G.D;
-    G.L = Math.round(Math.sqrt(A * OI.r) * 2) / 2;
-    G.D = Math.round(Math.sqrt(A / OI.r) * 2) / 2;
+    const ob = optBox();                       // the same floor area, re-cut
+    G.L = clamp(Math.round(ob.Li * 2) / 2, 6, 24);
+    G.D = clamp(Math.round(ob.Di * 2) / 2, 4, 16);
+    if (OI.fl) { G.fl = OI.fl; cF.input.value = G.fl; }
     G.rot = Math.round(OI.az);
     syncCtl(cL, G.L, v => fmt(v, 1) + ' m');
     syncCtl(cD, G.D, v => fmt(v, 1) + ' m');
@@ -3940,8 +3979,8 @@ function buildSite(host) {
     labDraw();
     toast('Snapped to the Olgyay optimum');
   }});
-  props.appendChild(el('div', { class:'gh', text:'Plan' }));
-  props.appendChild(controls([cL, cD, cR, cF, cFH]));
+  planBox.appendChild(el('div', { class:'gh', text:'Plan' }));
+  planBox.appendChild(controls([cL, cD, cR, cF, cFH]));
   props.appendChild(el('div', { class:'gh', text:'Sun' }));
   props.appendChild(controls([segDay, cH, playBtn]));
 
@@ -3973,13 +4012,12 @@ function buildSite(host) {
   labPanel = makePanel(stage, {
     title: 'Your plan against the optimum',
     note: 'Isometric view, tilted from the south-west. Drag the plan to stretch it, the black knob to turn it, the black points to break it; drive the sun from the Sun controls. The windows are the ones sized on Windows & Shading, spread over every wall.',
-    heightFn: w => w < 600 ? Math.round(w * 1.2 + 122) : Math.round(w / 1.5),
+    heightFn: w => w < 600 ? Math.round(w * 1.2 + 122) : Math.round(Math.min(w / 1.5, Math.max(460, (window.innerHeight || 900) - 200))),
     render(ctx, W, H) {
       const GREEN = '#16A34A', BLUE = '#2563EB', narrow = W < 600;
       const desk = labelDesk(ctx, W, H);   // every number is placed last, clear of the lines
       const { cx, cy, s, R } = labFrame(W, H);
-      const A = G.L * G.D;
-      const Li = Math.sqrt(A * OI.r), Di = Math.sqrt(A / OI.r);
+      const { Li, Di, H:Hopt } = optBox();
       const arr = Math.max(2.5, 0.3 * Math.min(G.L, G.D));
       const proj = (x, y, z) => [cx + (x - y) * ISO_C * s, cy - (x + y) * ISO_S * s - (z || 0) * s];
       const rot = (x, y, cw) => {
@@ -4121,7 +4159,7 @@ function buildSite(host) {
           stroke(ctx, color, 2.2, [7, 5]); ctx.stroke();
         });
       };
-      drawBoxOutline(Li, Di, OI.az - 180, Hgt, GREEN);
+      drawBoxOutline(Li, Di, OI.az - 180, Hopt, GREEN);
 
       /* The student's plan, extruded to its height: the outline's walls that
          face the camera, farthest first; on each wall still in the sun, the
@@ -4403,6 +4441,8 @@ function buildSite(host) {
       ['Student main facade azimuth (°)', +G.rot.toFixed(0)],
       ['Olgyay optimum azimuth (°)', +OI.az.toFixed(0)],
       ['Olgyay elongation (long:short)', +OI.r.toFixed(2)],
+      ['Storeys the climate asks for', OI.fl || 'any'], ['Student storeys', G.fl],
+      ['Envelope per floor area (m²/m²)', +(labFF().A / (planOf().area * G.fl)).toFixed(2)],
       ['Deviation (°)', +circDev(G.rot, OI.az).toFixed(0)],
       ['Olgyay fit (0–100)', labScore().total],
       ['Wall colour', finishOf(G.col) ? finishOf(G.col).en + ' (' + finishOf(G.col).cls + ')' : 'not chosen'],
@@ -4487,13 +4527,15 @@ function buildSite(host) {
   rail.appendChild(el('div', { class:'rgroup' }, [cForm, cMode, mirrorX, mirrorY]));
   rail.appendChild(el('div', { class:'gh', text:'Patio' }));
   rail.appendChild(el('div', { class:'rgroup' }, [cPatio, patioNote]));
-  rail.appendChild(el('div', { class:'gh', text:'Optimum' }));
-  rail.appendChild(el('div', { class:'rgroup' }, [snap]));
+  info.appendChild(el('div', { class:'gh', text:'Optimum' }));
+  info.appendChild(el('div', { class:'rgroup' }, [snap]));
   rail.appendChild(el('div', { class:'keys', text:t('Drag the black points on the model: a corner stretches the bar, the break’s point sizes a wing or carves a recess, the patio’s point opens it wider or deeper.') }));
   syncFormTools();
   /* the readings, under the model: what each decision does, in words */
   const pillShade = el('span', { class:'pill empty' });
-  stage.appendChild(el('div', { class:'limitrow readings' }, [pillOri, pillForm, pillWin, pillShade, pillCol]));
+  info.appendChild(el('div', { class:'gh', text:'Readings' }));
+  info.appendChild(el('div', { class:'limitrow readings' }, [pillOri, pillForm, pillFl, pillWin, pillShade, pillCol]));
+  stick();
   refreshShade = () => {
     const pl = planOf();
     patioNote.textContent = pt.on && pt.ok === false ? t('No room for a patio: it needs 2 m of building round it and 2 m clear of any recess — widen or deepen the bar') : '';
@@ -4507,9 +4549,11 @@ function buildSite(host) {
   host.appendChild(hint('site-form',
     'Break the volume with the tools left of the model. <b>L</b> works one end of the bar, <b>T</b> its middle, <b>H</b> both ends on both long sides. <b>Extend</b> adds the wing out past the bar; <b>Carve</b> cuts the same shape into it as a recess, so the bar itself becomes the L, T or H. The break’s black point is one continuous reach: drag it outward and the wing grows, back to the facade and the plain bar returns, further in and the recess deepens — it never jumps to the other side. <b>⇆ Other end</b> and <b>⇅ Other side</b> mirror the break to the opposite end of the bar or to its opposite long side. <b>Open a central patio</b> cuts a courtyard out of the middle; its corner point opens it wider or deeper, always leaving 2 m of building round it and 2 m clear of any recess. Every wall of the outline — a wing’s, a recess’s, a patio’s — takes the window its orientation has on Windows &amp; Shading, so a break redistributes the glass instead of hiding it. A worked plan changes what the badges read. <b>Own shade · winter %</b> is the share of the 21 December sun on the walls that the building takes off itself — every wall sampled every 0.75 m at three heights, the sun every half hour, each sample weighed by how squarely the sun meets it, and counted lost when the ray back to the sun meets any part of the plan (eaves height; pitched roofs shade a little more). The same test on 21 June gives the summer shade in the reading under the model: a break or a patio that shades east and west walls in summer earns it, one that shades the main facade in winter costs it. <b>Form factor</b> is taken from the whole volume — every wall up to the roof’s own profile along it, every roof plane at the pitch set on Roof, the ground floor — so a break or a patio almost always raises it: more envelope for the same volume. The Olgyay fit still reads the bar’s length, depth and turn. Roof, Windows &amp; Shading and Ventilation all work on this volume as drawn, and the CAD export writes it; Ventilation also reads the form for air — how much of the floor it can cross-ventilate, how much of its glass it turns to the winter wind.'));
   host.appendChild(hint('ori-score',
-    'The badge is a didactic index, not an energy prediction: 60 % orientation — full marks on the green normal, zero at 90° off — plus 40 % form — closeness to the 1:X elongation, discounted for square, diagonal and north–south plans. Two plans can share a score and behave differently; read it with the pills.'));
+    'The badge is a didactic index, not an energy prediction: 60 % orientation — full marks on the green normal, zero at 90° off — plus 40 % form — closeness to the 1:X elongation, discounted for square, diagonal and north–south plans. Where the climate asks for a number of storeys (Csb: two) the weights become 50 % orientation, 30 % form and 20 % storeys — full marks on the number asked, 60 one above it, none below — so one storey cannot reach 100. Two plans can share a score and behave differently; read it with the pills.'));
   host.appendChild(hint('ori-height',
-    'The two boxes extrude the plan — floors above ground times an editable floor height. The sun below it is driven, not decorative: pick 21 December, 20 March or 21 June, drag the solar hour — or press play — and the shadow follows the trajectory, long and northern in the December morning, short and tight at the June noon. The December noon shadow stays the governing case for spacing. Height does not move the fit badge, which only knows orientation and plan form.'));
+    'The two boxes extrude the plan — floors above ground times an editable floor height. The sun below it is driven, not decorative: pick 21 December, 20 March or 21 June, drag the solar hour — or press play — and the shadow follows the trajectory, long and northern in the December morning, short and tight at the June noon. The December noon shadow stays the governing case for spacing. Height moves the fit badge only where the climate asks for a number of storeys (Csb: two); elsewhere the badge knows orientation and plan form alone.'));
+  if (OI.fl) host.appendChild(hint('site-storeys',
+    'In <b>%1</b> the optimum stands on two storeys. Olgyay’s studies give no reason to change the plan here: the Portuguese Csb winter is milder than his temperate New York anchor, so the 1:1.6 east–west bar stands. The compactness a heating-led climate asks for is found in section instead — the same floor area on two storeys stands on half the footprint, with half the roof and half the ground floor to lose heat through, against more wall: for the 96 m² starting bar, 15 to 20 % less envelope per square metre of floor (3.9 to 3.1 m²/m² under a 41° pitched roof, 3.3 to 2.8 under a flat one). The <b>Form factor</b> divides by volume and counts a pitched roof’s attic as heated, so under a steep roof it can hide that gain; the CSV gives the envelope per floor area. <b>Snap to the Olgyay optimum</b> keeps your floor area and re-cuts it onto two storeys; the green volume shows the optimum at that height. A third storey adds stairs, catches more wind and throws a longer winter shadow on its neighbours, so it earns less than two. The two storeys are this application’s reading of the climate, not a figure from Olgyay.', [K.code]));
   host.appendChild(hint('site-windows',
     'The windows on the model are the ones sized on <b>Windows &amp; Shading</b> — the same width, sill and head, each set by its facade’s window-to-wall ratio — so turning the plan here turns them with it. Each blue tag names the way that window really faces once the plan is turned, then its width × height and the facade’s WWR; on Windows &amp; Shading the facades keep the names they have with the main facade to the south. The rule to read them by: <b>the larger the window, the more it should face south; the smaller, the more it faces north</b> (north and south swap below the equator). South glass collects the low winter sun and is the easiest to shade from the high summer sun; north glass gives even, diffuse light but gains almost no winter sun while it loses heat (Lechner; Gonçalves &amp; Graça). <b>Window fit</b> reads it: every window counts as an arrow out of its facade, as long as the glass its WWR asks for, and the fit is 100 when their sum points due south, 50 east or west, 0 north. The sizes change on Windows &amp; Shading; the plan’s turn, here, decides where they look. Windows &amp; Shading draws each window as one strip on the ground floor, no wider than 92 % of its wall — on two or three floors the strips can reach that limit and look alike while their WWR, and the fit, still differ. On a broken plan every wall at least 1.5 m long carries its orientation’s window, sized from its own area, and the tag counts the windows facing that way with their widths; <b>Window fit</b> then adds all the glass of each orientation.'));
   host.appendChild(hint('ori-ff',
@@ -8531,7 +8575,7 @@ function loadNormals() {
     if (!o || !Array.isArray(o.t) || !Array.isArray(o.p) || o.t.length !== 12 || o.p.length !== 12)
       return CLIM_BLANK();
     return { t:o.t.map(v => (v === null ? null : +v)), p:o.p.map(v => (v === null ? null : +v)),
-             source: typeof o.source === 'string' ? o.source : '' };
+             source: typeof o.source === 'string' ? o.source : '', mode: typeof o.mode === 'string' ? o.mode : '' };
   } catch (e) { return CLIM_BLANK(); }
 }
 function saveNormals(c) {
@@ -8681,6 +8725,8 @@ function initSetup() {
       inputs.t[i] = ti; inputs.p[i] = pi;
       ti.addEventListener('input', refresh);
       pi.addEventListener('input', refresh);
+      ti.addEventListener('input', () => { srcMode = 'manual'; });   // typed by hand: never overwritten
+      pi.addEventListener('input', () => { srcMode = 'manual'; });
       col.appendChild(el('div', { class:'nrow' }, [ el('b', { text:MON3[i] }), ti, pi ]));
     }
     grid.appendChild(col);
@@ -8693,7 +8739,7 @@ function initSetup() {
       const n = +v.replace(',', '.');
       return isFinite(n) ? n : null;
     };
-    return { t:inputs.t.map(num), p:inputs.p.map(num), source:srcInp.value.trim() };
+    return { t:inputs.t.map(num), p:inputs.p.map(num), source:srcInp.value.trim(), mode:srcMode };
   }
 
   function refresh() {
@@ -8720,16 +8766,19 @@ function initSetup() {
     if (hit) {
       sel.value = CONCELHOS[hit][0];
       sub.textContent = hit + ' → ' + CONCELHOS[hit].join(' / ');
-      seedLat();
+      seedCoords();
     } else sub.textContent = t('Type a Portuguese municipality, or any name you want the exports to carry.');
   });
 
-  function seedLat() {
-    const L = NUTS_LAT[sel.value];
-    if (L !== undefined) lat.value = L;
+  function seedCoords() {
+    const R = NUTS_REF[sel.value];
+    if (R) { lat.value = R[0]; lon.value = R[1]; }
+    autoNormals();
   }
-  sel.addEventListener('change', seedLat);
+  sel.addEventListener('change', seedCoords);
   lat.addEventListener('input', refresh);
+  let coordTimer = 0;
+  [lat, lon].forEach(f => f.addEventListener('input', () => { clearTimeout(coordTimer); coordTimer = setTimeout(autoNormals, 700); }));
   srcInp.addEventListener('input', refresh);
 
   /* --- altitude lookup: only when the student presses the button. Two
@@ -8806,7 +8855,7 @@ function initSetup() {
   if (btnAltLookup) btnAltLookup.addEventListener('click', () => { lookupAltitude(); });
 
   /* --- IPMA station autofill: a chosen source fills the boxes ------------- */
-  const srcStatus = $('#srcStatus');
+  const srcStatus = $('#srcStatus'), btnBlend = $('#btnSrcBlend'), btnWeb = $('#btnSrcWeb');
   function fillFromSource(showMsg) {
     const raw = srcInp.value.trim();
     const key = IPMA_ALIAS[raw] || raw;
@@ -8824,9 +8873,11 @@ function initSetup() {
     }
     d.t.forEach((v, i) => { inputs.t[i].value = v.toFixed(1); });
     d.p.forEach((v, i) => { inputs.p[i].value = v.toFixed(1); });
-    lat.value = d.lat.toFixed(2); lon.value = d.lon.toFixed(2); alt.value = Math.round(d.alt);
-    if (srcStatus) srcStatus.textContent = d.st + ' · ' + d.alt + ' m · '
-      + t('station values filled — correct the altitude to the building');
+    const la = parseFloat(lat.value), lo = parseFloat(lon.value), km = isFinite(la) && isFinite(lo) ? havKm(la, lo, d.lat, d.lon) : null;
+    if (!altDirty) alt.value = Math.round(d.alt);
+    srcMode = 'picked';
+    if (srcStatus) srcStatus.textContent = d.st + (km === null ? '' : ' · ' + fmt(km, 1) + ' km') + ' · ' + d.alt + ' m · '
+      + (km !== null && km > NEAR_KM ? t('farther than 5 km from the site: Blend nearest or Fetch web normals reads closer to it.') : t('station values filled — correct the altitude to the building'));
     refresh();
     return true;
   }
@@ -8853,12 +8904,58 @@ function initSetup() {
     return 2 * r * Math.asin(Math.min(1, Math.sqrt(a)));
   };
   const shortName = key => (key.split(', ')[1] || key);
+  /* The order the boxes fill in by themselves: the embedded IPMA station
+     within 5 km of the coordinates; where there is none, the nearest
+     stations blended; and, on request, the web reanalysis at the
+     coordinates. Blend and Fetch open only where no station is that close.
+     Normals typed by hand, or a station picked from the list, are the
+     student's and are never overwritten; new coordinates re-run the order
+     for everything else. */
+  const NEAR_KM = 5;
+  const sameIsland = (lo, v) => lo > -10.5 ? v.lon > -10.5 : lo < -20 ? v.lon < -20 : (v.lon <= -10.5 && v.lon >= -20);
+  const nearestStation = (la, lo) => Object.entries(IPMA_DATA).filter(([, v]) => sameIsland(lo, v))
+    .map(([k, v]) => ({ key:k, v, d:havKm(la, lo, v.lat, v.lon) })).sort((a, b) => a.d - b.d)[0] || null;
+  let srcMode = clim.mode || (() => {
+    const s0 = clim.source || '';
+    if (!climComplete(clim)) return '';
+    if (IPMA_DATA[IPMA_ALIAS[s0] || s0]) return 'station';
+    if (/^(Blend of|Mistura de) /.test(s0)) return 'blend';
+    if (/^Open-Meteo/.test(s0)) return 'web';
+    return 'manual';
+  })();
+  let webAt = srcMode === 'web' ? (m => m ? [+m[1], +m[2]] : null)(/(-?\d+\.\d+), (-?\d+\.\d+)/.exec(clim.source || '')) : null;
+  function autoNormals() {
+    const la = parseFloat(lat.value), lo = parseFloat(lon.value);
+    if (!isFinite(la) || !isFinite(lo)) return;
+    const ns = nearestStation(la, lo), near = !!ns && ns.d <= NEAR_KM;
+    [btnBlend, btnWeb].forEach(b => { if (!b) return; b.disabled = near; b.title = near ? t('An IPMA station lies within 5 km — its normals are used') : ''; });
+    if (srcMode === 'manual' || srcMode === 'picked') {
+      if (srcStatus && ns) srcStatus.textContent = t('Your own normals are kept — the nearest IPMA station is %%ST%%, %%KM%% km away.').replace('%%ST%%', ns.v.st).replace('%%KM%%', fmt(ns.d, 1));
+      return;
+    }
+    if (srcMode === 'web' && webAt && Math.abs(webAt[0] - la) < 0.006 && Math.abs(webAt[1] - lo) < 0.006) return;   // the web normals are for these coordinates
+    if (near) {
+      const d = ns.v;
+      d.t.forEach((v, i) => { inputs.t[i].value = v.toFixed(1); });
+      d.p.forEach((v, i) => { inputs.p[i].value = v.toFixed(1); });
+      srcInp.value = ns.key;
+      if (!altDirty) alt.value = Math.round(d.alt);
+      srcMode = 'station';
+      if (srcStatus) srcStatus.textContent = d.st + ' · ' + fmt(ns.d, 1) + ' km · ' + d.alt + ' m — ' + t('IPMA station within 5 km of the site: its normals are used. Correct the altitude to the building.');
+      refresh();
+      return;
+    }
+    if (blendNearest(false)) {
+      srcMode = 'blend';
+      if (srcStatus && ns) srcStatus.textContent = t('Nearest IPMA station: %%ST%%, %%KM%% km — more than 5 km.').replace('%%ST%%', ns.v.st).replace('%%KM%%', fmt(ns.d, 1)) + ' ' + srcStatus.textContent;
+    }
+  }
   function blendNearest(showMsg) {
     const la = parseFloat(lat.value), lo = parseFloat(lon.value);
     if (!isFinite(la) || !isFinite(lo)) { if (showMsg) toast('Enter the site coordinates first'); return false; }
     const pool = Object.entries(IPMA_DATA)
       .filter(([, v]) => lo > -10.5 ? v.lon > -10.5 : lo < -20 ? v.lon < -20 : (v.lon <= -10.5 && v.lon >= -20))
-      .map(([k, v]) => ({ name: shortName(k), d: havKm(la, lo, v.lat, v.lon), t: v.t, p: v.p }))
+      .map(([k, v]) => ({ name: shortName(k), d: havKm(la, lo, v.lat, v.lon), t: v.t, p: v.p, alt: v.alt }))
       .sort((a, b) => a.d - b.d).slice(0, 3);
     /* Nearby means nearby: beyond 300 km no blend is honest — every built
        place in Portugal keeps an embedded station well inside that radius
@@ -8873,17 +8970,16 @@ function initSetup() {
       inputs.t[m].value = (pool.reduce((a, e, i) => a + ws[i] * e.t[m], 0) / wSum).toFixed(1);
       inputs.p[m].value = (pool.reduce((a, e, i) => a + ws[i] * e.p[m], 0) / wSum).toFixed(1);
     }
+    if (!altDirty) alt.value = Math.round(pool.reduce((a, e, i) => a + ws[i] * e.alt, 0) / wSum);   // the height the blend stands at, until the building's is entered
     const who = pool.map(e => e.name + ' ' + Math.round(e.d) + ' km').join(' · ');
     srcInp.value = t('Blend of %%STATIONS%% — IDW, IPMA 1981–2010').replace('%%STATIONS%%', who);
     if (srcStatus) srcStatus.textContent = t('No IPMA station at these coordinates — temperature and precipitation blended from %%STATIONS%% (inverse-distance over embedded IPMA 1981–2010 normals). Correct the altitude to the building.').replace('%%STATIONS%%', who);
     refresh();
     return true;
   }
-  const btnBlend = $('#btnSrcBlend');
   if (btnBlend) btnBlend.addEventListener('click', () => {
-    if (blendNearest(true)) toast('Blended normals filled in — check the boxes');
+    if (blendNearest(true)) { srcMode = 'blend'; toast('Blended normals filled in — check the boxes'); }
   });
-  const btnWeb = $('#btnSrcWeb');
   async function fetchWebNormals() {
     const la = parseFloat(lat.value), lo = parseFloat(lon.value);
     if (!isFinite(la) || !isFinite(lo)) { toast('Enter the site coordinates first'); return; }
@@ -8928,6 +9024,7 @@ function initSetup() {
       }
       T.forEach((v, i) => { inputs.t[i].value = v.toFixed(1); });
       P.forEach((v, i) => { inputs.p[i].value = v.toFixed(1); });
+      srcMode = 'web'; webAt = [la, lo];
       const at = la.toFixed(2) + ', ' + lo.toFixed(2);
       srcInp.value = t('Open-Meteo 1991–2020 at %%COORDS%% (provisional, reanalysis)').replace('%%COORDS%%', at);
       if (srcStatus) srcStatus.textContent = t('No IPMA station here — T/P are 1991–2020 reanalysis means for these exact coordinates (Open-Meteo), not IPMA observations. Treat as provisional; correct the altitude.').replace('%%COORDS%%', at);
@@ -8936,7 +9033,8 @@ function initSetup() {
     } catch (e) {
       if (srcStatus) srcStatus.textContent = t('Web normals unavailable (network or service) — boxes untouched; blend or type by hand');
     } finally {
-      btnWeb.disabled = false;
+      const ns = nearestStation(parseFloat(lat.value), parseFloat(lon.value));
+      btnWeb.disabled = !!ns && ns.d <= NEAR_KM;
     }
   }
   if (btnWeb) btnWeb.addEventListener('click', () => { fetchWebNormals(); });
@@ -8956,7 +9054,7 @@ function initSetup() {
     }, c);
   });
 
-  seedLat();
+  seedCoords();
   refresh();
 }
 
@@ -9107,9 +9205,9 @@ Object.assign(STATIC_PT, {
   fldConc: 'Lugar',
   fldConcSub: 'Escreva um concelho português, ou o nome que quiser que as exportações levem.',
   fldNuts: 'Região',
-  fldNutsSub: 'Serve apenas para semear a latitude e identificar o local. Nada nesta aplicação está indexado a ela.',
+  fldNutsSub: 'Serve apenas para semear as coordenadas — a cidade principal da região — e identificar o local. Nada nesta aplicação está indexado a ela.',
   fldLat: 'Latitude',
-  fldLatSub: 'Graus, norte positivo. Semeada a partir da região; substitua-a pela do próprio edifício.',
+  fldLatSub: 'Graus, norte positivo. Semeada a partir da cidade principal da região; substitua-a pela do próprio edifício.',
   fldLon: 'Longitude',
   fldLonSub: 'Graus, este positivo. Leia-a num mapa, sobre o próprio local.',
   fldAlt: 'Altitude do local',
@@ -9124,12 +9222,12 @@ Object.assign(STATIC_PT, {
   opRenovation: 'Grande intervenção',
   fldOpSub: 'Um edifício novo ainda pode escolher a sua orientação e a sua forma; uma reabilitação tem de tomar ambas como as encontra.',
   normTitle: 'Normais mensais',
-  normBody: 'Köppen–Geiger é calculado, não consultado, pelo que precisa das doze temperaturas médias mensais e dos doze totais mensais de precipitação. Esta aplicação não traz nenhuns: as normais são dados medidos e ela não tem autoridade para os inventar. Tome-os das <i>normais climatológicas</i> do IPMA para a estação mais próxima, de outro serviço nacional, ou de um produto em grelha como o WorldClim, e identifique a fonte para que a exportação a leve consigo. Escolha abaixo uma estação do IPMA e os doze pares e as coordenadas da estação são introduzidos por si. Onde nenhuma estação servir o local, carregue em Misturar próximas — distância inversa sobre as estações incorporadas — ou em Buscar na web — reanálise para estas coordenadas.',
+  normBody: 'Köppen–Geiger é calculado, não consultado, pelo que precisa das doze temperaturas médias mensais e dos doze totais mensais de precipitação. Esta aplicação não traz nenhuns: as normais são dados medidos e ela não tem autoridade para os inventar. Tome-os das <i>normais climatológicas</i> do IPMA para a estação mais próxima, de outro serviço nacional, ou de um produto em grelha como o WorldClim, e identifique a fonte para que a exportação a leve consigo. Os quadros preenchem-se sozinhos por esta ordem: a estação do IPMA incorporada a menos de 5 km das coordenadas acima; onde não houver nenhuma, uma mistura das estações mais próximas, ponderada pelo inverso da distância; e, a pedido, normais da web — reanálise para estas coordenadas exactas. Misturar próximas e Buscar na web só se abrem onde nenhuma estação fica a menos de 5 km. Mude as coordenadas e a escolha refaz-se; escreva nos quadros e eles ficam seus.',
   srcFill: 'Preencher caixas',
   srcBlend: 'Misturar próximas',
   srcWeb: 'Buscar na web',
   fldSource: 'De onde vêm as normais',
-  fldSourceSub: 'Escrita em cada CSV e cada PNG que esta aplicação exporta. Escolha uma estação do IPMA — as suas normais preenchem-se — fichas em ipma.pt/oclima/normais.clima — ou indique a sua própria fonte. As misturas e as leituras web identificam-se sozinhas.',
+  fldSourceSub: 'Escrita em cada CSV e cada PNG que esta aplicação exporta. Ainda se pode escolher uma estação da lista — fichas em ipma.pt/oclima/normais.clima — ou indicar a sua própria fonte. Estações, misturas e leituras web identificam-se sozinhas.',
   btnGo: 'Percorrer o projecto',
   ex1h: 'Fundada na literatura de projecto',
   ex1p: 'Olgyay, Lechner, DeKay e Brown, Hyde, Ching e Shapiro, Brophy e Lewis. Cada orientação nomeia o livro de onde vem, e onde os livros divergem a aplicação di-lo em vez de os reduzir a uma média.',
@@ -9137,7 +9235,7 @@ Object.assign(STATIC_PT, {
   ex2p: 'Para onde o edifício se volta, quão compacto é, o que faz a sua cobertura, quanto vidro leva cada fachada, onde ficam os compartimentos em relação ao sol, e como o ar atravessa a planta. Nenhuma destas se resolve com um coeficiente de transmissão térmica máximo.',
   ex3h: 'Um companheiro, não um substituto',
   ex3p: 'O Construction Advisor responde ao SCE e diz o que uma envolvente não pode exceder. Este não traz nada desse regulamento. Use-os por essa ordem: dê forma ao edifício aqui, e leve-o depois ali para ser verificado.',
-  privacyNote: 'Nada é carregado para lado nenhum. A aplicação corre inteiramente neste computador — a única excepção é a consulta de altitude, opcional, que envia apenas as coordenadas que introduziu a dois serviços públicos de elevação.',
+  privacyNote: 'Nada é carregado; o seu trabalho fica neste navegador. O que sai dele, só para preencher algo: as coordenadas, para dois serviços de elevação quando carrega em Consultar e para o Open-Meteo quando carrega em Buscar na web; a área do mapa, para a Esri e o OpenStreetMap, pelos mosaicos; a posição do lote, para o Overpass do OpenStreetMap, pelos edifícios vizinhos; uma morada que procure, para o Nominatim do OpenStreetMap.',
   footTag: 'Um conselheiro de desenho bioclimático para estudantes de arquitectura, escrito para as decisões que se tomam antes de um regulamento ter algo a dizer sobre elas.',
   footAuthor: 'Autor',
   footInst: 'Instituição',
@@ -9145,7 +9243,7 @@ Object.assign(STATIC_PT, {
   footClass: 'Classificação',
   footClassBody: 'Köppen–Geiger, na formalização de Peel, Finlayson e McMahon (2007), calculada a partir das normais que introduzir.',
   footPriv: 'Privacidade',
-  footPrivBody: 'Nenhum dado do local sai do navegador, e nada é carregado — excepto as coordenadas, e só se carregar em Consultar altitude, enviadas a duas APIs públicas de elevação para sugerir um valor.',
+  footPrivBody: 'Nada é carregado nem guardado fora deste navegador. As coordenadas só vão para os serviços que preenchem algo: elevação (Consultar), Open-Meteo (Buscar na web), os mosaicos do mapa (Esri, OpenStreetMap), os edifícios vizinhos (Overpass) e a pesquisa de moradas (Nominatim).',
   footMethods: 'Métodos e fontes',
   footLegal: '© 2026 Nuno Dinis Cortiços. Este é um instrumento pedagógico. Reporta o que a literatura de projecto recomenda e nomeia a fonte de cada recomendação, mas uma orientação não é um cálculo e esta aplicação não é um modelo energético. Nada do que reporta constitui declaração de conformidade, e nada disto substitui as verificações exigidas no âmbito do SCE.'
 });
@@ -9670,6 +9768,18 @@ Object.assign(PT, {
   "Patio": "Pátio",
   "patio": "pátio",
   "Optimum": "Óptimo",
+  "Readings": "Leituras",
+  "The solid plan is yours; the green dashed plan is the Olgyay optimum for": "A planta a cheio é a sua; a planta verde a tracejado é o óptimo de Olgyay para",
+  "Web normals filled in — check the boxes": "Normais da web preenchidas — confira os quadros",
+  "Blended normals filled in — check the boxes": "Normais misturadas preenchidas — confira os quadros",
+  "An IPMA station lies within 5 km — its normals are used": "Há uma estação do IPMA a menos de 5 km — usam-se as suas normais",
+  "Your own normals are kept — the nearest IPMA station is %%ST%%, %%KM%% km away.": "As suas normais mantêm-se — a estação do IPMA mais próxima é %%ST%%, a %%KM%% km.",
+  "IPMA station within 5 km of the site: its normals are used. Correct the altitude to the building.": "Estação do IPMA a menos de 5 km do local: usam-se as suas normais. Corrija a altitude para o edifício.",
+  "Nearest IPMA station: %%ST%%, %%KM%% km — more than 5 km.": "Estação do IPMA mais próxima: %%ST%%, a %%KM%% km — mais de 5 km.",
+  "farther than 5 km from the site: Blend nearest or Fetch web normals reads closer to it.": "a mais de 5 km do local: Misturar próximas ou Buscar na web lêem mais perto dele.",
+  "Two storeys — the compact section this climate asks for": "Dois pisos — o corte compacto que este clima pede",
+  "One storey — this climate asks for two: the same floor on half the footprint, half the roof": "Um piso — este clima pede dois: o mesmo pavimento em metade da implantação, metade da cobertura",
+  "Three storeys — more than this climate needs; two keep the stairs, the wind and the shade down": "Três pisos — mais do que este clima precisa; dois poupam escadas, vento e sombra",
   "Plan": "Planta",
   "Bar": "Barra",
   "carved": "escavado",
@@ -9873,9 +9983,11 @@ Object.assign(PT_HINT, {
   'ori-lab':
     'Olgyay pôs o máximo sol na fachada no período subaquecido e o mínimo no sobreaquecido: Nova Iorque–Nova Jérsia deu <b>17° a leste do sul</b>, Phoenix <b>25° a leste do sul</b>, com o calor pesado quatro-para-um (1963, p. 58). Para a forma, o quadrado nunca é o óptimo, o alongamento norte–sul é pior que o quadrado, e o óptimo está sempre algures ao longo de nascente–poente — 1:1,6 adoptado para Nova Iorque, 1:1,3 para Phoenix (p. 88), sendo o alongamento nascente–poente “definitivamente desejável” na zona temperada (p. 90). A forma verde interpola essas âncoras para <b>%1</b>; estique e rode a sua contra ela.',
   'ori-score':
-    'A nota é um índice didáctico, não uma previsão energética: 60 % orientação — nota máxima sobre a normal verde, zero a 90° de desvio — mais 40 % forma — proximidade do alongamento 1:X, com desconto para plantas quadradas, diagonais e norte–sul. Duas plantas podem partilhar a nota e comportar-se de modo diferente; leia-a com as pastilhas.',
+    'A nota é um índice didáctico, não uma previsão energética: 60 % orientação — nota máxima sobre a normal verde, zero a 90° de desvio — mais 40 % forma — proximidade do alongamento 1:X, com desconto para plantas quadradas, diagonais e norte–sul. Onde o clima pede um número de pisos (Csb: dois), os pesos passam a 50 % orientação, 30 % forma e 20 % pisos — nota máxima no número pedido, 60 com um a mais, nenhuma abaixo — pelo que um só piso não chega a 100. Duas plantas podem partilhar a nota e comportar-se de modo diferente; leia-a com as pastilhas.',
   'ori-height':
-    'As duas caixas extrudem a planta — pisos acima do solo vezes uma altura de piso editável. O sol abaixo é comandado, não decorativo: escolha 21 de Dezembro, 20 de Março ou 21 de Junho, arraste a hora solar — ou carregue em reproduzir — e a sombra segue a trajectória, longa e para norte na manhã de Dezembro, curta e contida no meio-dia de Junho. A sombra do meio-dia de Dezembro continua a ser o caso condicionante para afastamentos. A altura não move a nota de ajuste, que só conhece orientação e forma da planta.',
+    'As duas caixas extrudem a planta — pisos acima do solo vezes uma altura de piso editável. O sol abaixo é comandado, não decorativo: escolha 21 de Dezembro, 20 de Março ou 21 de Junho, arraste a hora solar — ou carregue em reproduzir — e a sombra segue a trajectória, longa e para norte na manhã de Dezembro, curta e contida no meio-dia de Junho. A sombra do meio-dia de Dezembro continua a ser o caso condicionante para afastamentos. A altura só move a nota de ajuste onde o clima pede um número de pisos (Csb: dois); nos restantes a nota conhece apenas a orientação e a forma da planta.',
+  'site-storeys':
+    'Em <b>%1</b> o óptimo assenta em dois pisos. Os estudos de Olgyay não dão razão para mudar aqui a planta: o Inverno do Csb português é mais ameno do que a sua referência temperada de Nova Iorque, pelo que a barra nascente–poente de 1:1,6 se mantém. A compacidade que um clima de aquecimento pede encontra-se antes no corte — a mesma área de pavimento em dois pisos assenta em metade da implantação, com metade da cobertura e metade do pavimento térreo por onde perder calor, contra mais parede: para a barra inicial de 96 m², menos 15 a 20 % de envolvente por metro quadrado de pavimento (3,9 para 3,1 m²/m² sob uma cobertura inclinada de 41°, 3,3 para 2,8 sob uma plana). O <b>Factor de forma</b> divide pelo volume e conta o desvão de uma cobertura inclinada como aquecido, pelo que sob uma cobertura íngreme pode esconder esse ganho; o CSV dá a envolvente por área de pavimento. <b>Acertar pelo óptimo de Olgyay</b> mantém a sua área de pavimento e recorta-a em dois pisos; o volume verde mostra o óptimo a essa altura. Um terceiro piso acrescenta escadas, apanha mais vento e lança uma sombra de Inverno mais longa sobre os vizinhos, pelo que vale menos do que dois. Os dois pisos são a leitura que esta aplicação faz do clima, não um número de Olgyay.',
   'site-albedo':
     'A cor das paredes decide quanto do sol a envolvente absorve. Os acabamentos seguem as três classes de cor da regulamentação térmica portuguesa — clara α 0,4, média 0,5, escura 0,8 (RCCTE, Quadro V.5, retomado no REH pelo Despacho n.º 15793-K/2013) — e o albedo indicado é a parte reflectida, 1 − α. A cor é uma decisão de Verão: o REH só conta o sol absorvido pelas paredes opacas na estação de arrefecimento, e as superfícies claras são o conselho corrente para climas quentes (Lechner; Gonçalves &amp; Graça). Por isso o <b>Ajuste do albedo</b> pesa cada degrau acima da classe clara pelo verão deste local — de Junho a Setembro a média é aqui de <b>%1 °C</b>, um verão <b>%2</b> — sem peso a 17 °C ou menos e com peso total a 23 °C ou mais. A caixa abaixo dá o próprio albedo e nomeia o verão contra o qual é lido. Dentro de cada classe a regulamentação dá um só valor; uma caiação fresca reflecte mais do que uma tinta creme. As faixas de cor 80/50 são cortes didácticos desta aplicação. As paredes tomam a cor em todas as vistas 3D; a cobertura mantém o seu acabamento.',
   'roof-score':
