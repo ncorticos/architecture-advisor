@@ -576,7 +576,7 @@ details.more[open] > summary{color:var(--ink)}
            take it there to be checked.</p>
       </div>
     </div>
-    <p class="note" data-t="privacyNote">Nothing is uploaded; your work stays in this browser. What leaves it, only to fill something in: the coordinates, to two elevation services when you press Look up and to Open-Meteo when you press Fetch web normals; the map area, to Esri and OpenStreetMap for the tiles; the plot’s position, to OpenStreetMap’s Overpass for the neighbouring buildings; an address you search for, to OpenStreetMap’s Nominatim.</p>
+    <p class="note" data-t="privacyNote">Nothing is uploaded; your work stays in this browser. What leaves it, only to fill something in: the coordinates, to two elevation services when you press Look up and to Open-Meteo when you press Fetch web normals; the map area, to Esri and OpenStreetMap for the tiles; the plot’s position, to OpenStreetMap’s Overpass servers for the neighbouring buildings and, once you move the plot, to Open-Meteo for the ground’s height and to Nominatim for its municipality; an address you search for, to OpenStreetMap’s Nominatim.</p>
   </div>
 
   <div id="app" hidden></div>
@@ -603,7 +603,7 @@ details.more[open] > summary{color:var(--ink)}
         <p data-t="footClassBody">Köppen–Geiger, in the formalisation of Peel, Finlayson and McMahon (2007),
            computed from the normals you enter.</p>
         <h5 style="margin-top:14px" data-t="footPriv">Privacy</h5>
-        <p style="color:var(--muted)" data-t="footPrivBody">Nothing is uploaded or stored outside this browser. Coordinates go only to the services that fill something in: elevation (Look up), Open-Meteo (Fetch web normals), the map tiles (Esri, OpenStreetMap), the neighbouring buildings (Overpass) and the address search (Nominatim).</p>
+        <p style="color:var(--muted)" data-t="footPrivBody">Nothing is uploaded or stored outside this browser. Coordinates go only to the services that fill something in: elevation (Look up), Open-Meteo (Fetch web normals), the map tiles (Esri, OpenStreetMap), the neighbouring buildings (Overpass), the address search (Nominatim) and, when the plot moves, its height (Open-Meteo) and municipality (Nominatim).</p>
       </div>
     </div>
 
@@ -656,7 +656,7 @@ details.more[open] > summary{color:var(--ink)}
 /* ------------------------------------------------------------ 0. IDENTITY -- */
 const APP = {
   name:        'Architecture Advisor',
-  version:     '1.83.0',
+  version:     '1.84.0',
   author:      'Nuno Dinis Cortiços',
   institution: 'Lisbon School of Architecture, Universidade de Lisboa',
   builtWith:   'Claude Opus 5 (Anthropic)',
@@ -1197,8 +1197,28 @@ function parseSpot(s) {
   if (m) return { lat:+m[1].replace(',', '.'), lon:+m[2].replace(',', '.') };
   return null;
 }
-const NB = { at:null, want:null, list:[], status:'idle', seq:0, timer:0 };
+const NB = { at:null, want:null, list:[], status:'idle', seq:0, timer:0, retry:0, tries:0, failAt:null, cache:[], onReady:null };
 const NB_R = 170;   // metres round the plot: the widest map, and the shadows reaching into it
+/* The public Overpass servers, asked in turn: when one is busy or down the
+   next is tried. What was read is kept in this browser (the last eight
+   spots, for 30 days), so a building mapped once does not vanish when a
+   server refuses the next request, nor on a reload. */
+const NB_EP = ['https://overpass-api.de/api/interpreter', 'https://overpass.private.coffee/api/interpreter',
+  'https://overpass.kumi.systems/api/interpreter', 'https://maps.mail.ru/osm/tools/overpass/api/interpreter'];
+const LS_OSM = 'arca-osm', NB_DAYS = 30;
+try { const a = JSON.parse(localStorage.getItem(LS_OSM) || '[]');
+  NB.cache = Array.isArray(a) ? a.filter(e => e && e.at && isFinite(e.at.lat) && isFinite(e.at.lon) && Array.isArray(e.list) && Date.now() - e.t < NB_DAYS * 864e5) : []; } catch (e) { NB.cache = []; }
+const nbCacheSave = () => { for (let n = NB.cache.length; n > 0; n--) { try { localStorage.setItem(LS_OSM, JSON.stringify(NB.cache.slice(-n))); return; } catch (e) {} } };
+/** One query to the first server that answers it whole. */
+function overpass(q, i) {
+  i = i || 0;
+  if (i >= NB_EP.length) return Promise.reject(new Error('overpass'));
+  const ctl = typeof AbortController !== 'undefined' ? new AbortController() : null, tm = ctl ? setTimeout(() => ctl.abort(), 30000) : 0;
+  return fetch(NB_EP[i], { method:'POST', headers:{ 'Content-Type':'application/x-www-form-urlencoded' }, body:'data=' + encodeURIComponent(q), signal:ctl ? ctl.signal : undefined })
+    .then(r => r.ok ? r.json() : Promise.reject(new Error(r.status)))
+    .then(js => { clearTimeout(tm); if (!js || !Array.isArray(js.elements) || /error/i.test(js.remark || '')) throw new Error('partial'); return js; })
+    .catch(() => { clearTimeout(tm); return overpass(q, i + 1); });
+}
 /** A building's height from its tags: the height itself, else its storeys
     at 3 m, else an assumed two storeys (one for a garage or a shed). */
 function osmHeight(tg) {
@@ -1228,21 +1248,37 @@ function parseOsmBuildings(js) {
 }
 /** Ask for the buildings round a point, once the plot has settled there:
     not again where they were read (or failed to be) until the plot moves
-    50 m, nor while a request for the same spot is on its way. */
+    50 m, nor while a request for the same spot is on its way. A spot read
+    before comes from the browser's store at once. When every server fails,
+    the buildings already on the map stay, and the same spot is asked again
+    twice, after 15 s and after a minute. */
 function wantNeighbours(pos, done) {
   if (!ENV.nb) return;
   if (NB.at && distM(NB.at, pos) < 50) return;
   if (NB.want && distM(NB.want, pos) < 50) return;
   clearTimeout(NB.timer);
+  const hit = NB.cache.filter(e => distM(e.at, pos) < 50).sort((a, b) => distM(a.at, pos) - distM(b.at, pos))[0];
+  if (hit) { ++NB.seq; clearTimeout(NB.retry); NB.at = hit.at; NB.want = null; NB.list = hit.list; NB.status = hit.list.length ? 'ok' : 'empty'; return; }
+  if (!NB.failAt || distM(NB.failAt, pos) >= 50) NB.tries = 0;
   const seq = ++NB.seq;
   NB.want = pos; NB.status = 'loading';
   NB.timer = setTimeout(() => {
     const q = '[out:json][timeout:25];(way["building"](around:' + NB_R + ',' + pos.lat.toFixed(6) + ',' + pos.lon.toFixed(6) + ');'
       + 'relation["building"]["type"="multipolygon"](around:' + NB_R + ',' + pos.lat.toFixed(6) + ',' + pos.lon.toFixed(6) + '););out geom;';
-    fetch('https://overpass-api.de/api/interpreter', { method:'POST', headers:{ 'Content-Type':'application/x-www-form-urlencoded' }, body:'data=' + encodeURIComponent(q) })
-      .then(r => r.ok ? r.json() : Promise.reject(new Error(r.status)))
-      .then(js => { if (seq !== NB.seq) return; NB.at = pos; NB.want = null; NB.list = parseOsmBuildings(js); NB.status = NB.list.length ? 'ok' : 'empty'; done(); })
-      .catch(() => { if (seq !== NB.seq) return; NB.at = pos; NB.want = null; NB.list = []; NB.status = 'failed'; done(); });
+    overpass(q)
+      .then(js => {
+        if (seq !== NB.seq) return;
+        NB.at = pos; NB.want = null; NB.list = parseOsmBuildings(js); NB.status = NB.list.length ? 'ok' : 'empty'; NB.tries = 0; NB.failAt = null;
+        NB.cache = NB.cache.filter(e => distM(e.at, pos) >= 50).concat([{ at:{ lat:pos.lat, lon:pos.lon }, list:NB.list, t:Date.now() }]).slice(-8);
+        nbCacheSave(); done();
+      })
+      .catch(() => {
+        if (seq !== NB.seq) return;
+        NB.at = pos; NB.want = null; NB.status = 'failed'; NB.failAt = pos;   // the buildings already read stay on the map
+        clearTimeout(NB.retry);
+        if (++NB.tries <= 2) NB.retry = setTimeout(() => { if (NB.at === pos && NB.status === 'failed') { NB.at = null; done(); } }, NB.tries === 1 ? 15000 : 60000);
+        done();
+      });
   }, 600);
 }
 /** Does the segment ab cross the segment cd? */
@@ -2417,17 +2453,23 @@ function sunspaceWall(pl, f) {
 const segFace = sg => sg.n[1] < 0 ? 'S' : sg.n[1] > 0 ? 'N' : sg.n[0] > 0 ? 'E' : 'W';
 /**
  * Windows spread over every wall of the plan: each wall at least 1.5 m long
- * takes the window its orientation's WWR asks for — the Windows & Shading
- * settings of the facade it faces like — centred on it, as wide as that
- * glass needs at the set sill and head, up to 92 % of the wall. A wall that
- * a wing or a notch leaves short simply has less glass.
+ * takes the glass its orientation's WWR asks for — the Windows & Shading
+ * settings of the facade it faces like — shared equally between the
+ * storeys: one window per floor, centred on the wall, its sill and head
+ * set from that floor, as wide as its share needs, up to 92 % of the wall.
+ * Above the ground floor the head stops 0.10 m under the next floor. A wall
+ * that a wing or a notch leaves short simply has less glass. sill and head
+ * are the ground floor's; rows lists every floor's; area is the glass
+ * drawn on all of them.
  */
 function segWindow(sg, G) {
   const f = segFace(sg), o = OPEN && OPEN[f];
   if (!o || !(o.wwr > 0) || sg.len < 1.5) return null;
-  const H0 = G.fl * G.fh, h = Math.max(0.3, o.headZ - o.sillZ);
-  const w = Math.min(sg.len * 0.92, o.wwr * sg.len * H0 / h);
-  return { f, w, h, sill:o.sillZ, head:o.headZ, uc:sg.len / 2, area:w * h, glass:o.wwr * sg.len * H0 };
+  const n = Math.max(1, Math.round(G.fl || 1)), H0 = n * G.fh;
+  const head = n > 1 ? Math.max(o.sillZ + 0.3, Math.min(o.headZ, G.fh - 0.1)) : o.headZ, h = Math.max(0.3, head - o.sillZ);
+  const w = Math.min(sg.len * 0.92, o.wwr * sg.len * H0 / (n * h));
+  const rows = Array.from({ length:n }, (_, k) => ({ sill:k * G.fh + o.sillZ, head:k * G.fh + head }));
+  return { f, w, h, sill:o.sillZ, head, uc:sg.len / 2, n, rows, area:n * w * h, glass:o.wwr * sg.len * H0 };
 }
 /** The finish buttons, grouped by colour class; set() gets the key, or null
     when the chosen one is pressed again. */
@@ -2471,7 +2513,11 @@ const roofFill = (grey, k) => finishFill(ROOF && ROOF.col, grey, k, 0.74);
    ================================================================= */
 
 /** The whole of the application's state. There is no file and no upload. */
-const STATE = { site:null, clim:null, tab:null };
+const STATE = { site:null, clim:null, tab:null, home:null, setupSync:null, note:null };
+/* Settings a page keeps only while it lives, handed on when every page is
+   rebuilt for a language or a moved site: each page registers a function
+   that writes them into KEEP, and reads them back as it builds. */
+const KEEP = {}, KEEPERS = [];
 
 /**
  * Twelve monthly mean temperatures, °C, and twelve monthly precipitation
@@ -2782,9 +2828,10 @@ function buildEnvironment(host) {
   pageHead(host, 'Environmental',
     'The climate the site sits in and the sun over it: the Köppen class computed from the normals, and the sun path over the building on its own plot. Every page after this one is written against both.');
 
-  /* ---- the workbench: the climate on the left, the building on its plot
-     under the sun path in the middle, the sun and the map on the right; the
-     tables and the longer notes follow below, folded ---- */
+  /* ---- the workbench: the climate and the solar chart on the left, the
+     building on its plot under the sun path in the middle, the climograph,
+     the day and the map on the right; the tables and the longer notes
+     follow below, folded ---- */
   const bench = host.appendChild(el('div', { class:'bench env' }));
   const rail = bench.appendChild(el('div', { class:'rail' }));
   const stage = bench.appendChild(el('div', { class:'stage' }));
@@ -2960,7 +3007,7 @@ function buildEnvironment(host) {
   };
 
   const climRect = (W, H) => plotRect(30, 30, W - 30 - 28, H - 30 - 36, -0.5, 11.5, 0, pMax);
-  const clim = makePanel(rail, {
+  const clim = makePanel(props, {   // on the right, over the day it moves
     title: 'The year, month by month',
     note: 'Drag across the months to move the day.',
     heightFn: w => Math.min(w / 1.05, 250) + 20,
@@ -2996,6 +3043,8 @@ function buildEnvironment(host) {
   const DAYS = [{ doy:172, key:'21 Jun', col:'#DC2626' }, { doy:79, key:'20 Mar', col:'#0D9488' }, { doy:355, key:'21 Dec', col:'#2563EB' }];
   const VIEW = { SW:225, SE:135, NE:45, NW:315, Plan:180 };
   const plotPos = () => ENV.plot || { lat, lon };
+  /** Still on the region's reference point, which can fall in a river or a field? */
+  const seeded = !!NUTS_REF[S.nuts] && Math.abs(lat - NUTS_REF[S.nuts][0]) < 1e-6 && Math.abs(lon - NUTS_REF[S.nuts][1]) < 1e-6;
   const doyLabel = doy => { let d = doy, m = 0; while (m < 11 && d > MDAYS[m]) { d -= MDAYS[m]; m++; } return d + ' ' + (LANG === 'pt' ? MON3[m].toLowerCase() : MON3[m]); };
   const hm = h => { const m = Math.round(h * 60); return String(Math.floor(m / 60)).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0'); };
   /** The camera: the building at the centre of a ground disc of map, under
@@ -3004,8 +3053,9 @@ function buildEnvironment(host) {
   const envFrame = (W, H) => {
     const M = roofModel(G, RF), bb = M.pl.bbox;
     const half = Math.max(Math.hypot(bb[0], bb[1]), Math.hypot(bb[2], bb[1]), Math.hypot(bb[0], bb[3]), Math.hypot(bb[2], bb[3]));
-    /* the plot: map just round the dome; the neighbourhood: 90 m of map, the dome keeps its size */
-    const Rs = Math.max(18, 2.4 * half), Rg = ENV.wide ? Math.max(90, Rs * 1.28) : Rs * 1.28;
+    /* the plot: map just round the dome; the neighbourhood: 90 m of map, the
+       dome raised over most of it, so the sun paths read at that scale */
+    const Rs0 = Math.max(18, 2.4 * half), Rg = ENV.wide ? Math.max(90, Rs0 * 1.28) : Rs0 * 1.28, Rs = ENV.wide ? Math.max(Rs0, 0.66 * Rg) : Rs0;
     const plan = ENV.view === 'Plan', e = (plan ? 90 : 30) * RAD, al = (VIEW[ENV.view] + 180) * RAD;
     const se = Math.sin(e), ce = Math.cos(e);
     const top = 10, bottom = H - 10, left = 10, right = W - 10;
@@ -3156,15 +3206,22 @@ function buildEnvironment(host) {
        parts of the dome behind the building go down first */
     const paths = DAYS.map(d => ({ d, pts:arcOf(d.doy).map(o => ({ h:o.h, p:domePt(FR, o.sp) })) }));
     const cur = { d:{ doy:ENV.doy, key:doyLabel(ENV.doy), col:'#D97706' }, pts:arcOf(ENV.doy).map(o => ({ h:o.h, p:domePt(FR, o.sp) })) };
+    /* each path on a white halo, so it reads over the imagery; bolder in
+       the neighbourhood, where the dome stands over a wider map */
+    const wideK = ENV.wide ? 1.5 : 1;
     const drawArcs = behind => {
       paths.concat([cur]).forEach((pa, i) => {
-        const isCur = pa === cur;
-        stroke(ctx, pa.d.col, isCur ? 2.6 : 1.8, isCur ? null : [7, 4]);
+        const isCur = pa === cur, lw = (isCur ? 2.6 : 1.8) * wideK, dash = isCur ? null : [7 * wideK, 4 * wideK];
+        const segs2 = [];
         for (let k2 = 1; k2 < pa.pts.length; k2++) {
           const a = pa.pts[k2 - 1].p, c = pa.pts[k2].p, mid = [(a[0] + c[0]) / 2, (a[1] + c[1]) / 2, (a[2] + c[2]) / 2];
           if ((depthOf(FR, ...mid) > 0) !== behind) continue;
-          const qa = pt(...a), qc = pt(...c); seg(ctx, qa[0], qa[1], qc[0], qc[1]);
+          segs2.push([pt(...a), pt(...c)]);
         }
+        if (!segs2.length) return;
+        const run = () => { ctx.beginPath(); segs2.forEach(([qa, qc]) => { ctx.moveTo(qa[0], qa[1]); ctx.lineTo(qc[0], qc[1]); }); ctx.stroke(); };
+        stroke(ctx, 'rgba(255,255,255,' + (behind ? 0.5 : 0.85) + ')', lw + 2.6 * wideK); ctx.lineCap = 'round'; run();
+        stroke(ctx, pa.d.col, lw, dash); ctx.lineCap = 'butt'; run();
       });
     };
     drawArcs(true);
@@ -3197,7 +3254,7 @@ function buildEnvironment(host) {
       if (n[0] * c3[0] + n[1] * c3[1] <= 1e-6) return;
       const wn = segWindow(sg, G);
       faces.push({ pts:[P(0, 0), P(sg.len, 0)].concat(wl.prof.slice().reverse().map(q => P(q[0], q[1]))), fill:wallCol(sg.n[1] !== 0), cells,
-        win:wn ? [P(wn.uc - wn.w / 2, wn.sill), P(wn.uc + wn.w / 2, wn.sill), P(wn.uc + wn.w / 2, Math.min(wn.head, M.H0)), P(wn.uc - wn.w / 2, Math.min(wn.head, M.H0))] : null });
+        wins:wn ? wn.rows.map(r => [P(wn.uc - wn.w / 2, r.sill), P(wn.uc + wn.w / 2, r.sill), P(wn.uc + wn.w / 2, Math.min(r.head, M.H0)), P(wn.uc - wn.w / 2, Math.min(r.head, M.H0))]) : null });
     });
     M.steps.forEach(st => {
       const n = toW(st.n[0], st.n[1]);
@@ -3255,7 +3312,7 @@ function buildEnvironment(host) {
         if (f2.nb.ghost) { ctx.fillStyle = 'rgba(251,251,249,.62)'; ctx.fill(); }   // see-through, over what it hid
         stroke(ctx, f2.nb.ghost ? 'rgba(110,118,128,.85)' : '#8d949c', 0.8, f2.top && f2.nb.how === 'assumed' ? [3, 2] : null); ctx.stroke(); return;   // dashed: height assumed
       }
-      if (f2.win) { path3(f2.win); ctx.fillStyle = 'rgba(219,234,254,.92)'; ctx.fill(); stroke(ctx, '#2563EB', 1.1); ctx.stroke(); }
+      if (f2.wins) f2.wins.forEach(q4 => { path3(q4); ctx.fillStyle = 'rgba(219,234,254,.92)'; ctx.fill(); stroke(ctx, '#2563EB', 1.1); ctx.stroke(); });
       if (f2.cells && f2.cells.length) {
         ctx.save(); path3(f2.pts); ctx.clip();
         ctx.beginPath();
@@ -3275,7 +3332,7 @@ function buildEnvironment(host) {
         return;
       }
       stroke(ctx, CH.ink, 1.2); ctx.stroke();
-      if (f2.win) { path3(f2.win); stroke(ctx, '#2563EB', 1.1); ctx.stroke(); }
+      if (f2.wins) f2.wins.forEach(q4 => { path3(q4); stroke(ctx, '#2563EB', 1.1); ctx.stroke(); });
     });
 
     drawArcs(false);
@@ -3290,21 +3347,26 @@ function buildEnvironment(host) {
     cur.pts.forEach(o => {
       const hr = Math.round(o.h * 10) / 10;
       if (Math.abs(hr - Math.round(hr)) > 0.01 || Math.round(hr) % 2) return;
-      const q = pt(...o.p);
-      if (Math.round(hr) === 12) { ctx.fillStyle = '#D97706'; ctx.beginPath(); ctx.arc(q[0], q[1], 2.2, 0, 6.284); ctx.fill(); return; }
-      ctx.fillStyle = '#D97706'; ctx.beginPath(); ctx.arc(q[0], q[1], 2.2, 0, 6.284); ctx.fill();
-      label(ctx, String(Math.round(hr)), q[0], q[1] - 9, '#B45309', FM(9), 'center', 'middle');
+      const q = pt(...o.p), rD = 2.2 * wideK;
+      ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(q[0], q[1], rD + 1.2, 0, 6.284); ctx.fill();
+      ctx.fillStyle = '#D97706'; ctx.beginPath(); ctx.arc(q[0], q[1], rD, 0, 6.284); ctx.fill();
+      if (Math.round(hr) === 12) return;
+      const fH = FM(9 * (ENV.wide ? 1.25 : 1), ENV.wide ? '600' : '400'), txt = String(Math.round(hr));
+      ctx.font = fH; const wH = ctx.measureText(txt).width;
+      if (ENV.wide) { ctx.fillStyle = 'rgba(255,255,255,.85)'; ctx.fillRect(q[0] - wH / 2 - 3, q[1] - 9 * wideK - 7, wH + 6, 14); }
+      label(ctx, txt, q[0], q[1] - 9 * wideK, '#B45309', fH, 'center', 'middle');
     });
     tags.forEach(tg => {
-      ctx.font = F(10, '600'); const w = ctx.measureText(tg.txt).width;
-      ctx.fillStyle = 'rgba(255,255,255,.85)'; ctx.fillRect(tg.q[0] + 6, tg.q[1] - 16, w + 8, 14);
-      label(ctx, tg.txt, tg.q[0] + 10, tg.q[1] - 9, tg.col, F(10, '600'), 'left', 'middle');
+      const fT = F(10 * (ENV.wide ? 1.2 : 1), '600'), hT = ENV.wide ? 17 : 14;
+      ctx.font = fT; const w = ctx.measureText(tg.txt).width;
+      ctx.fillStyle = 'rgba(255,255,255,.88)'; ctx.fillRect(tg.q[0] + 6, tg.q[1] - hT - 2, w + 8, hT);
+      label(ctx, tg.txt, tg.q[0] + 10, tg.q[1] - 2 - hT / 2, tg.col, fT, 'left', 'middle');
     });
     /* the sun now, its ray to the building, and its handle */
     if (sun.alt > -0.5) {
       const sp = domePt(FR, sun), q = pt(...sp), c0 = pt(0, 0, M.H0 * 0.7);
-      stroke(ctx, 'rgba(217,119,6,.75)', 1.4, [4, 3]); seg(ctx, q[0], q[1], c0[0], c0[1]);
-      sunGlyph(ctx, q[0], q[1], wx, 1);
+      stroke(ctx, 'rgba(217,119,6,.75)', 1.4 * wideK, [4, 3]); seg(ctx, q[0], q[1], c0[0], c0[1]);
+      sunGlyph(ctx, q[0], q[1], wx, ENV.wide ? 1.3 : 1);
     }
     /* the readout, the scale and the credits */
     const narrow = W < 600;
@@ -3313,7 +3375,7 @@ function buildEnvironment(host) {
     const line2 = sun.alt > 0 ? t('sun') + ' ' + fmt(sun.alt, 0) + '° · ' + t('azimuth') + ' ' + fmt(sun.azi, 0) + '° · ' + t('ridge shadow') + ' ' + fmt(ridgeSh, 1) + ' m' : t('the sun is below the horizon');
     const nl = normalsLine(wx.m), line3 = nl[0] + ': ' + nl[1];
     const lines = [[line1, 14, FM(narrow ? 10 : 11.5, '600'), CH.ink], [line2, 30, FM(narrow ? 9.5 : 10.5), CH.ink], [line3, 46, FM(narrow ? 9.5 : 10.5), CH.ink]];
-    if (!ENV.plot) lines.push([t('Map at the site’s reference coordinates — find the plot under Map and view'), 62, F(narrow ? 9.5 : 10.5, '600'), '#B45309']);
+    if (!ENV.plot && seeded) lines.push([t('Map at the site’s reference coordinates — find the plot under Map and view'), 62, F(narrow ? 9.5 : 10.5, '600'), '#B45309']);
     lines.forEach(([txt, y, f, col]) => {
       ctx.font = f; const w = ctx.measureText(t(txt)).width;
       ctx.fillStyle = 'rgba(255,255,255,.88)'; ctx.fillRect(6, y - 9, w + 10, 17);
@@ -3393,14 +3455,14 @@ function buildEnvironment(host) {
     }
   });
 
-  /* --- the sun and the map, right of the model ------------------------------ */
+  /* --- the solar chart, left of the model; the day and the map, right ------- */
   /* the solar chart itself: altitude against azimuth, the three paths and the
      day chosen — drag the sun on it, as on the dome */
   const tracks = DAYS.map(d => ({ d, pts:arcOf(d.doy).map(o => ({ h:o.h, alt:o.sp.alt, azi:o.sp.azi })) }));
   const yMax = Math.ceil((Math.max.apply(null, tracks.map(tr => Math.max.apply(null, tr.pts.map(p => p.alt)))) + 6) / 10) * 10;
   const chartRect = (W, H) => plotRect(30, 8, W - 30 - 8, H - 8 - 22, 30, 330, 0, yMax);
-  props.appendChild(el('div', { class:'gh', text:'Sun path' }));
-  const chart = makePanel(props, {
+  rail.appendChild(el('div', { class:'gh', text:'Sun path' }));   // on the left, under the climate
+  const chart = makePanel(rail, {
     title: 'Sun path over the site',
     heightFn: w => Math.min(w / 1.25, 230),
     render(ctx, W, H, PN) {
@@ -3443,6 +3505,7 @@ function buildEnvironment(host) {
     if (ENV.h >= ss.set - 0.05) ENV.h = ss.rise;
     playBtn.textContent = t('Pause');
     playing = setInterval(() => {
+      if (!host.isConnected) { clearInterval(playing); playing = null; return; }   // the pages were rebuilt
       ENV.h = Math.min(ss.set, ENV.h + (ss.set - ss.rise) / 90);
       refreshEnv();
       if (ENV.h >= ss.set - 1e-6) { clearInterval(playing); playing = null; playBtn.textContent = t('Play the day'); }
@@ -3453,15 +3516,18 @@ function buildEnvironment(host) {
   props.appendChild(el('div', { class:'gh', text:'Map and view' }));
   /* find the plot: an address in Portugal, coordinates, or a Google Maps link */
   const findInp = el('input', { type:'text', placeholder:t('Address, “lat, lon” or a Google Maps link'), 'aria-label':t('Find the plot') });
-  const findMsg = el('div', { class:'hint' });
-  const place = (pos, name) => {
+  const findMsg = el('div', { class:'hint', text:STATE.note || '' });
+  STATE.note = null;
+  /** The plot settles: the site follows it, and every page with it. */
+  const settle = found => resite(plotPos(), txt => { if (host.isConnected) findMsg.textContent = txt; }, found || undefined);
+  const place = (pos, name, found) => {
     let note = '';
     if (!inPortugal(pos.lat, pos.lon) && inPortugal(pos.lat, -Math.abs(pos.lon))) { pos = { lat:pos.lat, lon:-Math.abs(pos.lon) }; note = t('Longitude read as west.') + ' '; }
     if (!inPortugal(pos.lat, pos.lon)) { findMsg.textContent = t('That point lies outside Portugal and its islands.'); return; }
     ENV.plot = { lat:pos.lat, lon:pos.lon };
-    const km = distM(pos, { lat, lon }) / 1000;
-    findMsg.textContent = (name ? name + '. ' : '') + note + (km > 40 ? t(fmt(km, 0) + ' km from the site whose climate this page reads — change the site if the plot lies elsewhere.') : '');
+    findMsg.textContent = (name ? name + '. ' : '') + note;
     refreshEnv();
+    settle(found);
   };
   const findPlot = q => {
     q = String(q || '').trim();
@@ -3469,11 +3535,12 @@ function buildEnvironment(host) {
     const spot = parseSpot(q);
     if (spot) { place(spot, null); return; }
     findMsg.textContent = t('Searching…');
-    fetch('https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&countrycodes=pt&accept-language=' + (LANG === 'pt' ? 'pt' : 'en') + '&q=' + encodeURIComponent(q))
+    fetch('https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&countrycodes=pt&addressdetails=1&accept-language=pt&q=' + encodeURIComponent(q))
       .then(r => r.ok ? r.json() : Promise.reject(new Error(r.status)))
       .then(js => {
         if (!js || !js.length) { findMsg.textContent = t('Nothing found for that address in Portugal.'); return; }
-        place({ lat:+js[0].lat, lon:+js[0].lon }, String(js[0].display_name || '').split(',').slice(0, 3).join(','));
+        const la = +js[0].lat, lo = +js[0].lon;
+        place({ lat:la, lon:lo }, String(js[0].display_name || '').split(',').slice(0, 3).join(','), regionFromAddress(js[0].address, la, lo));
       })
       .catch(() => { findMsg.textContent = t('The address search is unavailable — paste coordinates or a Google Maps link instead.'); });
   };
@@ -3483,8 +3550,8 @@ function buildEnvironment(host) {
   const cView = segCtl(null, Object.keys(VIEW).map(k => ({ value:k, label:k === 'Plan' ? t('Plan') : k })), ENV.view, v => { ENV.view = v; refreshEnv(); });
   const cWide = segCtl(null, [{ value:false, label:'Plot' }, { value:true, label:'Neighbourhood' }], ENV.wide, v => { ENV.wide = v; refreshEnv(); });
   const plotLine = el('div', { class:'hint' });
-  const resetBtn = el('button', { class:'btn small', text:'Back to the site coordinates', onclick:() => { ENV.plot = null; refreshEnv(); } });
-  const cNb = checkCtl('Neighbouring buildings (OpenStreetMap)', ENV.nb, v => { ENV.nb = v; if (v && NB.status === 'failed') NB.at = NB.want = null; refreshEnv(); });
+  const resetBtn = el('button', { class:'btn small', text:'Back to the coordinates set up', onclick:() => resiteHome() });
+  const cNb = checkCtl('Neighbouring buildings (OpenStreetMap)', ENV.nb, v => { ENV.nb = v; if (v && NB.status === 'failed') { NB.at = NB.want = null; NB.tries = 0; } refreshEnv(); });
   props.appendChild(controls([cMap, cView, cWide, cNb]));
   props.appendChild(el('div', { class:'rgroup' }, [plotLine, resetBtn]));
 
@@ -3499,15 +3566,18 @@ function buildEnvironment(host) {
     segDays.querySelectorAll('button').forEach((b2, i) => b2.setAttribute('aria-pressed', String([355, 79, 172, 266][i] === ENV.doy)));
     const ss = sunriseSunset(ENV.doy, lat, lon, tz), sp = sunPos(ENV.doy, ENV.h, lat, lon, tz), M = roofModel(G, RF);
     let noonAlt = -90; if (ss) noonAlt = sunPos(ENV.doy, ss.noon, lat, lon, tz).alt;
-    wantNeighbours(plotPos(), () => { if (host.isConnected) refreshEnv(); });
+    NB.onReady = () => { if (host.isConnected) refreshEnv(); };   // this page, not one a rebuild replaced
+    wantNeighbours(plotPos(), () => { if (NB.onReady) NB.onReady(); });
     envPanel.draw();                           // first, so the neighbours' shade can be read below
     const ns = envPanel.data.nbStat || { n:0 }, nbRows = [];
+    const again = NB.status === 'failed' && NB.tries <= 2 ? ' — ' + t('asking again shortly') : '';
     if (!ENV.nb) nbRows.push([t('Neighbouring buildings'), t('off')]);
-    else if (NB.status === 'failed') nbRows.push([t('Neighbouring buildings'), t('unavailable')]);
+    else if (NB.status === 'failed' && !ns.n) nbRows.push([t('Neighbouring buildings'), t('unavailable') + again]);
     else if (NB.status === 'loading' && !ns.n) nbRows.push([t('Neighbouring buildings'), t('loading…')]);
     else if (!ns.n) nbRows.push([t('Neighbouring buildings'), t('none mapped here')]);
     else {
-      nbRows.push([t('Neighbouring buildings'), ns.assumed ? t(ns.n + ' (' + ns.assumed + ' heights assumed)') : String(ns.n)]);
+      nbRows.push([t('Neighbouring buildings'), (ns.assumed ? t(ns.n + ' (' + ns.assumed + ' heights assumed)') : String(ns.n))
+        + (NB.status === 'failed' ? ' — ' + t('the last read kept; the servers did not answer') + again : NB.status === 'loading' ? ' — ' + t('updating…') : '')]);
       nbRows.push([t('Sunlit walls and roof in their shade'), ns.sunUp && ns.sunlit > 0 ? fmt(100 * ns.shaded / ns.sunlit, 0) + ' %' : '–']);
     }
     readings.innerHTML = '';
@@ -3515,10 +3585,10 @@ function buildEnvironment(host) {
      [t('Sunrise – sunset'), ss ? hm(ss.rise) + ' – ' + hm(ss.set) : '–'], [t('Day length'), ss ? fmt(ss.set - ss.rise, 1) + ' h' : '–'],
      [t('Noon altitude'), fmt(noonAlt, 1) + '°'], [t('Ridge shadow'), sp.alt > 0.5 ? fmt(M.ridge / Math.tan(sp.alt * RAD), 1) + ' m' : '–'], normalsLine(monthOf(ENV.doy))].concat(nbRows)
       .forEach(([k, v]) => readings.appendChild(el('div', { class:'fact' }, [el('span', { text:k }), el('b', { text:v })])));
-    const pp = plotPos();
+    const pp = plotPos(), H0s = STATE.home && STATE.home.site;
     plotLine.textContent = t('Plot') + ' ' + fmt(Math.abs(pp.lat), 5) + '° ' + (pp.lat < 0 ? 'S' : 'N') + ' · ' + fmt(Math.abs(pp.lon), 5) + '° ' + (pp.lon < 0 ? 'W' : 'E')
-      + (ENV.plot ? '' : ' — ' + t('the site coordinates; find the plot above, or drag the ground to move the building'));
-    resetBtn.style.display = ENV.plot ? '' : 'none';
+      + (ENV.plot ? '' : ' — ' + t(seeded ? 'the region’s reference coordinates; find the plot above, or drag the ground to move the building — the site follows it' : 'the site; drag the ground or find the plot to move it, and the site follows'));
+    resetBtn.style.display = H0s && havKm(H0s.lat, H0s.lon, S.lat, S.lon) > 0.001 ? '' : 'none';
     chart.draw(); clim.draw();
     wxKick();
   }
@@ -3539,7 +3609,7 @@ function buildEnvironment(host) {
     }
     if (best) { ENV.doy = best.doy; ENV.h = Math.round(best.h * 20) / 20; refreshEnv(); }
   };
-  const bindDrag = (panel, onDown, onMove, cursorAt) => {
+  const bindDrag = (panel, onDown, onMove, cursorAt, onUp) => {
     const cv = panel.canvas;
     cv.style.touchAction = 'none'; cv.draggable = false;
     cv.addEventListener('dragstart', ev => ev.preventDefault());
@@ -3548,7 +3618,7 @@ function buildEnvironment(host) {
     const xy = ev => { const r = cv.getBoundingClientRect(); return [(ev.clientX - r.left) * (r.width ? panel.W / r.width : 1), (ev.clientY - r.top) * (r.height ? panel.H / r.height : 1)]; };
     cv.addEventListener('pointerdown', ev => { const [x, y] = xy(ev); drag = onDown(x, y); if (!drag) return; ev.preventDefault(); try { cv.setPointerCapture(ev.pointerId); } catch (err) {} });
     cv.addEventListener('pointermove', ev => { const [x, y] = xy(ev); if (!drag) { cv.style.cursor = cursorAt(x, y); return; } ev.preventDefault(); onMove(drag, x, y); });
-    const end = () => { drag = null; };
+    const end = () => { const d = drag; drag = null; if (d && onUp) onUp(d); };
     cv.addEventListener('pointerup', end); cv.addEventListener('pointercancel', end);
   };
   const sunOnDome = () => { const FR = envFrame(envPanel.W, envPanel.H), sp = sunPos(ENV.doy, ENV.h, lat, lon, tz); return sp.alt > -0.5 ? P3(FR, ...domePt(FR, sp)) : null; };
@@ -3576,7 +3646,8 @@ function buildEnvironment(host) {
     ENV.plot = { lat:d.plot.lat - wy / 111320, lon:d.plot.lon - wx / (111320 * Math.cos(d.plot.lat * RAD)) };
     refreshEnv();
   }, (x, y) => { if (onLoc(x, y)) return 'crosshair'; const q = sunOnDome(); if (q && Math.hypot(x - q[0], y - q[1]) <= 16) return 'grab';
-    const FR = envFrame(envPanel.W, envPanel.H), xp = (x - FR.cx) / FR.s, yp = (FR.cy - y) / (FR.s * FR.se); return Math.hypot(xp, yp) <= FR.Rg ? 'move' : 'default'; });
+    const FR = envFrame(envPanel.W, envPanel.H), xp = (x - FR.cx) / FR.s, yp = (FR.cy - y) / (FR.s * FR.se); return Math.hypot(xp, yp) <= FR.Rg ? 'move' : 'default'; },
+  d => { if ((d.kind === 'pan' || d.kind === 'loc') && ENV.plot) settle(); });   // let go: the site follows the plot
   bindDrag(chart, (x, y) => {
     const P = chartRect(chart.W, chart.H), sp = sunPos(ENV.doy, ENV.h, lat, lon, tz);
     return Math.hypot(x - P.sx(sp.azi), y - P.sy(Math.max(0, sp.alt))) <= 16 ? { kind:'sun' } : null;
@@ -3687,7 +3758,7 @@ function buildEnvironment(host) {
   ]);
   fold('The map, the sun and the weather', [hint('env-weather',
     'The weather over the model is this site’s normals read at the day chosen: each month’s value sits at mid-month and the days between are interpolated. The sun grows and deepens in colour with the mean air temperature, on a scale from 0 to 28 °C; clouds gather with the precipitation, from none at 0 to a full sky at 150 mm a month, and rain falls above 10 mm. Under cloud the building’s shadow softens, since more of the light is diffuse, and each cloud’s shadow crosses the ground and the building below it. Drag across the climograph to move through the year; the model and the solar chart follow, and the day’s place in the year is marked on the climograph. This is a reading of the normals, not a record of the sky: precipitation stands in for cloudiness, which it follows through the Portuguese year but not everywhere — a coastal summer morning can be grey with sea fog and still dry. The Roof tab reads the sun actually received, from the ERA5 reanalysis.'), hint('env-map',
-    'The model sets the building drawn on Site — its plan, breaks and patio, turned as set there, under the roof set on Roof — on a disc of base map around its plot: satellite imagery from Esri World Imagery or the street map of OpenStreetMap, each credited on the drawing, loaded by your browser from those services, which see the area of map asked for. Until a plot is found the map sits on the site’s reference coordinates — a station or a region’s centre, which can fall in a river or a field. <b>Find the plot</b> takes an address in Portugal, the islands included (searched on OpenStreetMap’s Nominatim when you press Find, never as you type), coordinates in decimal degrees or degrees, minutes and seconds, or a Google Maps link pasted whole; dragging the ground then fine-tunes it, and its coordinates go into the JSON export. <b>Neighbouring buildings</b> are the footprints mapped on OpenStreetMap within ' + NB_R + ' m, read by your browser from its Overpass service (which sees the plot’s position), raised to their mapped height, else to their storeys at 3 m each, else to an assumed two storeys (one for a garage or a shed) — those assumed are outlined dashed. The one standing on the plot, and any the design overlaps, give way to the design; any standing between the eye and the design is drawn see-through. Their shadows fall on the ground with the design’s own, and where they fall on the design they are drawn on its walls and roof: each sunlit wall and roof plane is sampled about every 0.7 m and each sample’s ray to the sun followed through the neighbours, which gives the share of the sunlit envelope in their shade at the hour shown. Mapping is thorough in the cities and thinner in the country and on the islands, and trees, walls and the ground’s own slope are not in it: a plot with nothing mapped round it is not necessarily open. The sun is computed for this site in solar time, as everywhere in this application; its paths for 21 June, 20 March and 21 December are drawn on a sky dome over the building, dashed, with the day chosen solid and its even hours marked. Drag the sun — on the dome or on the solar chart — along its path to change the hour, across the paths to change the day. Imagery can be years old and a little off true position; where a service has no imagery at the finest zoom its flat tiles are skipped and the coarser level shows through. The small map in the corner shows the wider area, north up, with the model’s disc in red — press or drag on it to move the plot. The ground takes the light of the hour and the month: brighter under a clear sky and a high sun, duller as the cloud thickens, dark once the sun is down. The dome is a diagram, not to scale with the map.')]);
+    'The model sets the building drawn on Site — its plan, breaks and patio, turned as set there, under the roof set on Roof — on a disc of base map around its plot: satellite imagery from Esri World Imagery or the street map of OpenStreetMap, each credited on the drawing, loaded by your browser from those services, which see the area of map asked for. Until a plot is found the map may sit on the region’s reference coordinates — its main town’s centre, which can fall in a river or a field. <b>Find the plot</b> takes an address in Portugal, the islands included (searched on OpenStreetMap’s Nominatim when you press Find, never as you type), coordinates in decimal degrees or degrees, minutes and seconds, or a Google Maps link pasted whole; dragging the ground, or pressing on the small map, moves it. <b>The site follows the plot</b>: once the plot settles, its coordinates become the site’s and every page is rebuilt on them — the normals by the setup’s own order (the IPMA station within 5 km, else the nearest stations blended; web normals read again where they were the source; normals you typed, or a station you picked, stay yours), the Köppen class, the sun on every page, the ground’s height there (the Copernicus DEM, asked of Open-Meteo) and the municipality and its region (asked of Nominatim once the plot has moved 300 m). The model, the windows and the day chosen stay as they were; <b>Back to the coordinates set up</b> returns to the setup’s site. <b>Neighbouring buildings</b> are the footprints mapped on OpenStreetMap within ' + NB_R + ' m, read by your browser from the public Overpass servers (which see the plot’s position; when one is busy the next is asked) and kept in this browser for 30 days, so a spot read once shows at once and its buildings stay when a later request fails; raised to their mapped height, else to their storeys at 3 m each, else to an assumed two storeys (one for a garage or a shed) — those assumed are outlined dashed. The one standing on the plot, and any the design overlaps, give way to the design; any standing between the eye and the design is drawn see-through. Their shadows fall on the ground with the design’s own, and where they fall on the design they are drawn on its walls and roof: each sunlit wall and roof plane is sampled about every 0.7 m and each sample’s ray to the sun followed through the neighbours, which gives the share of the sunlit envelope in their shade at the hour shown. Mapping is thorough in the cities and thinner in the country and on the islands, and trees, walls and the ground’s own slope are not in it: a plot with nothing mapped round it is not necessarily open. The sun is computed for this site in solar time, as everywhere in this application; its paths for 21 June, 20 March and 21 December are drawn on a sky dome over the building, dashed, with the day chosen solid and its even hours marked. Drag the sun — on the dome or on the solar chart — along its path to change the hour, across the paths to change the day. Imagery can be years old and a little off true position; where a service has no imagery at the finest zoom its flat tiles are skipped and the coarser level shows through. The small map in the corner shows the wider area, north up, with the model’s disc in red — press or drag on it to move the plot. The ground takes the light of the hour and the month: brighter under a clear sky and a high sun, duller as the cloud thickens, dark once the sun is down. The dome is a diagram, not to scale with the map; in the neighbourhood view it rises over most of the map and its paths are drawn bolder, on a white edge that keeps them legible over the imagery.')]);
 }
 
 function buildSite(host) {
@@ -3925,11 +3996,11 @@ function buildSite(host) {
     const bb = planOf().bbox, reach = Math.max(Math.hypot(bb[0], bb[1]), Math.hypot(bb[2], bb[1]), Math.hypot(bb[0], bb[3]), Math.hypot(bb[2], bb[3]));
     const half = Math.max(reach, Math.hypot(Li, Di) / 2);
     const need = half + arr + 1.5;             // world footprint radius, metres
-    const Hgt = Math.max(G.fl * G.fh, Hopt);    // world height to clear above the ring
+    const Hgt = Math.max(roofModel(G, ROOF).ridge, Hopt);    // world height to clear above the ring: the ridge of the roof set on Roof
     /* a phone-width canvas is taller, with its badges in a row across the
        top and a two-row key at the foot — the drawing sits between them */
     const narrow = W < 600;
-    const top = narrow ? 148 : 14, bottom = H - (narrow ? 46 : 34);
+    const top = narrow ? 166 : 14, bottom = H - (narrow ? 46 : 34);
     const availV = Math.max(40, bottom - top);
     const sByW = (W / 2 - 16) / (need * ISO_C * Math.SQRT2);
     const sByH = availV / (need * ISO_S * Math.SQRT2 * 2 + Hgt);
@@ -4073,8 +4144,8 @@ function buildSite(host) {
 
   labPanel = makePanel(stage, {
     title: 'Your plan against the optimum',
-    note: 'Isometric view, tilted from the south-west. Drag the plan to stretch it, the black knob to turn it, the black points to break it; drive the sun from the Sun controls. The windows are the ones sized on Windows & Shading, spread over every wall.',
-    heightFn: w => w < 600 ? Math.round(w * 1.2 + 122) : Math.round(Math.min(w / 1.5, Math.max(460, (window.innerHeight || 900) - 200))),
+    note: 'Isometric view, tilted from the south-west. Drag the plan to stretch it, the black knob to turn it, the black points to break it; drive the sun from the Sun controls. The windows are the ones sized on Windows & Shading, spread over every wall and every floor, and the roof is the one set on Roof.',
+    heightFn: w => w < 600 ? Math.round(w * 1.2 + 140) : Math.round(Math.min(w / 1.5, Math.max(460, (window.innerHeight || 900) - 200))),
     render(ctx, W, H) {
       const GREEN = '#16A34A', BLUE = '#2563EB', narrow = W < 600;
       const desk = labelDesk(ctx, W, H);   // every number is placed last, clear of the lines
@@ -4154,16 +4225,22 @@ function buildSite(host) {
         lo.pop(); hi.pop();
         return lo.concat(hi);
       };
-      const Lsh = shadowLen(Hgt, sun.alt);
-      const saz = (sun.azi + 180) * RAD;
-      const ox = Lsh * Math.sin(saz), oy = Lsh * Math.cos(saz);
+      /* the volume under the roof set on Roof — the same model every other
+         page draws: walls up to the roof's profile, gables, steps, slopes */
+      const RM = roofModel(G, ROOF), Rdg = RM.ridge;
+      const Lsh = shadowLen(Rdg, sun.alt);   // the ridge's shadow: the farthest the roofed volume reaches
+      const saz = (sun.azi + 180) * RAD, kz = shadowLen(1, sun.alt), sxz = Math.sin(saz) * kz, syz = Math.cos(saz) * kz;
       const pl = planOf();
       const cornersOf = r => [[r[0], r[1]], [r[2], r[1]], [r[2], r[3]], [r[0], r[3]]];
-      /* every piece throws its own shadow; one path, filled once, so where
-         they overlap the ground does not darken twice */
-      const partHulls = pl.boxes.map(r => { const c = cornersOf(r).map(pt => rot(pt[0], pt[1], beta)); return hull(c.concat(c.map(p => [p[0] + ox, p[1] + oy]))); });
+      /* every roof piece throws the shadow of its own prism, ground to roof;
+         one path, filled once, so where they overlap the ground does not
+         darken twice */
+      const roofPts = [];   // each roof corner: where it stands, where its shadow falls, its height
+      const partHulls = RM.pieces.map(pc => { const pts = [];
+        pc.poly.forEach(q => { const w = rot(q[0], q[1], beta), z = RM.zOf(pc.f, q[0], q[1]), sh = [w[0] + sxz * z, w[1] + syz * z]; pts.push(w, sh); roofPts.push([w, sh, z]); });
+        return hull(pts); });
       const scs = pl.boxes.reduce((acc, r) => acc.concat(cornersOf(r).map(pt => rot(pt[0], pt[1], beta))), []);
-      const hp = hull(scs.concat(scs.map(p => [p[0] + ox, p[1] + oy])));   // the whole shadow's reach, for its label
+      const hp = hull(scs.concat(roofPts.map(q => q[1])));   // the whole shadow's reach, for its label
       ctx.save();
       ringPath(ring(R * 0.985, 0)); ctx.clip();
       ctx.beginPath();
@@ -4176,8 +4253,8 @@ function buildSite(host) {
       ctx.fillStyle = 'rgba(20,23,26,.13)'; ctx.fill('nonzero');
       stroke(ctx, pl.boxes.length > 1 ? 'rgba(20,23,26,.2)' : 'rgba(20,23,26,.35)', 1); ctx.stroke();
       ctx.restore();
-      let far = scs[0], best = -1e9;
-      scs.forEach(p => { const d = p[0] * ox + p[1] * oy; if (d > best) { best = d; far = p; } });
+      let far = scs[0], ox = 0, oy = 0, best = -1e9;   // the roof corner whose shadow falls farthest, and that shadow
+      roofPts.forEach(([w, sh]) => { const d = sh[0] * sxz + sh[1] * syz; if (d > best) { best = d; far = w; ox = sh[0] - w[0]; oy = sh[1] - w[1]; } });
       /* The shadow's tip, or where the shadow leaves the ring when it runs
          past it — walked back along the shadow itself, in plan metres. Its
          length is labelled there at the end, once every line is down. */
@@ -4221,8 +4298,6 @@ function buildSite(host) {
           stroke(ctx, color, 2.2, [7, 5]); ctx.stroke();
         });
       };
-      drawBoxOutline(Li, Di, OI.az - 180, Hopt, GREEN);
-
       /* The student's plan, extruded to its height: the outline's walls that
          face the camera, farthest first; on each wall still in the sun, the
          shadow the other pieces cast on it now; then the top over them. */
@@ -4237,9 +4312,9 @@ function buildSite(host) {
       const wins = winList();
       /** One wall's window: solid with its panes on a wall the camera sees,
           dashed at its true place on one behind the volume. */
-      const drawWindow = (sg, w, hid) => {
+      const drawWindow = (sg, w, hid) => w.rows.forEach(r => {   // one per storey
         const u0 = w.uc - w.w / 2, u1 = w.uc + w.w / 2;
-        const q = [onSeg(sg, u0, w.sill), onSeg(sg, u1, w.sill), onSeg(sg, u1, w.head), onSeg(sg, u0, w.head)];
+        const q = [onSeg(sg, u0, r.sill), onSeg(sg, u1, r.sill), onSeg(sg, u1, r.head), onSeg(sg, u0, r.head)];
         outline(q, true);
         ctx.fillStyle = hid ? 'rgba(37,99,235,.05)' : 'rgba(219,234,254,.92)'; ctx.fill();
         stroke(ctx, hid ? 'rgba(37,99,235,.6)' : BLUE, hid ? 1.1 : 1.4, hid ? [5, 4] : null); ctx.stroke();
@@ -4247,10 +4322,10 @@ function buildSite(host) {
         const n = Math.max(1, Math.round(w.w / 1.2));   // one pane to about every 1.2 m
         stroke(ctx, BLUE, 1);
         for (let k = 1; k < n; k++) {
-          const u = u0 + k * w.w / n, a = onSeg(sg, u, w.sill), b = onSeg(sg, u, w.head);
+          const u = u0 + k * w.w / n, a = onSeg(sg, u, r.sill), b = onSeg(sg, u, r.head);
           seg(ctx, a[0], a[1], b[0], b[1]); desk.line(a[0], a[1], b[0], b[1]);
         }
-      };
+      });
       /** The shade the other pieces cast on a sunlit wall now: per column,
           the height the shadow climbs to, found by halving; drawn as one
           outline per shaded run so its edge reads as a line, not steps. */
@@ -4284,42 +4359,65 @@ function buildSite(host) {
           i = j + 1;
         }
       };
+      /* every face the camera sees, farthest first: the walls up to the
+         roof's profile along them (a gable's triangle, a shed's high wall),
+         the step walls where the roof changes height, and the roof planes
+         in the Roof tab's colour, each with its eaves, ridges, hips and
+         valleys — solid, as on every other page; the optimum is drawn over
+         them, dashed, so the two volumes still read against each other. */
       const drawPlan = hgt => {
-        pl.segs.map(sg => {
-          const nW = rot(sg.n[0], sg.n[1], beta), a = rot(sg.a[0], sg.a[1], beta), b = rot(sg.b[0], sg.b[1], beta);
-          return { sg, nW, a, b, depth:(a[0] + b[0] + a[1] + b[1]) / 2 };
-        }).filter(w => w.nW[0] * camDir.x + w.nW[1] * camDir.y > 1e-6)
-          .sort((p, q) => q.depth - p.depth)
-          .forEach(w => {
-            const q = [proj(w.a[0], w.a[1], 0), proj(w.b[0], w.b[1], 0), proj(w.b[0], w.b[1], hgt), proj(w.a[0], w.a[1], hgt)];
-            outline(q, true);
-            const ns = w.sg.n[1] !== 0;   // local north/south walls a touch darker, as the bar always drew them
-            ctx.fillStyle = wallFill(ns ? 0.14 : 0.08, ns ? 0.82 : 1);
-            ctx.fill();
-            stroke(ctx, CH.ink, 1.4); ctx.stroke();
-            /* the wall's own window, before any nearer wall covers it and
-               under the shade that falls on it */
-            const wn = wins.find(o => o.sg === w.sg);
-            if (wn) drawWindow(w.sg, wn.w, false);
-            if (pl.boxes.length > 1 && sun.alt > 0.5 && w.sg.n[0] * sunL[0] + w.sg.n[1] * sunL[1] > 0) castShade(w, hgt);
-          });
-        ctx.beginPath();
-        pl.cells.forEach(c => {
-          cornersOf(c).map(pt => at(pt[0], pt[1], beta, hgt)).forEach((q, i) => i ? ctx.lineTo(q[0], q[1]) : ctx.moveTo(q[0], q[1]));
-          ctx.closePath();
+        const faces = [];
+        const dep = pts => pts.reduce((a, q) => { const w = rot(q[0], q[1], beta); return a + w[0] + w[1] - q[2]; }, 0) / pts.length;
+        RM.walls.forEach(wl => {
+          const sg = wl.sg;
+          if (!segSeen(sg)) return;
+          const P3 = (u, z) => [sg.a[0] + (sg.b[0] - sg.a[0]) * u / sg.len, sg.a[1] + (sg.b[1] - sg.a[1]) * u / sg.len, z];
+          faces.push({ sg, a:rot(sg.a[0], sg.a[1], beta), b:rot(sg.b[0], sg.b[1], beta), ns:sg.n[1] !== 0,
+            pts:[P3(0, 0), P3(sg.len, 0)].concat(wl.prof.slice().reverse().map(q => P3(q[0], q[1]))) });
         });
-        ctx.fillStyle = roofFill(0.05, 1); ctx.fill('nonzero');
-        stroke(ctx, CH.ink, 2);
-        pl.segs.forEach(sg => { const a = at(sg.a[0], sg.a[1], beta, hgt), b = at(sg.b[0], sg.b[1], beta, hgt); seg(ctx, a[0], a[1], b[0], b[1]); desk.line(a[0], a[1], b[0], b[1]); });
+        RM.steps.forEach(st => {
+          const nW = rot(st.n[0], st.n[1], beta);
+          if (nW[0] * camDir.x + nW[1] * camDir.y <= 1e-6) return;
+          const P3 = (u, z) => st.ax === 'x' ? [st.a[0], st.a[1] + u, z] : [st.a[0] + u, st.a[1], z];
+          faces.push({ ns:st.n[1] !== 0, pts:st.prof.map(q => P3(q[0], q[1])).concat(st.prof.slice().reverse().map(q => P3(q[0], q[2]))) });
+        });
+        RM.pieces.forEach(pc => {
+          const f = pc.f, nW = rot(-RM.t * f.a, -RM.t * f.b, beta);
+          if (nW[0] * camDir.x + nW[1] * camDir.y + 1 <= 1e-6) return;   // a slope turned away from the camera
+          faces.push({ pc, pts:pc.poly.map(q => [q[0], q[1], RM.zOf(f, q[0], q[1])]) });
+        });
+        faces.sort((p, q) => dep(q.pts) - dep(p.pts)).forEach(fc => {
+          const scr = fc.pts.map(q => at(q[0], q[1], beta, q[2]));
+          outline(scr, true);
+          if (fc.pc) {
+            const f = fc.pc.f, kk = ROOF.n === 0 ? 1 : 0.87 + 0.11 * f.b + 0.05 * f.a;
+            ctx.fillStyle = opaque(roofFill(0.2 + 0.3 * (1 - kk), kk)); ctx.fill();
+            stroke(ctx, ctx.fillStyle, 1); ctx.stroke();
+            stroke(ctx, CH.ink, 1.6);
+            fc.pc.edges.forEach(e => { const a = at(e[0][0], e[0][1], beta, RM.zOf(f, e[0][0], e[0][1])), b = at(e[1][0], e[1][1], beta, RM.zOf(f, e[1][0], e[1][1]));
+              seg(ctx, a[0], a[1], b[0], b[1]); desk.line(a[0], a[1], b[0], b[1]); });
+            return;
+          }
+          ctx.fillStyle = opaque(wallFill(fc.ns ? 0.14 : 0.08, fc.ns ? 0.82 : 1));   // local north/south walls a touch darker, as the bar always drew them
+          ctx.fill();
+          stroke(ctx, CH.ink, 1.4); ctx.stroke();
+          if (!fc.sg) return;
+          /* the wall's own windows, before any nearer face covers them and
+             under the shade that falls on them */
+          const wn = wins.find(o => o.sg === fc.sg);
+          if (wn) drawWindow(fc.sg, wn.w, false);
+          if (pl.boxes.length > 1 && sun.alt > 0.5 && fc.sg.n[0] * sunL[0] + fc.sg.n[1] * sunL[1] > 0) castShade(fc, hgt);
+        });
       };
       drawPlan(Hgt);
-      desk.area(hull(scs.map(p => proj(p[0], p[1], 0)).concat(scs.map(p => proj(p[0], p[1], Hgt)))));   // labels keep off the volume
+      desk.area(hull(scs.map(p => proj(p[0], p[1], 0)).concat(roofPts.map(q => proj(q[0][0], q[0][1], q[2])))));   // labels keep off the volume
 
       /* The windows, as sized on Windows & Shading: the ones on walls facing
          the camera went on with their walls; the ones behind show dashed at
          their true place, as on Windows & Shading, so no window vanishes
          behind the volume. */
       wins.forEach(o => { if (!segSeen(o.sg)) drawWindow(o.sg, o.w, true); });
+      drawBoxOutline(Li, Di, OI.az - 180, Hopt, GREEN);   // the optimum over the volume, dashed
 
       /* Dimension lines on the two sides of the plan's overall extent that
          face the camera: extension lines, the line 0.9 m out, architect's
@@ -4380,6 +4478,11 @@ function buildSite(host) {
       desk.block(4, ry - 9, 12 + desk.measure(readout, rf).w, ry + 9);
       const rule = lat < 0 ? 'Larger windows face north, smaller ones south' : 'Larger windows face south, smaller ones north';
       label(ctx, rule, 8, ry + 17, BLUE, F(narrow ? 10 : 10.5, '600'), 'left', 'middle');
+      /* the roof it carries, as set on Roof */
+      const roofTxt = t('Roof, as set on Roof') + ': ' + t(['Flat', 'Shed', 'Gable', 'Hip'][ROOF.n] || 'Flat') + (ROOF.n ? ' · ' + fmt(ROOF.th, 0) + '°' : '')
+        + ' · ' + t('ridge') + ' ' + fmt(Rdg, 1) + ' m' + (finishOf(ROOF.col) ? ' · ' + (LANG === 'pt' ? finishOf(ROOF.col).pt : finishOf(ROOF.col).en) : '');
+      label(ctx, roofTxt, 8, ry + 34, CH.ink2, F(narrow ? 9.5 : 10, '500'), 'left', 'middle');
+      desk.block(4, ry + 25, 12 + desk.measure(roofTxt, F(narrow ? 9.5 : 10, '500')).w, ry + 43);
       desk.block(4, ry + 9, 12 + desk.measure(rule, F(10.5, '600')).w, ry + 26);
       /* Five badges down the right edge, or in one row across the top of a
          phone-width canvas. */
@@ -4437,10 +4540,11 @@ function buildSite(host) {
         const outer = segsF.filter(sg => !inPatio(sg)), pool = outer.length ? outer : segsF;
         const sg = pool.reduce((p, q) => q.len > p.len ? q : p);
         const ws = wins.filter(o => o.w.f === f);
+        const nFl = ws.length ? ws[0].w.n : 1, perFl = nFl > 1 ? ' ' + t('on each floor') : '';
         const what = !ws.length ? t('no window')
-          : ws.length === 1 ? t('window') + ' ' + fmt(ws[0].w.w, 1) + ' × ' + fmt(ws[0].w.h, 1) + ' m'
-          : ws.length <= 3 ? ws.length + ' ' + t('windows') + ' ' + ws.map(o => fmt(o.w.w, 1)).join(' + ') + ' × ' + fmt(ws[0].w.h, 1) + ' m'
-          : ws.length + ' ' + t('windows') + ' · ' + fmt(ws.reduce((acc, o) => acc + o.w.area, 0), 1) + ' m²';
+          : ws.length === 1 ? (nFl > 1 ? nFl + ' ' + t('windows') : t('window')) + ' ' + fmt(ws[0].w.w, 1) + ' × ' + fmt(ws[0].w.h, 1) + ' m' + (nFl > 1 ? ', ' + t('one per floor') : '')
+          : ws.length <= 3 ? ws.length + ' ' + t('windows') + ' ' + ws.map(o => fmt(o.w.w, 1)).join(' + ') + ' × ' + fmt(ws[0].w.h, 1) + ' m' + perFl
+          : ws.length * nFl + ' ' + t('windows') + ' · ' + fmt(ws.reduce((acc, o) => acc + o.w.area, 0), 1) + ' m²';
         const txt = faceDir(f) + ' · ' + what + (ws.length ? ' · ' + fmt(OPEN[f].wwr * 100, 0) + ' %' : '');
         const font = F(10, '600'), col = ws.length ? BLUE : CH.muted;
         const hid = !segSeen(sg), zt = hid ? Hgt : 0;
@@ -4514,7 +4618,7 @@ function buildSite(host) {
       ['Albedo fit (0–100)', albedoFit() === null ? '' : albedoFit()]]
       .concat(WIN_KEYS.map(f => { const ws = winList().filter(o => o.w.f === f);
         return ['Windows ' + f + (f === 'S' ? ' (main facade side)' : '') + ' — face ' + COMPASS8_EN[Math.round(faceAz(f) / 45) % 8] + ', w × h (m)',
-          ws.length ? ws.map(o => +o.w.w.toFixed(2) + ' × ' + +o.w.h.toFixed(2)).join(' + ') : 'none']; }))
+          ws.length ? ws.map(o => (o.w.n > 1 ? o.w.n + ' × ' : '') + +o.w.w.toFixed(2) + ' × ' + +o.w.h.toFixed(2)).join(' + ') : 'none']; }))
       .concat(WIN_KEYS.map(f => ['Glass ' + f + ' asked by its WWR (m²)', +glassOf(f).toFixed(2)]))
       .concat([['Window fit (0–100)', winAim() ? winAim().fit : ''],
       ['Plan form', G.form || 'rect'],
@@ -5358,7 +5462,7 @@ function buildOpenings(host) {
   const overallScore = () => FACES.reduce((s, f) => s + facadeScore(f), 0) / FACES.length;
   SCORES.openings = () => ({ 'WWR fit /100':Math.round(overallScore()),
     'Shading fit /100 by facade':Object.fromEntries(FACES.map(f => [f, shadingScore(f) === null ? null : Math.round(shadingScore(f))])),
-    'Windows by facade':Object.fromEntries(FACES.map(f => [f + ' (faces ' + COMPASS8_EN[Math.round(faceAz(f) / 45) % 8] + ')', winsOf(f).length])) });
+    'Windows by facade':Object.fromEntries(FACES.map(f => [f + ' (faces ' + COMPASS8_EN[Math.round(faceAz(f) / 45) % 8] + ')', winCount(f)])) });
 
   /* --- the workbench: the side under study, its window and its shading on
      the left; the model and its readings in the middle; the sunspace and the
@@ -5370,7 +5474,7 @@ function buildOpenings(host) {
   const props = bench.appendChild(el('div', { class:'props' }));
   { const [wwrLo0, wwrHi0] = wwrRange(curFace);
   host.appendChild(hint('open-wwr',
-    'WWR bands follow Ching &amp; Shapiro’s classification (low &lt;10%, moderate 10–20%, high 20–30%, very high &gt;30%; p.242) read against Lechner’s orientation guidance — south takes the most glass, north the least of the sunlit faces, and east/west are minimised where the climate leans hot (pp.130–132, 416). The band shown for %1 in this climate is <b>%2–%3%</b>. North is held to 5–10 % and starts at 5 %: it takes almost no winter sun and loses heat all year. That is this app’s bioclimatic choice, not a rule of the SCE — the regulation sets no maximum for north glass; it exempts north-quadrant glazing, and any space whose glazing is at most 5 % of its <i>floor</i> area, from the solar-factor requirement (Portaria n.º 138-I/2021). The RGEU sets the floor instead: every room needs openings of at least 1/10 of its floor area, 1.08 m² at the least (art. 71.º), and the reading for the north side says how many rooms its glass can serve. It is this app’s own synthesis across sources, not a single citable number — treat it as a target to aim for, not a pass/fail test. Each side is judged by the way it really faces once the plan is turned on Site, and its WWR applies to every wall of the plan on that side — a wing’s, a recess’s, a patio’s. The WWR fit badge averages this test across the four sides.',
+    'WWR bands follow Ching &amp; Shapiro’s classification (low &lt;10%, moderate 10–20%, high 20–30%, very high &gt;30%; p.242) read against Lechner’s orientation guidance — south takes the most glass, north the least of the sunlit faces, and east/west are minimised where the climate leans hot (pp.130–132, 416). The band shown for %1 in this climate is <b>%2–%3%</b>. North is held to 5–10 % and starts at 5 %: it takes almost no winter sun and loses heat all year. That is this app’s bioclimatic choice, not a rule of the SCE — the regulation sets no maximum for north glass; it exempts north-quadrant glazing, and any space whose glazing is at most 5 % of its <i>floor</i> area, from the solar-factor requirement (Portaria n.º 138-I/2021). The RGEU sets the floor instead: every room needs openings of at least 1/10 of its floor area, 1.08 m² at the least (art. 71.º), and the reading for the north side says how many rooms its glass can serve. It is this app’s own synthesis across sources, not a single citable number — treat it as a target to aim for, not a pass/fail test. Each side is judged by the way it really faces once the plan is turned on Site, and its WWR applies to every wall of the plan on that side — a wing’s, a recess’s, a patio’s. On two or three storeys that glass is shared equally between the floors: each wall takes one window per floor, all of one width, the sill and head measured from each floor, the head stopping 0.10 m under the floor above. The WWR fit badge averages this test across the four sides.',
     [t(faceName[curFace]), fmt(wwrLo0 * 100, 0), fmt(wwrHi0 * 100, 0)])); }
 
   const cFace = segCtl(null, FACES.map(f => ({ value:f, label:faceName[f] })), curFace,
@@ -5557,18 +5661,23 @@ function buildOpenings(host) {
     if (n === 1) return [rect.v1];
     return Array.from({ length:n }, (_, i) => rect.v0 + (rect.v1 - rect.v0) * (i / (n - 1)));
   }
-  /** One wall's window with its devices, in world metres. */
+  /** One wall's windows, one per storey, each with its own devices, in world metres. */
   const winGeo = (sg, w) => {
     const o = OPEN[w.f], n = sg.n;
-    const rect = { u0:w.uc - w.w / 2, u1:w.uc + w.w / 2, v0:w.sill, v1:Math.min(w.head, h0()) };
     const off = (p, d) => [p[0] + n[0] * d, p[1] + n[1] * d, p[2]];
-    const devs = [];
-    if (o.ovD > 0) ovPositions(o.ovN, rect).forEach(vt => devs.push({ kind:'ov', f:w.f,
-      pts:[onWall(sg, rect.u0, vt), onWall(sg, rect.u1, vt), off(onWall(sg, rect.u1, vt), o.ovD), off(onWall(sg, rect.u0, vt), o.ovD)] }));
-    if (o.finN > 0 && o.finD > 0) finPositions(o.finSide, o.finN, rect).forEach(uF => devs.push({ kind:'fin', f:w.f,
-      pts:[onWall(sg, uF, rect.v0), off(onWall(sg, uF, rect.v0), o.finD), off(onWall(sg, uF, rect.v1), o.finD), onWall(sg, uF, rect.v1)] }));
-    return { rect, devs, glass:[onWall(sg, rect.u0, rect.v0), onWall(sg, rect.u1, rect.v0), onWall(sg, rect.u1, rect.v1), onWall(sg, rect.u0, rect.v1)] };
+    const devs = [], glass = [];
+    w.rows.forEach(r => {
+      const rect = { u0:w.uc - w.w / 2, u1:w.uc + w.w / 2, v0:r.sill, v1:Math.min(r.head, h0()) };
+      if (o.ovD > 0) ovPositions(o.ovN, rect).forEach(vt => devs.push({ kind:'ov', f:w.f,
+        pts:[onWall(sg, rect.u0, vt), onWall(sg, rect.u1, vt), off(onWall(sg, rect.u1, vt), o.ovD), off(onWall(sg, rect.u0, vt), o.ovD)] }));
+      if (o.finN > 0 && o.finD > 0) finPositions(o.finSide, o.finN, rect).forEach(uF => devs.push({ kind:'fin', f:w.f,
+        pts:[onWall(sg, uF, rect.v0), off(onWall(sg, uF, rect.v0), o.finD), off(onWall(sg, uF, rect.v1), o.finD), onWall(sg, uF, rect.v1)] }));
+      glass.push([onWall(sg, rect.u0, rect.v0), onWall(sg, rect.u1, rect.v0), onWall(sg, rect.u1, rect.v1), onWall(sg, rect.u0, rect.v1)]);
+    });
+    return { devs, glass };
   };
+  /** Windows on one side: one per wall per storey. */
+  const winCount = f => winsOf(f).reduce((a, x) => a + x.w.n, 0);
 
   /** Average fraction of the sun a side's own overhang and fins keep off its
       windows across a day, by the profile-angle / wall-solar-azimuth method
@@ -5635,7 +5744,7 @@ function buildOpenings(host) {
     /* the RGEU floor under a small north glass: every room lit through
        openings of at least 1/10 of its floor, 1.08 m² at the least */
     if (bandKey(curFace) === 'N') {
-      const gl = winsOf(curFace).reduce((a, x) => a + x.w.glass, 0);
+      const gl = winsOf(curFace).reduce((a, x) => a + x.w.area, 0);
       pillWWR.textContent += ' · ' + t(fmt(gl, 1) + ' m² of glass lights at most ' + fmt(10 * gl, 0) + ' m² of rooms on this side, ' + Math.floor(gl / 1.08 + 1e-9) + ' at most (RGEU art. 71.º)');
     }
     const sc = shadingScore(curFace);
@@ -5740,11 +5849,13 @@ function buildOpenings(host) {
         stroke(ctx, CH.ink, 1.4); ctx.stroke();
         const wn = it.sg && wins.find(o => o.sg === it.sg);
         if (wn) {
-          const act = wn.w.f === curFace, gl = winGeo(it.sg, wn.w).glass;
-          poly(gl, act ? 'rgba(219,234,254,.95)' : 'rgba(219,234,254,.8)', act ? '#2563EB' : 'rgba(37,99,235,.75)', act ? 1.8 : 1.2);
-          const n = Math.max(1, Math.round(wn.w.w / 1.2));   // a pane to about every 1.2 m
-          stroke(ctx, act ? '#2563EB' : 'rgba(37,99,235,.6)', 0.9);
-          for (let k = 1; k < n; k++) { const a = proj(...gl[0].map((v, i) => v + (gl[1][i] - v) * k / n)), b = proj(...gl[3].map((v, i) => v + (gl[2][i] - v) * k / n)); seg(ctx, a[0], a[1], b[0], b[1]); }
+          const act = wn.w.f === curFace;
+          winGeo(it.sg, wn.w).glass.forEach(gl => {
+            poly(gl, act ? 'rgba(219,234,254,.95)' : 'rgba(219,234,254,.8)', act ? '#2563EB' : 'rgba(37,99,235,.75)', act ? 1.8 : 1.2);
+            const n = Math.max(1, Math.round(wn.w.w / 1.2));   // a pane to about every 1.2 m
+            stroke(ctx, act ? '#2563EB' : 'rgba(37,99,235,.6)', 0.9);
+            for (let k = 1; k < n; k++) { const a = proj(...gl[0].map((v, i) => v + (gl[1][i] - v) * k / n)), b = proj(...gl[3].map((v, i) => v + (gl[2][i] - v) * k / n)); seg(ctx, a[0], a[1], b[0], b[1]); }
+          });
         }
       });
       /* windows and devices on the walls turned away draw dashed at their
@@ -5752,7 +5863,7 @@ function buildOpenings(host) {
       wins.forEach(o => {
         if (segSeen(o.sg)) return;
         const g = winGeo(o.sg, o.w);
-        poly(g.glass, 'rgba(37,99,235,.04)', 'rgba(37,99,235,.55)', 1.1, [5, 4]);
+        g.glass.forEach(gl => poly(gl, 'rgba(37,99,235,.04)', 'rgba(37,99,235,.55)', 1.1, [5, 4]));
         g.devs.forEach(dv => poly(dv.pts, null, dv.kind === 'ov' ? 'rgba(217,119,6,.55)' : 'rgba(220,38,38,.55)', 1, [5, 4]));
       });
 
@@ -5792,7 +5903,7 @@ function buildOpenings(host) {
       // the readout, and the two badges, as on Site
       const o = OPEN[curFace];
       const sh = (o.ovD > 0 || o.finD > 0) ? shadeEffectiveness(curFace, 172).pct : null;
-      const nW = winsOf(curFace).length;
+      const nW = winCount(curFace);
       label(ctx, t(faceName[curFace]) + ' · ' + t('faces') + ' ' + faceDir(curFace) + ' · WWR ' + fmt(o.wwr * 100, 0) + '% · ' + nW + ' ' + t(nW === 1 ? 'window' : 'windows')
         + (sh !== null ? ' · ' + t('shading') + ' ' + fmt(sh, 0) + '%' : ''),
         8, narrow ? 72 : 12, CH.ink2, FM(narrow ? 9.5 : 11), 'left', 'middle');
@@ -5812,7 +5923,7 @@ function buildOpenings(host) {
     csv: () => {
       const rows = [['Facade side', 'Faces', 'Windows', 'Glass (m²)', 'WWR', 'Sill (m)', 'Head (m)', 'Overhang depth (m)', 'Overhang count', 'Fin depth (m)', 'Fin count', 'Fin side', 'WWR fit (0–100)', 'Shading fit (0–100)']];
       FACES.forEach(f => { const o = OPEN[f], ws = winsOf(f), sc = shadingScore(f);
-        rows.push([faceName[f], COMPASS8_EN[Math.round(faceAz(f) / 45) % 8], ws.length, +ws.reduce((a, x) => a + x.w.area, 0).toFixed(2), fmt(o.wwr, 2), fmt(o.sillZ, 2), fmt(o.headZ, 2),
+        rows.push([faceName[f], COMPASS8_EN[Math.round(faceAz(f) / 45) % 8], winCount(f), +ws.reduce((a, x) => a + x.w.area, 0).toFixed(2), fmt(o.wwr, 2), fmt(o.sillZ, 2), fmt(o.headZ, 2),
           fmt(o.ovD, 2), o.ovN, fmt(o.finD, 2), o.finN, o.finSide, Math.round(facadeScore(f)), sc === null ? '' : Math.round(sc)]); });
       rows.push(['Sunspace', SUNSP.on ? SUNSP.face : 'off', '', '', '', '', '', fmt(SUNSP.depth, 2), '', '', '', '', '', fmt(SUNSP.widthFrac, 2)]);
       rows.push(['Roof window size', RW_SIZES[RWIN.size].label]);
@@ -5884,15 +5995,17 @@ function buildOpenings(host) {
     const r = ocv.getBoundingClientRect(), FR = openFrame(openPanel.W, openPanel.H), px = clientX - r.left, py = clientY - r.top;
     if (kind === 'window' || kind === 'sill') {
       const wh = drag.wall, o = OPEN[curFace], inv = invOnWall(FR, px, py, wh.sg), len = wh.sg.len;
+      /* the glass is shared by the storeys: one window this size on each */
+      const nS = Math.max(1, G.fl), per = h0() / nS;
       if (kind === 'window') {
-        o.headZ = clamp(inv.z, o.sillZ + 0.3, h0() - 0.05);
+        o.headZ = clamp(inv.z, o.sillZ + 0.3, nS > 1 ? per - 0.1 : h0() - 0.05);
         const w = clamp(Math.abs(inv.u - len / 2) * 2, 0.6, len * 0.92);
-        o.wwr = clamp((w * (o.headZ - o.sillZ)) / (len * h0()), 0.05, 0.8);
+        o.wwr = clamp((w * (o.headZ - o.sillZ)) / (len * per), 0.05, 0.8);
         syncCtl(cHead, o.headZ, v => fmt(v, 2) + ' m');
       } else {
         const wOld = segWindow(wh.sg, G).w;   // hold the width — this handle only opens the sill down
         o.sillZ = clamp(inv.z, 0, Math.min(1.8, o.headZ - 0.3));
-        o.wwr = clamp((wOld * (o.headZ - o.sillZ)) / (len * h0()), 0.05, 0.8);
+        o.wwr = clamp((wOld * (segWindow(wh.sg, G).h)) / (len * per), 0.05, 0.8);
         syncCtl(cSill, o.sillZ, v => fmt(v, 2) + ' m');
       }
       syncCtl(cWWR, Math.round(o.wwr * 100), v => fmt(v, 0) + '%');
@@ -5990,8 +6103,12 @@ function buildVentilation(host) {
   const latN = Math.abs(lat);
 
   /* ---- terrain, wind + planting state (the plan's frame, metres) ---- */
-  let terrainKey = 'flat', windKey = 'moderate';
-  let showShadow = true, showAir = true;
+  /* what this page held before every page was rebuilt (a language switch,
+     a moved plot), kept while the site stays within 10 km: the ERA5 cell
+     the winds were read from is some 25–30 km across */
+  const K0 = KEEP.vent && havKm(KEEP.vent.lat, KEEP.vent.lon, lat, lon) <= 10 ? KEEP.vent : null;
+  let terrainKey = K0 ? K0.terrainKey : 'flat', windKey = K0 ? K0.windKey : 'moderate';
+  let showShadow = K0 ? K0.showShadow : true, showAir = K0 ? K0.showAir : true;
   const VEGETATION = SCENE.veg;   // {type, height, density, x, y} — shared, see SCENE
   const WALLS = SCENE.walls;      // {x, y, along:'x'|'y', height, length}
   /* Monthly wind, direction FROM in degrees plus speed at 10 m: the pattern
@@ -5999,9 +6116,9 @@ function buildVentilation(host) {
      below; default north at 3 m/s until judged. */
   /* The selected set of months — a cooling season to ventilate, deep winter
      to defend against gusts. Everything wind-driven reads the set. */
-  let windMonths = [6], windTouched = false;
+  let windMonths = K0 ? K0.windMonths.slice() : [6], windTouched = K0 ? K0.windTouched : false;
   const WIND_M = [];
-  for (let _m = 0; _m < 12; _m++) WIND_M.push({ dir:0, spd:3.0 });
+  for (let _m = 0; _m < 12; _m++) WIND_M.push(K0 ? Object.assign({}, K0.WIND_M[_m]) : { dir:0, spd:3.0 });
   /** Vector-mean wind of the set: directions add as vectors weighted by
      speed, so opposing months cancel instead of averaging to a
      meaningless middle. Dead calm everywhere yields 0 m/s from north. */
@@ -6023,7 +6140,7 @@ function buildVentilation(host) {
   /* Local tune, applied ON TOP of the monthly prevailing values: a valley
      channels, a street grid turns, a corner accelerates. The months keep
      their own mesoscale wind; this is the site's microscale answer. */
-  let tuneDir = 0, tuneSpd = 1.0;
+  let tuneDir = K0 ? K0.tuneDir : 0, tuneSpd = K0 ? K0.tuneSpd : 1.0;
   const tunedWind = () => {
     const sw = setWind();
     return { dir:(sw.dir + tuneDir + 360) % 360, spd:sw.spd * tuneSpd };
@@ -7176,14 +7293,14 @@ function buildVentilation(host) {
   /* ---- terrain & wind controls ---- */
   host.appendChild(section('Site exposure — coordinates and altitude',
     'Air thins with altitude, so the same wind pushes less; the eave height from Site drives the stack effect. Terrain and exposure modify the 10 m reference wind.'));
-  const cTerrain = segCtl('Terrain', [{ value:'flat', label:'Flat' }, { value:'rolling', label:'Rolling' }, { value:'hilly', label:'Hilly' }, { value:'mountainous', label:'Mountainous' }], 'flat',
+  const cTerrain = segCtl('Terrain', [{ value:'flat', label:'Flat' }, { value:'rolling', label:'Rolling' }, { value:'hilly', label:'Hilly' }, { value:'mountainous', label:'Mountainous' }], terrainKey,
     v => { terrainKey = v; refresh(); });
-  const cWind = segCtl('Wind exposure', [{ value:'sheltered', label:'Sheltered' }, { value:'moderate', label:'Moderate' }, { value:'exposed', label:'Exposed' }], 'moderate',
+  const cWind = segCtl('Wind exposure', [{ value:'sheltered', label:'Sheltered' }, { value:'moderate', label:'Moderate' }, { value:'exposed', label:'Exposed' }], windKey,
     v => { windKey = v; setExposure('done'); refresh(); });
   /* Exposure is the one judgement derivation cannot make for the student:
      each successful derivation turns its control red until an option is
      picked, then green. */
-  let exposureState = 'idle';
+  let exposureState = K0 && K0.exposureState ? K0.exposureState : 'idle';
   const expoPill = el('span', { class:'pill bad', text:'' });
   expoPill.style.display = 'none';
   function setExposure(st) {
@@ -7204,7 +7321,10 @@ function buildVentilation(host) {
   const deriveStatus = el('span', { class:'fieldstatus', text:'' });
   host.appendChild(controls([deriveBtn, deriveStatus]));
   host.appendChild(el('div', { class:'limitrow' }, [expoPill]));
-  let derivedRelief = null, derivedWindSrc = '';
+  if (exposureState !== 'idle') setExposure(exposureState);   // as judged before the pages were rebuilt
+  let derivedRelief = K0 ? K0.derivedRelief : null, derivedWindSrc = K0 ? K0.derivedWindSrc : '';
+  KEEPERS.push(() => { KEEP.vent = { lat, lon, terrainKey, windKey, showShadow, showAir, windMonths:windMonths.slice(), windTouched,
+    WIND_M:WIND_M.map(w => Object.assign({}, w)), tuneDir, tuneSpd, derivedRelief, derivedWindSrc, exposureState }; });
   /** Terrain class from the relief around the site (same two public elevation
       services as the altitude lookup, one batched request each over a ~2 km
       window), plus one prevailing wind per month from the ERA5 hourly
@@ -7306,8 +7426,8 @@ function buildVentilation(host) {
   deriveBtn.addEventListener('click', deriveFromSite);
   host.appendChild(hint('vent-terrain',
     'Open (flat) ground slows the wind least; broken and mountainous ground shelters more (power-law exponent 0.14–0.28). Exposure multiplies it again: sheltered 0.6, moderate 1.0, exposed 1.4 (Olgyay, pp.37–40; DeKay & Brown, Strategy 85). Terrain and twelve monthly prevailing winds derive from these coordinates automatically on entry (ERA5 reanalysis via Open-Meteo — like the altitude lookup, only the coordinates leave the browser); the button re-runs it. Exposure stays manual: it reads the immediate surroundings, which no gridded product sees.'));
-  const cShadow = checkCtl('Show sun shadows', true, v => { showShadow = v; refresh(); });
-  const cAir = checkCtl('Show cross-ventilation paths', true, v => { showAir = v; refresh(); });
+  const cShadow = checkCtl('Show sun shadows', showShadow, v => { showShadow = v; refresh(); });
+  const cAir = checkCtl('Show cross-ventilation paths', showAir, v => { showAir = v; refresh(); });
   viewBox.appendChild(cShadow); viewBox.appendChild(cAir);
 
   /* ---- turn the model: same facade-picking camera as Windows & Shading ---- */
@@ -7654,17 +7774,22 @@ function buildVentilation(host) {
     const wallSeen = n => camS * (-n[0] - n[1]) > 1e-6;
     const wins = M.pl.segs.map(sg => ({ sg, w:segWindow(sg, G) })).filter(o => o.w);
     const onWallV = (sg, u, v) => [sg.a[0] + (sg.b[0] - sg.a[0]) * u / sg.len, sg.a[1] + (sg.b[1] - sg.a[1]) * u / sg.len, v];
+    /* one window per storey, each with its own devices */
     const devsOf = (sg, w) => {
-      const o = OPEN[w.f], n = sg.n, u0 = w.uc - w.w / 2, u1 = w.uc + w.w / 2, v0 = w.sill, v1 = Math.min(w.head, H0), out = [];
+      const o = OPEN[w.f], n = sg.n, u0 = w.uc - w.w / 2, u1 = w.uc + w.w / 2, out = [], glass = [];
       const off = (p, d) => [p[0] + n[0] * d, p[1] + n[1] * d, p[2]];
-      if (o.ovD > 0) (o.ovN <= 1 ? [v1] : Array.from({ length:o.ovN }, (_, i) => v0 + (v1 - v0) * (i / (o.ovN - 1))))
-        .forEach(vt => out.push({ ov:true, pts:[onWallV(sg, u0, vt), onWallV(sg, u1, vt), off(onWallV(sg, u1, vt), o.ovD), off(onWallV(sg, u0, vt), o.ovD)] }));
-      if (o.finN > 0 && o.finD > 0) {
-        const uc = (u0 + u1) / 2, lo = o.finSide === 'right' ? uc : u0, hi = o.finSide === 'left' ? uc : u1;
-        (o.finN === 1 ? [o.finSide === 'both' ? (lo + hi) / 2 : (o.finSide === 'right' ? hi : lo)] : Array.from({ length:o.finN }, (_, i) => lo + (hi - lo) * (i / (o.finN - 1))))
-          .forEach(uF => out.push({ ov:false, pts:[onWallV(sg, uF, v0), off(onWallV(sg, uF, v0), o.finD), off(onWallV(sg, uF, v1), o.finD), onWallV(sg, uF, v1)] }));
-      }
-      return { glass:[onWallV(sg, u0, v0), onWallV(sg, u1, v0), onWallV(sg, u1, v1), onWallV(sg, u0, v1)], devs:out };
+      w.rows.forEach(r => {
+        const v0 = r.sill, v1 = Math.min(r.head, H0);
+        if (o.ovD > 0) (o.ovN <= 1 ? [v1] : Array.from({ length:o.ovN }, (_, i) => v0 + (v1 - v0) * (i / (o.ovN - 1))))
+          .forEach(vt => out.push({ ov:true, pts:[onWallV(sg, u0, vt), onWallV(sg, u1, vt), off(onWallV(sg, u1, vt), o.ovD), off(onWallV(sg, u0, vt), o.ovD)] }));
+        if (o.finN > 0 && o.finD > 0) {
+          const uc = (u0 + u1) / 2, lo = o.finSide === 'right' ? uc : u0, hi = o.finSide === 'left' ? uc : u1;
+          (o.finN === 1 ? [o.finSide === 'both' ? (lo + hi) / 2 : (o.finSide === 'right' ? hi : lo)] : Array.from({ length:o.finN }, (_, i) => lo + (hi - lo) * (i / (o.finN - 1))))
+            .forEach(uF => out.push({ ov:false, pts:[onWallV(sg, uF, v0), off(onWallV(sg, uF, v0), o.finD), off(onWallV(sg, uF, v1), o.finD), onWallV(sg, uF, v1)] }));
+        }
+        glass.push([onWallV(sg, u0, v0), onWallV(sg, u1, v0), onWallV(sg, u1, v1), onWallV(sg, u0, v1)]);
+      });
+      return { glass, devs:out };
     };
     const items = [], wallCol = ns => opaque(wallFill(ns ? 0.14 : 0.08, ns ? 0.85 : 1));
     M.walls.forEach(wl => {
@@ -7700,13 +7825,13 @@ function buildVentilation(host) {
       const wn = it.sg && wins.find(o => o.sg === it.sg);
       if (wn) {
         const lit = sun.alt > 0 && it.sg.n[0] * sunL[0] + it.sg.n[1] * sunL[1] > 0;
-        poly(devsOf(it.sg, wn.w).glass, lit ? 'rgba(191,219,254,.95)' : 'rgba(219,234,254,.85)', lit ? '#2563EB' : CH.ink2, lit ? 1.8 : 1.2);
+        devsOf(it.sg, wn.w).glass.forEach(gl => poly(gl, lit ? 'rgba(191,219,254,.95)' : 'rgba(219,234,254,.85)', lit ? '#2563EB' : CH.ink2, lit ? 1.8 : 1.2));
       }
     });
     wins.forEach(o => {
       if (wallSeen(o.sg.n)) return;
       const g2 = devsOf(o.sg, o.w);
-      poly(g2.glass, 'rgba(37,99,235,.04)', 'rgba(37,99,235,.5)', 1, [5, 4]);
+      g2.glass.forEach(gl => poly(gl, 'rgba(37,99,235,.04)', 'rgba(37,99,235,.5)', 1, [5, 4]));
     });
 
     /* ---- attached sunspace from Windows & Shading (a vented buffer, not an opening) ---- */
@@ -7883,7 +8008,7 @@ function buildVentilation(host) {
     ['S','N','E','W'].forEach(f => {
       const o = OPEN[f], ws = planModel(G).segs.filter(sg => segFace(sg) === f).map(sg => segWindow(sg, G)).filter(Boolean);
       rows.push([f + ' side faces', COMPASS8_EN[Math.round(faceAzV(f) / 45) % 8]],
-        [f + ' windows w×h (m)', ws.length ? ws.map(w => w.w.toFixed(2) + '×' + (Math.min(w.head, h0live()) - w.sill).toFixed(2)).join(' + ') : 'none'],
+        [f + ' windows w×h (m)', ws.length ? ws.map(w => (w.n > 1 ? w.n + '×' : '') + w.w.toFixed(2) + '×' + (Math.min(w.head, h0live()) - w.sill).toFixed(2)).join(' + ') : 'none'],
         [f + ' WWR', +o.wwr.toFixed(2)], [f + ' overhang (m×n)', o.ovD.toFixed(2) + '×' + o.ovN],
         [f + ' fins (m×n×side)', o.finD.toFixed(2) + '×' + o.finN + '×' + o.finSide],
         [f + ' openable area (m²)', +openArea(f).toFixed(2)]);
@@ -8397,11 +8522,18 @@ function exportModel() {
     const rect = (a0, a1, b0, b1) => [[P(a0, b0), P(a1, b0), P(a1, b1), P(a0, b1)], n];
     const tag = FNAME[f] + (total[f] > 1 ? ' ' + (++count[f]) : '');
     const wn = segWindow(sg, G), faces = [];
-    const v0 = wn ? wn.sill : H0, v1 = wn ? Math.min(wn.head, H0) : H0;
-    if (wn && v1 > v0 + 0.01) {
+    /* one window per storey: the wall in bands, each window's jambs cut out */
+    const rows = wn ? wn.rows.map(r => [r.sill, Math.min(r.head, H0)]).filter(r => r[1] > r[0] + 0.01) : [];
+    if (rows.length) {
       const u0 = wn.uc - wn.w / 2, u1 = wn.uc + wn.w / 2;
-      faces.push(rect(0, sg.len, 0, v0), rect(0, u0, v0, v1), rect(u1, sg.len, v0, v1), rect(0, sg.len, v1, H0));
-      windowAndShading(P, n, along, wn.uc, wn.w, v0, v1, OPEN[f], f, tag);
+      let z = 0;
+      rows.forEach(([v0, v1], k) => {
+        if (v0 > z + 1e-4) faces.push(rect(0, sg.len, z, v0));
+        faces.push(rect(0, u0, v0, v1), rect(u1, sg.len, v0, v1));
+        windowAndShading(P, n, along, wn.uc, wn.w, v0, v1, OPEN[f], f, tag + (rows.length > 1 ? ' floor ' + k : ''));
+        z = v1;
+      });
+      if (H0 > z + 1e-4) faces.push(rect(0, sg.len, z, H0));
     } else faces.push(rect(0, sg.len, 0, H0));
     /* above the eaves the wall follows the roof: one strip per step of its
        profile — a gable's triangle, a shed's high wall, a valley's notch */
@@ -8756,6 +8888,70 @@ const IPMA_NODATA = {
   'IPMA, Porto/Serra do Pilar, 1981–2010': 'No embedded values for Serra do Pilar yet — use Porto/Pedras Rubras, 20 km away on the coast.'
 };
 
+/* --- where the normals come from, for any coordinates: the setup screen and
+   a plot moved on Environmental read them the same way, in the same order —
+   the embedded IPMA station within 5 km; where there is none, the nearest
+   stations blended; the web reanalysis only on request. Mainland, Madeira
+   and the Azores never mix. */
+const havKm = (la1, lo1, la2, lo2) => {
+  const r = 6371, dLa = (la2 - la1) * RAD, dLo = (lo2 - lo1) * RAD;
+  const a = Math.sin(dLa / 2) * Math.sin(dLa / 2)
+    + Math.cos(la1 * RAD) * Math.cos(la2 * RAD) * Math.sin(dLo / 2) * Math.sin(dLo / 2);
+  return 2 * r * Math.asin(Math.min(1, Math.sqrt(a)));
+};
+const NEAR_KM = 5;
+const shortName = key => (key.split(', ')[1] || key);
+const sameIsland = (lo, v) => lo > -10.5 ? v.lon > -10.5 : lo < -20 ? v.lon < -20 : (v.lon <= -10.5 && v.lon >= -20);
+const nearestStation = (la, lo) => Object.entries(IPMA_DATA).filter(([, v]) => sameIsland(lo, v))
+  .map(([k, v]) => ({ key:k, v, d:havKm(la, lo, v.lat, v.lon) })).sort((a, b) => a.d - b.d)[0] || null;
+/** Up to three embedded stations round the point, weighted by inverse
+    square distance: the same 1981–2010 normals, nothing invented; null
+    beyond 300 km, where no blend is honest. */
+function blendAt(la, lo) {
+  const pool = Object.entries(IPMA_DATA).filter(([, v]) => sameIsland(lo, v))
+    .map(([k, v]) => ({ name:shortName(k), d:havKm(la, lo, v.lat, v.lon), t:v.t, p:v.p, alt:v.alt }))
+    .sort((a, b) => a.d - b.d).slice(0, 3);
+  if (!pool.length || pool[0].d > 300) return null;
+  const ws = pool.map(e => e.d < 1e-6 ? 1e12 : 1 / (e.d * e.d)), wSum = ws.reduce((a, b) => a + b, 0);
+  const mix = k => Array.from({ length:12 }, (_, m) => +(pool.reduce((a, e, i) => a + ws[i] * e[k][m], 0) / wSum).toFixed(1));
+  return { t:mix('t'), p:mix('p'), alt:Math.round(pool.reduce((a, e, i) => a + ws[i] * e.alt, 0) / wSum), who:pool.map(e => e.name + ' ' + Math.round(e.d) + ' km').join(' · ') };
+}
+/** The 1991–2020 daily reanalysis at the point (Open-Meteo), meaned into
+    twelve monthly pairs: daily mean temperature, else (max + min) / 2. */
+async function webNormalsAt(la, lo) {
+  const ctrl = {};
+  try { if (typeof AbortSignal !== 'undefined' && AbortSignal.timeout) ctrl.signal = AbortSignal.timeout(60000); } catch (e) {}
+  const base = 'https://archive-api.open-meteo.com/v1/archive?latitude=' + la.toFixed(3) + '&longitude=' + lo.toFixed(3) + '&timezone=auto';
+  const getDaily = async vars => (await (await fetch(base + '&start_date=1991-01-01&end_date=2020-12-31&daily=' + vars, ctrl)).json()).daily;
+  let d = await getDaily('temperature_2m_mean,precipitation_sum');
+  let tm = d && d.temperature_2m_mean, pr = d && d.precipitation_sum, tt = d && d.time;
+  if (!Array.isArray(tm) || !Array.isArray(pr) || !Array.isArray(tt) || tt.length < 3000) {
+    d = await getDaily('temperature_2m_max,temperature_2m_min,precipitation_sum');
+    const mx = d && d.temperature_2m_max, mn = d && d.temperature_2m_min;
+    pr = d && d.precipitation_sum; tt = d && d.time;
+    if (!Array.isArray(mx) || !Array.isArray(mn) || !Array.isArray(pr) || !Array.isArray(tt) || tt.length < 3000) throw new Error('webvars');
+    tm = mx.map((v, i) => (typeof v === 'number' && typeof mn[i] === 'number') ? (v + mn[i]) / 2 : null);
+  }
+  const tS = Array.from({ length: 12 }, () => [0, 0]), pY = {};
+  for (let i = 0; i < tt.length; i++) {
+    const ds = String(tt[i]), m = +ds.slice(5, 7) - 1, y = +ds.slice(0, 4);
+    if (!(m >= 0 && m < 12) || !isFinite(y)) continue;
+    const tv = tm[i];
+    if (typeof tv === 'number' && isFinite(tv)) { tS[m][0] += tv; tS[m][1]++; }
+    const pv = pr[i];
+    if (typeof pv === 'number' && isFinite(pv)) { const k = y * 12 + m; if (!pY[k]) pY[k] = [0, 0]; pY[k][0] += pv; pY[k][1]++; }
+  }
+  const T = [], P = [];
+  for (let m = 0; m < 12; m++) {
+    if (!tS[m][1]) throw new Error('webmonths');
+    T.push(+(tS[m][0] / tS[m][1]).toFixed(1));
+    const yrs = Object.keys(pY).filter(k => (k % 12) === m && pY[k][1] >= 20).map(k => pY[k][0]);
+    if (!yrs.length) throw new Error('webmonths');
+    P.push(+(yrs.reduce((a, b) => a + b, 0) / yrs.length).toFixed(1));
+  }
+  return { t:T, p:P };
+}
+
 function initSetup() {
   const dl = $('#concList'), sel = $('#selNuts');
   dl.innerHTML = ''; sel.innerHTML = '';
@@ -8965,13 +9161,6 @@ function initSetup() {
      (daily mean preferred, (max+min)/2 fallback) — provisional by definition.
      Both fill only the twelve boxes; coordinates and altitude stay the
      building's, and the status line says what happened. */
-  const havKm = (la1, lo1, la2, lo2) => {
-    const r = 6371, dLa = (la2 - la1) * RAD, dLo = (lo2 - lo1) * RAD;
-    const a = Math.sin(dLa / 2) * Math.sin(dLa / 2)
-      + Math.cos(la1 * RAD) * Math.cos(la2 * RAD) * Math.sin(dLo / 2) * Math.sin(dLo / 2);
-    return 2 * r * Math.asin(Math.min(1, Math.sqrt(a)));
-  };
-  const shortName = key => (key.split(', ')[1] || key);
   /* The order the boxes fill in by themselves: the embedded IPMA station
      within 5 km of the coordinates; where there is none, the nearest
      stations blended; and, on request, the web reanalysis at the
@@ -8979,10 +9168,6 @@ function initSetup() {
      Normals typed by hand, or a station picked from the list, are the
      student's and are never overwritten; new coordinates re-run the order
      for everything else. */
-  const NEAR_KM = 5;
-  const sameIsland = (lo, v) => lo > -10.5 ? v.lon > -10.5 : lo < -20 ? v.lon < -20 : (v.lon <= -10.5 && v.lon >= -20);
-  const nearestStation = (la, lo) => Object.entries(IPMA_DATA).filter(([, v]) => sameIsland(lo, v))
-    .map(([k, v]) => ({ key:k, v, d:havKm(la, lo, v.lat, v.lon) })).sort((a, b) => a.d - b.d)[0] || null;
   let srcMode = clim.mode || (() => {
     const s0 = clim.source || '';
     if (!climComplete(clim)) return '';
@@ -9021,25 +9206,17 @@ function initSetup() {
   function blendNearest(showMsg) {
     const la = parseFloat(lat.value), lo = parseFloat(lon.value);
     if (!isFinite(la) || !isFinite(lo)) { if (showMsg) toast('Enter the site coordinates first'); return false; }
-    const pool = Object.entries(IPMA_DATA)
-      .filter(([, v]) => lo > -10.5 ? v.lon > -10.5 : lo < -20 ? v.lon < -20 : (v.lon <= -10.5 && v.lon >= -20))
-      .map(([k, v]) => ({ name: shortName(k), d: havKm(la, lo, v.lat, v.lon), t: v.t, p: v.p, alt: v.alt }))
-      .sort((a, b) => a.d - b.d).slice(0, 3);
     /* Nearby means nearby: beyond 300 km no blend is honest — every built
        place in Portugal keeps an embedded station well inside that radius
        (the remotest, Santa Maria, sits ~95 km from Ponta Delgada). */
-    if (!pool.length || pool[0].d > 300) {
+    const B = blendAt(la, lo);
+    if (!B) {
       if (showMsg && srcStatus) srcStatus.textContent = t('No embedded stations in this region — type the twelve pairs by hand');
       return false;
     }
-    const ws = pool.map(e => e.d < 1e-6 ? 1e12 : 1 / (e.d * e.d));
-    const wSum = ws.reduce((a, b) => a + b, 0);
-    for (let m = 0; m < 12; m++) {
-      inputs.t[m].value = (pool.reduce((a, e, i) => a + ws[i] * e.t[m], 0) / wSum).toFixed(1);
-      inputs.p[m].value = (pool.reduce((a, e, i) => a + ws[i] * e.p[m], 0) / wSum).toFixed(1);
-    }
-    if (!altDirty) alt.value = Math.round(pool.reduce((a, e, i) => a + ws[i] * e.alt, 0) / wSum);   // the height the blend stands at, until the building's is entered
-    const who = pool.map(e => e.name + ' ' + Math.round(e.d) + ' km').join(' · ');
+    for (let m = 0; m < 12; m++) { inputs.t[m].value = B.t[m].toFixed(1); inputs.p[m].value = B.p[m].toFixed(1); }
+    if (!altDirty) alt.value = B.alt;   // the height the blend stands at, until the building's is entered
+    const who = B.who;
     srcInp.value = t('Blend of %%STATIONS%% — IDW, IPMA 1981–2010').replace('%%STATIONS%%', who);
     if (srcStatus) srcStatus.textContent = t('No IPMA station at these coordinates — temperature and precipitation blended from %%STATIONS%% (inverse-distance over embedded IPMA 1981–2010 normals). Correct the altitude to the building.').replace('%%STATIONS%%', who);
     refresh();
@@ -9054,42 +9231,7 @@ function initSetup() {
     btnWeb.disabled = true;
     if (srcStatus) srcStatus.textContent = t('Sampling Open-Meteo 1991–2020…');
     try {
-      const ctrl = {};
-      try { if (typeof AbortSignal !== 'undefined' && AbortSignal.timeout) ctrl.signal = AbortSignal.timeout(60000); } catch (e) {}
-      const base = 'https://archive-api.open-meteo.com/v1/archive?latitude=' + la.toFixed(3)
-        + '&longitude=' + lo.toFixed(3) + '&timezone=auto';
-      const getDaily = async vars => (await (await fetch(base + '&start_date=1991-01-01&end_date=2020-12-31&daily=' + vars, ctrl)).json()).daily;
-      let d = await getDaily('temperature_2m_mean,precipitation_sum');
-      let tm = d && d.temperature_2m_mean, pr = d && d.precipitation_sum, tt = d && d.time;
-      if (!Array.isArray(tm) || !Array.isArray(pr) || !Array.isArray(tt) || tt.length < 3000) {
-        d = await getDaily('temperature_2m_max,temperature_2m_min,precipitation_sum');
-        const mx = d && d.temperature_2m_max, mn = d && d.temperature_2m_min;
-        pr = d && d.precipitation_sum; tt = d && d.time;
-        if (!Array.isArray(mx) || !Array.isArray(mn) || !Array.isArray(pr) || !Array.isArray(tt) || tt.length < 3000) throw new Error('webvars');
-        tm = mx.map((v, i) => (typeof v === 'number' && typeof mn[i] === 'number') ? (v + mn[i]) / 2 : null);
-      }
-      const tS = Array.from({ length: 12 }, () => [0, 0]);
-      const pY = {};
-      for (let i = 0; i < tt.length; i++) {
-        const ds = String(tt[i]), m = +ds.slice(5, 7) - 1, y = +ds.slice(0, 4);
-        if (!(m >= 0 && m < 12) || !isFinite(y)) continue;
-        const tv = tm[i];
-        if (typeof tv === 'number' && isFinite(tv)) { tS[m][0] += tv; tS[m][1]++; }
-        const pv = pr[i];
-        if (typeof pv === 'number' && isFinite(pv)) {
-          const k = y * 12 + m;
-          if (!pY[k]) pY[k] = [0, 0];
-          pY[k][0] += pv; pY[k][1]++;
-        }
-      }
-      const T = [], P = [];
-      for (let m = 0; m < 12; m++) {
-        if (!tS[m][1]) throw new Error('webmonths');
-        T.push(tS[m][0] / tS[m][1]);
-        const yrs = Object.keys(pY).filter(k => (k % 12) === m && pY[k][1] >= 20).map(k => pY[k][0]);
-        if (!yrs.length) throw new Error('webmonths');
-        P.push(yrs.reduce((a, b) => a + b, 0) / yrs.length);
-      }
+      const { t:T, p:P } = await webNormalsAt(la, lo);
       T.forEach((v, i) => { inputs.t[i].value = v.toFixed(1); });
       P.forEach((v, i) => { inputs.p[i].value = v.toFixed(1); });
       srcMode = 'web'; webAt = [la, lo];
@@ -9114,20 +9256,42 @@ function initSetup() {
     saveNormals(c);
     const v = conc.value.trim();
     const opBtn = $('#segOp button[aria-pressed="true"]');
-    mountApp({
+    const site = {
       place: v || null, nuts: sel.value,
       lat: +lat.value || 0, lon: +lon.value || 0,
       alt: Math.max(0, +alt.value || 0), use: use.value,
       operation: opBtn ? opBtn.dataset.op : 'new'
-    }, c);
+    };
+    STATE.home = { site, clim:c };   // what 'Back to the coordinates set up' returns to
+    STATE.note = null;
+    mountApp(site, c);
   });
+
+  /* a plot moved on Environmental moves the site: this screen follows, so
+     coming back to it shows the site the pages read */
+  STATE.setupSync = (site, c) => {
+    lat.value = site.lat; lon.value = site.lon; alt.value = site.alt; altDirty = false;
+    if (NUTS_LIST.indexOf(site.nuts) >= 0) sel.value = site.nuts;
+    conc.value = site.place || '';
+    c.t.forEach((v, i) => { inputs.t[i].value = (+v).toFixed(1); });
+    c.p.forEach((v, i) => { inputs.p[i].value = (+v).toFixed(1); });
+    srcInp.value = c.source || '';
+    srcMode = c.mode || srcMode;
+    if (srcMode === 'web') webAt = [site.lat, site.lon];
+    if (srcStatus) srcStatus.textContent = '';
+    refresh();
+  };
 
   seedCoords();
   refresh();
 }
 
 /* --- the application ------------------------------------------------------- */
-function mountApp(site, clim, keepTab, keepModel) {
+function mountApp(site, clim, keepTab, keepModel, keepScroll) {
+  if (keepModel) KEEPERS.forEach(f => { try { f(); } catch (e) { console.error(e); } });
+  else for (const k in KEEP) delete KEEP[k];
+  KEEPERS.length = 0;
+  const scrollY0 = window.scrollY || 0;
   STATE.site = site;
   if (clim) STATE.clim = Object.assign({}, clim, { k: koppen(clim.t, clim.p, site.lat < 0) });
   if (!STATE.clim) { toast('No climate has been entered'); return; }
@@ -9173,6 +9337,7 @@ function mountApp(site, clim, keepTab, keepModel) {
   });
   tl.appendChild(el('button', { class:'tab cadbtn', type:'button', text:'Export 3D ▾', onclick:toggleCadMenu }));
   activate(TABS.some(x => x.key === keepTab) ? keepTab : TABS[0].key);
+  if (keepScroll) { window.scrollTo(0, scrollY0); requestAnimationFrame(() => window.scrollTo(0, scrollY0)); setTimeout(() => window.scrollTo(0, scrollY0), 200); }
 
   function activate(key) {
     STATE.tab = key;
@@ -9202,6 +9367,118 @@ function mountApp(site, clim, keepTab, keepModel) {
     setTimeout(redrawVisiblePanels, 150);
     window.scrollTo(0, 0);
   }
+}
+
+/* --- the plot moves the site --------------------------------------------------
+   The building stands where its plot is. When the plot settles somewhere new
+   on Environmental — found, dragged, or picked on the small map — those
+   coordinates become the site's, and every page is rebuilt on them: the
+   normals by the setup's own order (the IPMA station within 5 km, else the
+   nearest stations blended; web normals fetched again where they were the
+   source), the Köppen class, the sun, the altitude of the ground there, and
+   the municipality and its region. Normals the student typed, or a station
+   picked from the list, are theirs and stay. The model, the windows and
+   the day chosen stay as they were. */
+const plainName = s => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
+const CONC_BY_PLAIN = (() => { const m = {}; Object.keys(CONCELHOS).forEach(k => { m[plainName(k)] = k; }); return m; })();
+const islandOf = lo => lo > -10.5 ? 'mainland' : lo < -20 ? 'azores' : 'madeira';
+/** The municipality an OpenStreetMap address names, and its region; a name
+    two regions share goes to the one whose main town is nearer. */
+function regionFromAddress(ad, la, lo) {
+  if (!ad) return null;
+  for (const key of ['municipality', 'city', 'town', 'village', '_name']) {   // _name: the place the lookup landed on
+    const c = CONC_BY_PLAIN[plainName(ad[key])];
+    if (!c) continue;
+    const opts = CONCELHOS[c].filter(n => NUTS_REF[n]);
+    if (!opts.length) continue;
+    const near = n => havKm(la, lo, NUTS_REF[n][0], NUTS_REF[n][1]);
+    return { conc:c, nuts:opts.slice().sort((a, b) => near(a) - near(b))[0] };
+  }
+  return null;
+}
+const fetchSoon = (url, ms) => {
+  const o = {};
+  try { if (typeof AbortSignal !== 'undefined' && AbortSignal.timeout) o.signal = AbortSignal.timeout(ms); } catch (e) {}
+  return fetch(url, o).then(r => r.ok ? r.json() : Promise.reject(new Error(r.status)));
+};
+/** The municipality at a point: OpenStreetMap's Nominatim, asked in Portuguese. */
+const regionAt = (la, lo) => fetchSoon('https://nominatim.openstreetmap.org/reverse?format=jsonv2&zoom=10&addressdetails=1&accept-language=pt&lat='
+  + la.toFixed(5) + '&lon=' + lo.toFixed(5), 8000).then(js => regionFromAddress(js && Object.assign({ _name:js.name }, js.address), la, lo));
+/** The ground's height at a point: the Copernicus DEM through Open-Meteo. */
+const elevationAt = (la, lo) => fetchSoon('https://api.open-meteo.com/v1/elevation?latitude=' + la.toFixed(5) + '&longitude=' + lo.toFixed(5), 8000)
+  .then(d => { const e = d && d.elevation && d.elevation[0]; if (typeof e !== 'number' || !isFinite(e) || e < -50 || e > 3000) throw new Error('elev'); return Math.round(e); });
+const RESITE = { seq:0 };
+/**
+ * Move the site to pos. say(text) reports progress where the move was made;
+ * found, when the move came from an address search, carries the address's
+ * municipality so no second lookup is needed.
+ */
+async function resite(pos, say, found) {
+  const S0 = STATE.site, C0 = STATE.clim;
+  if (!S0 || !C0 || !pos) return;
+  const la = +(+pos.lat).toFixed(6), lo = +(+pos.lon).toFixed(6), moved = havKm(S0.lat, S0.lon, la, lo);
+  if (moved < 0.0005) { ENV.plot = null; return; }
+  const seq = ++RESITE.seq, say2 = txt => { if (say) say(txt); };
+  say2(t('Moving the site to the plot…'));
+  const mode = C0.mode || '', ns = nearestStation(la, lo), notes = [];
+  let clim = { t:C0.t.slice(), p:C0.p.slice(), source:C0.source || '', mode }, altSrc = null;
+  const blend = () => {
+    const B = blendAt(la, lo);
+    if (!B) { notes.push(t('no embedded station within 300 km — normals kept')); return; }
+    clim = { t:B.t, p:B.p, source:t('Blend of %%STATIONS%% — IDW, IPMA 1981–2010').replace('%%STATIONS%%', B.who), mode:'blend' };
+    altSrc = B.alt; notes.push(t('normals blended from %%STATIONS%%').replace('%%STATIONS%%', B.who));
+  };
+  if (mode === 'manual' || mode === 'picked') notes.push(t('your own normals kept'));
+  else if (ns && ns.d <= NEAR_KM) {
+    clim = { t:ns.v.t.slice(), p:ns.v.p.slice(), source:ns.key, mode:'station' };
+    altSrc = ns.v.alt; notes.push(t('normals of the IPMA station %%ST%%, %%KM%% km away').replace('%%ST%%', ns.v.st).replace('%%KM%%', fmt(ns.d, 1)));
+  } else if (mode === 'web') {
+    const m0 = /(-?\d+\.\d+), (-?\d+\.\d+)/.exec(C0.source || '');
+    if (m0 && havKm(+m0[1], +m0[2], la, lo) < 0.7) notes.push(t('the web normals kept: they were read within 700 m'));
+    else {
+      say2(t('Reading the web normals at the plot…'));
+      try {
+        const w = await webNormalsAt(la, lo);
+        clim = { t:w.t, p:w.p, source:t('Open-Meteo 1991–2020 at %%COORDS%% (provisional, reanalysis)').replace('%%COORDS%%', la.toFixed(2) + ', ' + lo.toFixed(2)), mode:'web' };
+        notes.push(t('web normals read again at the plot'));
+      } catch (e) { blend(); notes.push(t('the web normals did not come')); }
+    }
+  } else blend();
+  if (seq !== RESITE.seq) return;
+  /* the region: asked once the plot has gone 300 m, or to another island group */
+  const ask = found !== undefined ? Promise.resolve(found) : moved >= 0.3 || islandOf(lo) !== islandOf(S0.lon) ? regionAt(la, lo).catch(() => null) : Promise.resolve(undefined);
+  const [elev, reg] = await Promise.all([elevationAt(la, lo).catch(() => null), ask]);
+  if (seq !== RESITE.seq) return;   // moved again meanwhile
+  let nuts = S0.nuts, place = S0.place;
+  if (reg) {
+    nuts = reg.nuts;
+    if (!place || CONC_BY_PLAIN[plainName(place)]) place = reg.conc;   // a municipality's name follows the plot; a project name stays
+  } else if (islandOf(lo) !== islandOf(S0.lon)) {
+    nuts = Object.keys(NUTS_REF).filter(n => islandOf(NUTS_REF[n][1]) === islandOf(lo)).sort((a, b) => havKm(la, lo, NUTS_REF[a][0], NUTS_REF[a][1]) - havKm(la, lo, NUTS_REF[b][0], NUTS_REF[b][1]))[0] || nuts;
+    if (place && CONC_BY_PLAIN[plainName(place)]) place = null;
+  }
+  const alt = elev !== null ? elev : altSrc !== null ? altSrc : S0.alt;
+  const site = Object.assign({}, S0, { lat:la, lon:lo, alt:Math.max(0, alt), nuts, place });
+  STATE.note = [
+    t('Site moved to the plot') + ': ' + fmt(Math.abs(la), 5) + '° ' + (la < 0 ? 'S' : 'N') + ' ' + fmt(Math.abs(lo), 5) + '° ' + (lo < 0 ? 'W' : 'E'),
+    fmt(site.alt, 0) + ' m ' + (elev !== null ? t('(the ground there, Copernicus DEM)') : t('(the elevation service did not answer — the stations’ height)')),
+    (place ? place + ', ' : '') + nuts + (reg === null ? ' (' + t('municipality not found — region kept') + ')' : '')
+  ].concat(notes).join(' · ');
+  saveNormals(clim);
+  if (STATE.setupSync) STATE.setupSync(site, clim);
+  ENV.plot = null;
+  mountApp(site, clim, STATE.tab, true, true);
+}
+/** Back to the coordinates and normals the setup screen gave. */
+function resiteHome() {
+  if (!STATE.home) return;
+  ++RESITE.seq;
+  const h = STATE.home;
+  STATE.note = t('Back to the coordinates set up');
+  saveNormals(h.clim);
+  if (STATE.setupSync) STATE.setupSync(h.site, h.clim);
+  ENV.plot = null;
+  mountApp(h.site, h.clim, STATE.tab, true, true);
 }
 
 window.addEventListener('resize', () => {
@@ -9304,7 +9581,7 @@ Object.assign(STATIC_PT, {
   ex2p: 'Para onde o edifício se volta, quão compacto é, o que faz a sua cobertura, quanto vidro leva cada fachada, onde ficam os compartimentos em relação ao sol, e como o ar atravessa a planta. Nenhuma destas se resolve com um coeficiente de transmissão térmica máximo.',
   ex3h: 'Um companheiro, não um substituto',
   ex3p: 'O Construction Advisor responde ao SCE e diz o que uma envolvente não pode exceder. Este não traz nada desse regulamento. Use-os por essa ordem: dê forma ao edifício aqui, e leve-o depois ali para ser verificado.',
-  privacyNote: 'Nada é carregado; o seu trabalho fica neste navegador. O que sai dele, só para preencher algo: as coordenadas, para dois serviços de elevação quando carrega em Consultar e para o Open-Meteo quando carrega em Buscar na web; a área do mapa, para a Esri e o OpenStreetMap, pelos mosaicos; a posição do lote, para o Overpass do OpenStreetMap, pelos edifícios vizinhos; uma morada que procure, para o Nominatim do OpenStreetMap.',
+  privacyNote: 'Nada é carregado; o seu trabalho fica neste navegador. O que sai dele, só para preencher algo: as coordenadas, para dois serviços de elevação quando carrega em Consultar e para o Open-Meteo quando carrega em Buscar na web; a área do mapa, para a Esri e o OpenStreetMap, pelos mosaicos; a posição do lote, para os servidores Overpass do OpenStreetMap, pelos edifícios vizinhos e, quando desloca o lote, para o Open-Meteo, pela altitude do terreno, e para o Nominatim, pelo concelho; uma morada que procure, para o Nominatim do OpenStreetMap.',
   footTag: 'Um conselheiro de desenho bioclimático para estudantes de arquitectura, escrito para as decisões que se tomam antes de um regulamento ter algo a dizer sobre elas.',
   footAuthor: 'Autor',
   footInst: 'Instituição',
@@ -9312,7 +9589,7 @@ Object.assign(STATIC_PT, {
   footClass: 'Classificação',
   footClassBody: 'Köppen–Geiger, na formalização de Peel, Finlayson e McMahon (2007), calculada a partir das normais que introduzir.',
   footPriv: 'Privacidade',
-  footPrivBody: 'Nada é carregado nem guardado fora deste navegador. As coordenadas só vão para os serviços que preenchem algo: elevação (Consultar), Open-Meteo (Buscar na web), os mosaicos do mapa (Esri, OpenStreetMap), os edifícios vizinhos (Overpass) e a pesquisa de moradas (Nominatim).',
+  footPrivBody: 'Nada é carregado nem guardado fora deste navegador. As coordenadas só vão para os serviços que preenchem algo: elevação (Consultar), Open-Meteo (Buscar na web), os mosaicos do mapa (Esri, OpenStreetMap), os edifícios vizinhos (Overpass), a pesquisa de moradas (Nominatim) e, quando o lote se desloca, a sua altitude (Open-Meteo) e o seu concelho (Nominatim).',
   footMethods: 'Métodos e fontes',
   footLegal: '© 2026 Nuno Dinis Cortiços. Este é um instrumento pedagógico. Reporta o que a literatura de projecto recomenda e nomeia a fonte de cada recomendação, mas uma orientação não é um cálculo e esta aplicação não é um modelo energético. Nada do que reporta constitui declaração de conformidade, e nada disto substitui as verificações exigidas no âmbito do SCE.'
 });
@@ -9498,7 +9775,6 @@ Object.assign(PT, {
   "Find": "Procurar",
   "Longitude read as west.": "Longitude lida como oeste.",
   "That point lies outside Portugal and its islands.": "Esse ponto fica fora de Portugal e das suas ilhas.",
-  "{} km from the site whose climate this page reads — change the site if the plot lies elsewhere.": "{} km do local cujo clima esta página lê — mude o local se o lote ficar noutro sítio.",
   "Searching…": "A procurar…",
   "Nothing found for that address in Portugal.": "Nada encontrado para essa morada em Portugal.",
   "The address search is unavailable — paste coordinates or a Google Maps link instead.": "A pesquisa de moradas não está disponível — cole antes coordenadas ou uma ligação do Google Maps.",
@@ -9512,7 +9788,6 @@ Object.assign(PT, {
   "Sunlit walls and roof in their shade": "Paredes e cobertura ao sol na sua sombra",
   "Buildings © OpenStreetMap contributors": "Edifícios © contribuidores do OpenStreetMap",
   "Map at the site’s reference coordinates — find the plot under Map and view": "Mapa nas coordenadas de referência do local — encontre o lote em Mapa e vista",
-  "the site coordinates; find the plot above, or drag the ground to move the building": "as coordenadas do local; encontre o lote acima, ou arraste o terreno para deslocar o edifício",
   "The map, the sun and the weather": "O mapa, o sol e o tempo",
   "Sun path": "Percurso do sol",
   "Day": "Dia",
@@ -9523,7 +9798,28 @@ Object.assign(PT, {
   "None": "Nenhum",
   "Plot": "Lote",
   "Neighbourhood": "Vizinhança",
-  "Back to the site coordinates": "Voltar às coordenadas do local",
+  "Back to the coordinates set up": "Voltar às coordenadas definidas no início",
+  "on each floor": "em cada piso",
+  "Roof, as set on Roof": "Cobertura, como definida em Telhado",
+  "one per floor": "uma por piso",
+  "asking again shortly": "a pedir de novo dentro em pouco",
+  "the last read kept; the servers did not answer": "mantida a última leitura; os servidores não responderam",
+  "updating…": "a atualizar…",
+  "Moving the site to the plot…": "A mudar o local para o lote…",
+  "no embedded station within 300 km — normals kept": "nenhuma estação incluída a menos de 300 km — normais mantidas",
+  "normals blended from %%STATIONS%%": "normais misturadas de %%STATIONS%%",
+  "your own normals kept": "mantidas as suas normais",
+  "normals of the IPMA station %%ST%%, %%KM%% km away": "normais da estação do IPMA %%ST%%, a %%KM%% km",
+  "the web normals kept: they were read within 700 m": "mantidas as normais da web: foram lidas a menos de 700 m",
+  "Reading the web normals at the plot…": "A ler as normais da web no lote…",
+  "web normals read again at the plot": "normais da web lidas de novo no lote",
+  "the web normals did not come": "as normais da web não chegaram",
+  "Site moved to the plot": "Local mudado para o lote",
+  "(the ground there, Copernicus DEM)": "(o terreno nesse ponto, MDT Copernicus)",
+  "(the elevation service did not answer — the stations’ height)": "(o serviço de elevação não respondeu — a altitude das estações)",
+  "municipality not found — region kept": "concelho não encontrado — região mantida",
+  "the region’s reference coordinates; find the plot above, or drag the ground to move the building — the site follows it": "as coordenadas de referência da região; encontre o lote acima, ou arraste o terreno para deslocar o edifício — o local segue-o",
+  "the site; drag the ground or find the plot to move it, and the site follows": "o local; arraste o terreno ou encontre o lote para o deslocar, e o local segue-o",
   "Sun altitude": "Altura do sol",
   "Sun azimuth": "Azimute do sol",
   "Sunrise – sunset": "Nascer – pôr do sol",
@@ -9641,6 +9937,7 @@ Object.assign(PT, {
   "Flat": "Plana",
   "Shed": "Uma água",
   "Gable": "Duas águas",
+  "Hip": "Quatro águas",
   "Rolling": "Ondulado",
   "Hilly": "Colinoso",
   "Mountainous": "Montanhoso",
@@ -9858,7 +10155,7 @@ Object.assign(PT, {
   "A plain bar casts no shade on itself — break the volume or open a patio": "Uma barra simples não se sombreia a si própria — quebre o volume ou abra um pátio",
   "No room for a patio: it needs 2 m of building round it and 2 m clear of any recess — widen or deepen the bar": "Sem espaço para um pátio: precisa de 2 m de edifício à volta e 2 m livres de qualquer recuo — alargue ou aprofunde a barra",
   "Drag the black points on the model: a corner stretches the bar, the break’s point sizes a wing or carves a recess, the patio’s point opens it wider or deeper.": "Arraste os pontos pretos no modelo: um canto estica a barra, o ponto da quebra dimensiona uma ala ou escava um recuo, o ponto do pátio abre-o mais largo ou mais fundo.",
-  "Isometric view, tilted from the south-west. Drag the plan to stretch it, the black knob to turn it, the black points to break it; drive the sun from the Sun controls. The windows are the ones sized on Windows & Shading, spread over every wall.": "Vista isométrica, inclinada a partir de sudoeste. Arraste a planta para a esticar, o botão preto para a rodar, os pontos pretos para a quebrar; conduza o sol pelos comandos do Sol. As janelas são as dimensionadas em Janelas e Sombreamento, distribuídas por todas as paredes.",
+  "Isometric view, tilted from the south-west. Drag the plan to stretch it, the black knob to turn it, the black points to break it; drive the sun from the Sun controls. The windows are the ones sized on Windows & Shading, spread over every wall and every floor, and the roof is the one set on Roof.": "Vista isométrica, inclinada a partir de sudoeste. Arraste a planta para a esticar, o botão preto para a rodar, os pontos pretos para a quebrar; conduza o sol pelos comandos do Sol. As janelas são as dimensionadas em Janelas e Sombreamento, distribuídas por todas as paredes e todos os pisos, e a cobertura é a definida em Telhado.",
   "Most glass faces": "Mais vidro virado a",
   "least faces": "menos virado a",
   "windows": "janelas",
@@ -10035,7 +10332,7 @@ Object.assign(PT_HINT, {
   'env-weather':
     'O tempo sobre o modelo são as normais deste local lidas no dia escolhido: o valor de cada mês fica a meio do mês e os dias entre eles são interpolados. O sol cresce e aquece de cor com a temperatura média do ar, numa escala de 0 a 28 °C; as nuvens juntam-se com a precipitação, de nenhuma a 0 a um céu coberto a 150 mm por mês, e a chuva cai acima de 10 mm. Sob nuvens a sombra do edifício suaviza-se, porque mais luz é difusa, e a sombra de cada nuvem atravessa o terreno e o edifício por baixo dela. Arraste sobre o climograma para percorrer o ano; o modelo e o diagrama solar acompanham, e o lugar do dia no ano fica marcado no climograma. É uma leitura das normais, não um registo do céu: a precipitação faz as vezes da nebulosidade, que acompanha ao longo do ano português mas não em todo o lado — uma manhã de Verão na costa pode estar cinzenta de nevoeiro marítimo e continuar seca. O separador Telhado lê o sol realmente recebido, a partir da reanálise ERA5.',
   'env-map':
-    'O modelo assenta o edifício desenhado no Local — a sua planta, quebras e pátio, rodado como aí definido, sob o telhado definido em Telhado — num disco de mapa base à volta do seu lote: imagem de satélite da Esri World Imagery ou o mapa de ruas do OpenStreetMap, cada um creditado no desenho, carregados pelo seu navegador desses serviços, que vêem a área de mapa pedida. Até se encontrar um lote, o mapa fica nas coordenadas de referência do local — uma estação ou o centro de uma região, que pode cair num rio ou num campo. <b>Encontrar o lote</b> aceita uma morada em Portugal, ilhas incluídas (procurada no Nominatim do OpenStreetMap quando carrega em Procurar, nunca enquanto escreve), coordenadas em graus decimais ou em graus, minutos e segundos, ou uma ligação do Google Maps colada inteira; arrastar o terreno afina depois a posição, e as suas coordenadas seguem na exportação JSON. <b>Edifícios vizinhos</b> são as implantações cartografadas no OpenStreetMap num raio de ' + NB_R + ' m, lidas pelo seu navegador do serviço Overpass (que vê a posição do lote), levantadas à sua altura cartografada, senão aos seus pisos a 3 m cada, senão a dois pisos supostos (um para uma garagem ou um anexo) — os supostos têm o contorno a tracejado. O que está no próprio lote, e qualquer um que o projecto sobreponha, dão lugar ao projecto; os que ficam entre o olhar e o projecto desenham-se transparentes. As suas sombras caem no terreno com a do próprio projecto e, onde caem sobre ele, desenham-se nas suas paredes e cobertura: cada parede e plano de cobertura ao sol é amostrado cerca de 0,7 m em 0,7 m e o raio de cada amostra até ao sol seguido através dos vizinhos, o que dá a parte da envolvente ao sol que está na sua sombra à hora mostrada. A cartografia é completa nas cidades e mais rala no campo e nas ilhas, e não inclui árvores, muros nem o declive do terreno: um lote sem nada cartografado à volta não está necessariamente desafogado. O sol é calculado para este local em hora solar, como em toda esta aplicação; os seus percursos de 21 de Junho, 20 de Março e 21 de Dezembro são desenhados numa cúpula celeste sobre o edifício, a tracejado, com o dia escolhido a cheio e as suas horas pares marcadas. Arraste o sol — na cúpula ou no diagrama solar — ao longo do percurso para mudar a hora, através dos percursos para mudar o dia. A imagem pode ter anos e estar ligeiramente desviada da posição real; onde um serviço não tem imagem no zoom mais fino, os seus mosaicos lisos são ignorados e mostra-se o nível mais grosso. O pequeno mapa no canto mostra a área envolvente, com o norte para cima e o disco do modelo a vermelho — carregue ou arraste sobre ele para mover o lote. O terreno toma a luz da hora e do mês: mais claro sob céu limpo e sol alto, mais baço à medida que a nebulosidade aumenta, escuro depois do pôr do sol. A cúpula é um diagrama, não está à escala do mapa.',
+    'O modelo assenta o edifício desenhado no Local — a sua planta, quebras e pátio, rodado como aí definido, sob o telhado definido em Telhado — num disco de mapa base à volta do seu lote: imagem de satélite da Esri World Imagery ou o mapa de ruas do OpenStreetMap, cada um creditado no desenho, carregados pelo seu navegador desses serviços, que vêem a área de mapa pedida. Até se encontrar um lote, o mapa pode ficar nas coordenadas de referência da região — o centro da sua cidade principal, que pode cair num rio ou num campo. <b>Encontrar o lote</b> aceita uma morada em Portugal, ilhas incluídas (procurada no Nominatim do OpenStreetMap quando carrega em Procurar, nunca enquanto escreve), coordenadas em graus decimais ou em graus, minutos e segundos, ou uma ligação do Google Maps colada inteira; arrastar o terreno, ou carregar no pequeno mapa, desloca-o. <b>O local segue o lote</b>: quando o lote assenta, as suas coordenadas passam a ser as do local e todas as páginas são refeitas sobre elas — as normais pela ordem do próprio arranque (a estação do IPMA a menos de 5 km, senão a mistura das estações mais próximas; as normais da web lidas de novo onde eram a fonte; as normais que escreveu, ou uma estação que escolheu, continuam suas), a classe de Köppen, o sol em todas as páginas, a altitude do terreno nesse ponto (o MDT Copernicus, pedido ao Open-Meteo) e o concelho e a sua região (pedidos ao Nominatim quando o lote se desloca 300 m). O modelo, as janelas e o dia escolhido ficam como estavam; <b>Voltar às coordenadas definidas no início</b> regressa ao local do arranque. <b>Edifícios vizinhos</b> são as implantações cartografadas no OpenStreetMap num raio de ' + NB_R + ' m, lidas pelo seu navegador dos servidores públicos Overpass (que vêem a posição do lote; quando um está ocupado pede-se ao seguinte) e guardadas neste navegador durante 30 dias, de modo que um sítio já lido aparece logo e os seus edifícios ficam quando um pedido seguinte falha; levantadas à sua altura cartografada, senão aos seus pisos a 3 m cada, senão a dois pisos supostos (um para uma garagem ou um anexo) — os supostos têm o contorno a tracejado. O que está no próprio lote, e qualquer um que o projecto sobreponha, dão lugar ao projecto; os que ficam entre o olhar e o projecto desenham-se transparentes. As suas sombras caem no terreno com a do próprio projecto e, onde caem sobre ele, desenham-se nas suas paredes e cobertura: cada parede e plano de cobertura ao sol é amostrado cerca de 0,7 m em 0,7 m e o raio de cada amostra até ao sol seguido através dos vizinhos, o que dá a parte da envolvente ao sol que está na sua sombra à hora mostrada. A cartografia é completa nas cidades e mais rala no campo e nas ilhas, e não inclui árvores, muros nem o declive do terreno: um lote sem nada cartografado à volta não está necessariamente desafogado. O sol é calculado para este local em hora solar, como em toda esta aplicação; os seus percursos de 21 de Junho, 20 de Março e 21 de Dezembro são desenhados numa cúpula celeste sobre o edifício, a tracejado, com o dia escolhido a cheio e as suas horas pares marcadas. Arraste o sol — na cúpula ou no diagrama solar — ao longo do percurso para mudar a hora, através dos percursos para mudar o dia. A imagem pode ter anos e estar ligeiramente desviada da posição real; onde um serviço não tem imagem no zoom mais fino, os seus mosaicos lisos são ignorados e mostra-se o nível mais grosso. O pequeno mapa no canto mostra a área envolvente, com o norte para cima e o disco do modelo a vermelho — carregue ou arraste sobre ele para mover o lote. O terreno toma a luz da hora e do mês: mais claro sob céu limpo e sol alto, mais baço à medida que a nebulosidade aumenta, escuro depois do pôr do sol. A cúpula é um diagrama, não está à escala do mapa; na vista da vizinhança ergue-se sobre a maior parte do mapa e os seus percursos desenham-se mais fortes, sobre um bordo branco que os mantém legíveis sobre a imagem.',
   'ori-method':
     'As horas contam-se geometricamente — o sol acima do horizonte e a incidir na fachada — em <b>hora solar</b>, pelo que o meio-dia é a culminação onde quer que esteja o local. Sem nuvens, sem relevo e sem edifícios vizinhos: tome os números como comparação entre orientações, não como energia. O semestre de Verão vai de Abril a Setembro, a convenção de Köppen usada acima.',
   'ori-lead-Csa':
@@ -10067,7 +10364,7 @@ Object.assign(PT_HINT, {
   'ori-ff':
     'Fator de forma FF = envolvente exterior ÷ volume aquecido, em m⁻¹ — paredes até ao beirado, triângulos de empena, vertentes e piso térreo sobre o volume que encerram, uma única zona, tudo exterior. Mais baixo é mais compacto: os abrigos redondos de pastores da Monchique são o extremo vernacular (Gonçalves & Graça). É o mesmo rácio a que o REH chama <i>factor de forma</i>, aqui enunciado como pura geometria sem limites — o Construction Advisor continua daí. A pastilha pinta-o de verde até 0,7 (compacto), âmbar até 1,1 (moderado) e vermelho acima (disperso): faixas didácticas, não limites. Não move a nota de ajuste.',
   'open-wwr':
-    'As faixas de WWR seguem a classificação de Ching &amp; Shapiro (baixa &lt;10%, moderada 10–20%, alta 20–30%, muito alta &gt;30%; p.242), lida à luz da orientação de Lechner — o sul recebe mais vidro, o norte o menos das fachadas com sol, e este/oeste são minimizados onde o clima pende para quente (pp.130–132, 416). A faixa mostrada para %1 neste clima é <b>%2–%3%</b>. O norte fica entre 5 e 10 % e começa em 5 %: quase não recebe sol de Inverno e perde calor todo o ano. É uma escolha bioclimática desta aplicação, não uma regra do SCE — o regulamento não fixa máximo para o vidro a norte; dispensa do requisito de factor solar os vãos orientados no quadrante norte e qualquer espaço cujos envidraçados não excedam 5 % da sua área de <i>pavimento</i> (Portaria n.º 138-I/2021). O RGEU fixa antes o mínimo: cada compartimento precisa de vãos com pelo menos 1/10 da sua área, e nunca menos de 1,08 m² (art. 71.º), e a leitura do lado norte diz quantos compartimentos o seu vidro pode servir. É uma síntese própria desta aplicação entre fontes, não um número único citável — trate-a como uma meta a atingir, não um teste de aprovação. Cada lado é avaliado pelo sentido para onde realmente fica virado depois de rodada a planta no Local, e a sua razão vão/parede aplica-se a todas as paredes da planta desse lado — de uma ala, de um recuo, de um pátio. A caixa Ajuste WWR faz a média deste teste nos quatro lados.',
+    'As faixas de WWR seguem a classificação de Ching &amp; Shapiro (baixa &lt;10%, moderada 10–20%, alta 20–30%, muito alta &gt;30%; p.242), lida à luz da orientação de Lechner — o sul recebe mais vidro, o norte o menos das fachadas com sol, e este/oeste são minimizados onde o clima pende para quente (pp.130–132, 416). A faixa mostrada para %1 neste clima é <b>%2–%3%</b>. O norte fica entre 5 e 10 % e começa em 5 %: quase não recebe sol de Inverno e perde calor todo o ano. É uma escolha bioclimática desta aplicação, não uma regra do SCE — o regulamento não fixa máximo para o vidro a norte; dispensa do requisito de factor solar os vãos orientados no quadrante norte e qualquer espaço cujos envidraçados não excedam 5 % da sua área de <i>pavimento</i> (Portaria n.º 138-I/2021). O RGEU fixa antes o mínimo: cada compartimento precisa de vãos com pelo menos 1/10 da sua área, e nunca menos de 1,08 m² (art. 71.º), e a leitura do lado norte diz quantos compartimentos o seu vidro pode servir. É uma síntese própria desta aplicação entre fontes, não um número único citável — trate-a como uma meta a atingir, não um teste de aprovação. Cada lado é avaliado pelo sentido para onde realmente fica virado depois de rodada a planta no Local, e a sua razão vão/parede aplica-se a todas as paredes da planta desse lado — de uma ala, de um recuo, de um pátio. Com dois ou três pisos, esse vidro reparte-se por igual entre eles: cada parede recebe uma janela por piso, todas da mesma largura, com peitoril e padieira medidos a partir de cada piso e a padieira 0,10 m abaixo do piso de cima. A caixa Ajuste WWR faz a média deste teste nos quatro lados.',
   'open-shading':
     'Uma pala horizontal corta o sol alto de Verão no vidro virado ao equador, usando a mesma geometria do ângulo de perfil da inclinação do telhado no separador anterior (Olgyay, pp.79–80; Lechner, pp.249–253). O vidro a este e a oeste recebe sol baixo, quase rasante, de manhã e ao fim da tarde, que uma pala mal toca — os brises verticais respondem a isso: a própria tabela de coeficientes de sombreamento de Olgyay dá aos brises verticais fixos nas paredes este/oeste cerca de 0,31 (ou seja, cortando cerca de dois terços do ganho não sombreado), contra cerca de 0,20–0,25 para uma pala contínua a sul e 0,10–0,15 para lâminas horizontais móveis (pp.70–71) — os brises ganham mesmo o seu lugar no sol baixo e oblíquo a este e a oeste, mais a oeste do que a este uma vez somado o calor da tarde. Lechner nota ainda que os dispositivos horizontais continuam a superar os brises mesmo aí, e que os brises servem sobretudo o lado do equador de uma fachada oblíqua (pp.255–259); numa parede virada a sul, um brise só falha no único momento em que o sol fica exactamente perpendicular ao vidro — o meio-dia solar — continuando a cortar o sol oblíquo da manhã e da tarde no resto do dia, pelo que o seu contributo aí também pode ser substancial, cobrindo apenas horas diferentes das de uma pala. Várias lâminas mais rasas ou vários brises mais estreitos cortam o mesmo ângulo que um dispositivo único mais profundo, bloqueando menos a vista — um caixote de ovos é os dois empilhados, não somados (DeKay &amp; Brown, Estratégia 91, pp.248–249). Ambos ficam directamente sobre o vão: uma única pala acompanha a verga, várias lâminas distribuem-se de cima a baixo por todo o envidraçado, e os brises correm da esquerda para a direita ao longo da largura escolhida — nunca flutuando afastados da própria janela. Num clima de aquecimento, uma boa pala discrimina por estação — corta o sol alto de Junho mas ainda deixa entrar o sol baixo de Dezembro que alivia a factura do aquecimento — pelo que a nota de sombreamento abaixo premeia essa diferença e não a profundidade em si: um dispositivo suficientemente profundo para bloquear Verão e Inverno por igual não vale mais do que nenhum.',
   'open-sunspace':
