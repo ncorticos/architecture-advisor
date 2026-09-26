@@ -995,7 +995,10 @@ function labelDesk(ctx, W, H) {
         if (!best || cost < best.cost) best = { cost, b, c };
       });
       if (!best) return null;
-      const b = best.b;
+      /* no spot inside the canvas: the best one slides back in, so a long
+         label on a narrow screen is never cut at the edge */
+      const b = best.b, sx = Math.max(0, 2 - b.x0) - Math.max(0, b.x1 - (W - 2)), sy = Math.max(0, 2 - b.y0) - Math.max(0, b.y1 - (H - 2));
+      if (sx || sy) { b.x0 += sx; b.x1 += sx; b.y0 += sy; b.y1 += sy; best.c = [best.c[0] + sx, best.c[1] + sy, best.c[2]]; }
       ctx.fillStyle = 'rgba(255,255,255,.92)';
       ctx.beginPath();
       if (ctx.roundRect) ctx.roundRect(b.x0, b.y0, b.x1 - b.x0, b.y1 - b.y0, 3);
@@ -4540,7 +4543,7 @@ function buildSite(host) {
         const outer = segsF.filter(sg => !inPatio(sg)), pool = outer.length ? outer : segsF;
         const sg = pool.reduce((p, q) => q.len > p.len ? q : p);
         const ws = wins.filter(o => o.w.f === f);
-        const nFl = ws.length ? ws[0].w.n : 1, perFl = nFl > 1 ? ' ' + t('on each floor') : '';
+        const nFl = ws.length ? ws[0].w.n : 1, perFl = nFl > 1 ? ' ' + t('per floor') : '';
         const what = !ws.length ? t('no window')
           : ws.length === 1 ? (nFl > 1 ? nFl + ' ' + t('windows') : t('window')) + ' ' + fmt(ws[0].w.w, 1) + ' × ' + fmt(ws[0].w.h, 1) + ' m' + (nFl > 1 ? ', ' + t('one per floor') : '')
           : ws.length <= 3 ? ws.length + ' ' + t('windows') + ' ' + ws.map(o => fmt(o.w.w, 1)).join(' + ') + ' × ' + fmt(ws[0].w.h, 1) + ' m' + perFl
@@ -9525,12 +9528,7 @@ function setLanguage(lang) {
 $$('#langsel button').forEach(b =>
   b.addEventListener('click', () => setLanguage(b.dataset.lang)));
 
-(function boot() {
-  let saved = null;
-  try { saved = localStorage.getItem(LS_LANG); } catch (e) {}
-  if (!saved && /^pt\b/i.test(navigator.language || '')) saved = 'pt';
-  setLanguage(saved || 'en');
-})();
+/* the boot runs at the foot of this script, once the Portuguese below is in place */
 
 /* ==================================== 9. EUROPEAN PORTUGUESE ==
    One entry per string, resolved. Keys are the exact English, with numbers
@@ -9799,7 +9797,7 @@ Object.assign(PT, {
   "Plot": "Lote",
   "Neighbourhood": "Vizinhança",
   "Back to the coordinates set up": "Voltar às coordenadas definidas no início",
-  "on each floor": "em cada piso",
+  "per floor": "por piso",
   "Roof, as set on Roof": "Cobertura, como definida em Telhado",
   "one per floor": "uma por piso",
   "asking again shortly": "a pedir de novo dentro em pouco",
@@ -10374,6 +10372,15 @@ Object.assign(PT_HINT, {
   'open-accuracy':
     'Este separador dimensiona vidro e sombreamento como um primeiro esboço de projecto — regras geométricas de bolso, não uma simulação. Não modela luz difusa ou reflectida, encandeamento, ganhos internos ou solares, nem um céu real, e o valor de sombreamento abaixo é a média de um conjunto fixo de horas do dia em 21 de Junho e 21 de Dezembro apenas, não do ano inteiro nem de um ficheiro climático real. O próprio Olgyay chamou aos seus coeficientes de sombreamento "valores aproximados" (p.67); Lechner recomenda verificar qualquer desenho de sombreamento com um modelo físico (p.251); Ching &amp; Shapiro notam que o dimensionamento óptimo do vidro "deveria ser calculado por simulação computacional" (p.101). Um valor fora do intervalo colorido não está proibido — alguns programas precisam disso — mas trate-o como um sinal a justificar, não uma opção por defeito.'
 });
+
+/* boot, last: a page opened in Portuguese renders its first screen with
+   the dictionary above already filled in */
+(function boot() {
+  let saved = null;
+  try { saved = localStorage.getItem(LS_LANG); } catch (e) {}
+  if (!saved && /^pt\b/i.test(navigator.language || '')) saved = 'pt';
+  setLanguage(saved || 'en');
+})();
 </script>
 </body>
 </html>
