@@ -365,7 +365,7 @@ footer{border-top:1px solid var(--line); margin-top:26px; background:var(--wash)
 }
 .uresult .big{font-family:var(--mono); font-size:23px; font-weight:700; letter-spacing:-.5px}
 .uresult .lbl{font-size:11px; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); font-weight:600}
-/* The description of a climate zone, on the Climate page. */
+/* The description of a climate zone, on the Environmental page. */
 .zonebox{border:1px solid var(--line); border-radius:10px; padding:16px 18px; background:var(--wash); margin-bottom:18px}
 .zonebox .zt{margin:0 0 14px; font-size:13.5px; color:var(--ink); line-height:1.65; max-width:78ch}
 .zonebox h5{margin:0 0 4px; font-size:10.5px; text-transform:uppercase; letter-spacing:.08em; color:var(--muted)}
@@ -392,6 +392,19 @@ footer{border-top:1px solid var(--line); margin-top:26px; background:var(--wash)
 .bench .fpick .hint{flex-basis:100%; margin-top:2px}
 .bench .readings{margin:8px 0 0; gap:6px}
 .bench .readings .pill{white-space:normal; line-height:1.5}
+.bench.env{grid-template-columns:230px minmax(0,1fr) 280px}
+.bench .panel-head{padding:8px 10px}
+.bench .rail .panel-title h3,.bench .props .panel-title h3{font-size:12px}
+.kcode{display:flex; align-items:baseline; gap:10px; margin:2px 0 6px}
+.kcode .kc{font-family:var(--mono); font-size:34px; font-weight:600; letter-spacing:-0.02em; color:var(--ink)}
+.kcode .kn{font-size:11.5px; color:var(--ink2); line-height:1.35}
+.facts{display:flex; flex-direction:column; margin:2px 0 8px}
+.facts .fact{display:flex; justify-content:space-between; gap:10px; font-size:12px; color:var(--ink2); border-bottom:1px solid var(--line2); padding:3px 0}
+.facts .fact b{font-family:var(--mono); font-weight:500; color:var(--ink); white-space:nowrap}
+details.more{border-top:1px solid var(--line); margin:6px 0 0; padding:2px 0}
+details.more > summary{cursor:pointer; font-size:13px; font-weight:600; color:var(--ink2); padding:9px 0; list-style-position:inside}
+details.more[open] > summary{color:var(--ink)}
+@media(max-width:1100px){.bench.env{grid-template-columns:1fr}.bench.env .stage{order:-1}.bench.env .rail{order:2}}
 @media(max-width:1100px){.bench{grid-template-columns:1fr}.bench .rgroup{flex-direction:row; flex-wrap:wrap}.bench .rgroup .btn{width:auto}
   .bench .props .controls{flex-direction:row; flex-wrap:wrap}}
 </style>
@@ -636,7 +649,7 @@ footer{border-top:1px solid var(--line); margin-top:26px; background:var(--wash)
 /* ------------------------------------------------------------ 0. IDENTITY -- */
 const APP = {
   name:        'Architecture Advisor',
-  version:     '1.78.0',
+  version:     '1.79.0',
   author:      'Nuno Dinis Cortiços',
   institution: 'Lisbon School of Architecture, Universidade de Lisboa',
   builtWith:   'Claude Opus 5 (Anthropic)',
@@ -1093,6 +1106,51 @@ let PANELS = [];
    footprint — so both tabs read and write the same two objects, reset
    fresh each time a site is mounted. */
 let MASS = null, ROOF = null, OPEN = null, SUNSP = null, RWIN = null;
+/* The Environmental tab's view: the day and solar hour driven on its sun
+   path, the base map, the camera, and where the building stands on its plot
+   (null: on the site's own coordinates). */
+const ENV = { doy:172, h:12, map:'sat', view:'SW', plot:null, wide:false };
+/* --- base-map tiles, drawn straight onto the canvas ------------------------
+   Two public tile services in the Web Mercator grid, no key needed:
+   satellite imagery from Esri World Imagery and the street map from
+   OpenStreetMap, each credited on the drawing. Images load with CORS so the
+   PNG export stays possible; a tile that fails simply is not drawn. */
+const TILE_SRC = {
+  sat:{ url:(z, x, y) => 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/' + z + '/' + y + '/' + x, max:19,
+    attr:'Imagery: Esri World Imagery — Esri, Maxar, Earthstar Geographics and the GIS User Community' },
+  map:{ url:(z, x, y) => 'https://tile.openstreetmap.org/' + z + '/' + x + '/' + y + '.png', max:19,
+    attr:'Map © OpenStreetMap contributors' }
+};
+const TILE_CACHE = new Map();
+/** A tile image, loading once; `redraw` runs when it arrives or fails. */
+function tileImg(url, redraw) {
+  let e = TILE_CACHE.get(url);
+  if (!e) {
+    e = { img:new Image(), ok:false, failed:false, waiters:new Set() };
+    e.img.crossOrigin = 'anonymous';
+    e.img.onload = () => { e.ok = true; e.waiters.forEach(f => f()); e.waiters.clear(); };
+    e.img.onerror = () => { e.failed = true; e.waiters.forEach(f => f()); e.waiters.clear(); };
+    e.img.src = url;
+    TILE_CACHE.set(url, e);
+  }
+  if (!e.ok && !e.failed && redraw) e.waiters.add(redraw);
+  return e;
+}
+/** Fractional Web Mercator tile coordinates of a point at zoom z. */
+const mercTile = (lat, lon, z) => {
+  const n = Math.pow(2, z), la = lat * Math.PI / 180;
+  return [(lon + 180) / 360 * n, (1 - Math.log(Math.tan(la) + 1 / Math.cos(la)) / Math.PI) / 2 * n];
+};
+/** Convex hull of plan points (monotone chain). */
+function convexHull(pts) {
+  const p = pts.slice().sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  const cross = (o, a, b) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
+  const lo = [], hi = [];
+  p.forEach(pt => { while (lo.length >= 2 && cross(lo[lo.length - 2], lo[lo.length - 1], pt) <= 0) lo.pop(); lo.push(pt); });
+  p.slice().reverse().forEach(pt => { while (hi.length >= 2 && cross(hi[hi.length - 2], hi[hi.length - 1], pt) <= 0) hi.pop(); hi.push(pt); });
+  lo.pop(); hi.pop();
+  return lo.concat(hi);
+}
 /* Planting and detached walls live here, not inside Ventilation, so the CAD
    export can read them and a language switch keeps them; SCENE.plant is set
    by Ventilation to describe a plant's solid for export. Each tab registers
@@ -2534,146 +2592,6 @@ function rebuildable(host, build) {
    ====================================================================== */
 
 /* ------------------------------------------------------------ CLIMATE -- */
-function buildClimate(host) {
-  const S = STATE.site, C = STATE.clim, K = C.k;
-  pageHead(host, 'Climate',
-    'One code of two or three letters, computed from twelve temperatures and twelve rainfalls. Every page after this one is written against it.');
-
-  const mainName = KOPPEN_MAIN[K.main] ? KOPPEN_MAIN[K.main].name : '';
-  const letters = K.code.split('');
-  host.appendChild(stats([
-    statCard('Köppen–Geiger', K.code, null, t(mainName)),
-    statCard('Mean annual temperature', fmt(K.MAT, 1), '°C',
-      t('Coldest month') + ' ' + fmt(K.Tcold, 1) + ' · ' + t('warmest') + ' ' + fmt(K.Thot, 1)),
-    statCard('Mean annual precipitation', fmt(K.MAP, 0), 'mm',
-      fmt(100 * K.Psum / K.MAP, 0) + ' % ' + t('in the summer half-year')),
-    statCard('Months above 10 °C', fmt(K.Tmon10, 0), null, t('Decides the third letter'))
-  ]));
-
-  host.appendChild(hint('clim-method',
-    'The classification is Köppen–Geiger as Peel, Finlayson and McMahon (2007) state it — the formalisation that writes every criterion as an inequality rather than as a description. Nothing here was looked up: the code <b>%1</b> was computed from the normals you entered, and the table below shows which quantity decided each letter. The summer half-year is April to September in the northern hemisphere and October to March in the southern, which is a convention of the classification and not a season.',
-    [K.code]));
-
-  /* --- the climograph ----------------------------------------------------- */
-  const pMax = Math.max(10, Math.ceil(Math.max.apply(null, C.p) / 10) * 10);
-  const tLo = Math.min(0, Math.floor(Math.min.apply(null, C.t) / 5) * 5);
-  const tHi = Math.ceil(Math.max.apply(null, C.t) / 5) * 5;
-  const summer = K.south ? [9, 10, 11, 0, 1, 2] : [3, 4, 5, 6, 7, 8];
-
-  makePanel(host, {
-    title: 'The year, month by month',
-    note: 'Precipitation as bars against the left axis, mean temperature as a line against the right; the summer half-year is shaded',
-    aspect: 2.1,
-    render(ctx, W, H) {
-      const P = plotRect(54, 18, W - 54 - 54, H - 18 - 52, -0.5, 11.5, 0, pMax);
-      const T = plotRect(P.x, P.y, P.w, P.h, -0.5, 11.5, tLo, tHi);
-
-      // the summer half-year, behind everything
-      ctx.fillStyle = '#faf7f0';
-      summer.forEach(i => ctx.fillRect(P.sx(i - 0.5), P.y, P.w / 12, P.h));
-
-      drawAxes(ctx, P, { xTicks:[0,1,2,3,4,5,6,7,8,9,10,11], xFmt:i => MON3[i],
-                         yLabel:'Precipitation, mm', yCount:5 });
-
-      // precipitation bars
-      const bw = P.w / 12 * 0.56;
-      C.p.forEach((v, i) => {
-        const y = P.sy(v), h = P.y + P.h - y;
-        ctx.fillStyle = '#bcd2ea';
-        ctx.fillRect(P.sx(i) - bw / 2, y, bw, Math.max(0, h));
-      });
-
-      // the temperature line on its own scale
-      stroke(ctx, '#D97706', 2.2);
-      ctx.beginPath();
-      C.t.forEach((v, i) => { const x = T.sx(i), y = T.sy(v); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); });
-      ctx.stroke();
-      ctx.fillStyle = '#D97706';
-      C.t.forEach((v, i) => { ctx.beginPath(); ctx.arc(T.sx(i), T.sy(v), 2.6, 0, 6.284); ctx.fill(); });
-
-      // right-hand temperature axis
-      const tt = niceTicks(tLo, tHi, 5).ticks;
-      tt.forEach(v => label(ctx, fmt(v, 0), P.x + P.w + 7, T.sy(v), '#D97706', FM(10), 'left', 'middle'));
-      ctx.save();
-      ctx.translate(P.x + P.w + 38, P.y + P.h / 2); ctx.rotate(Math.PI / 2);
-      label(ctx, t('Mean temperature, °C'), 0, 0, '#D97706', F(10.5, '600'), 'center', 'middle');
-      ctx.restore();
-
-      swatchKey(ctx, P.x, P.y + P.h + 40,
-        [{ color:'#bcd2ea', label:'Precipitation' }, { color:'#D97706', label:'Mean temperature' }],
-        { cols:2, colWidth:160 });
-    },
-    csv: () => csvRows([['Month', 'Mean temperature (°C)', 'Precipitation (mm)']]
-      .concat(C.t.map((v, i) => [MONTHS_EN[i], v, C.p[i]])))
-  });
-
-  /* --- how each letter was decided ---------------------------------------- */
-  const rows = [];
-  const push = (letter, why, value, test) => rows.push([
-    '<b>' + letter + '</b>', t(why), value, test ]);
-
-  if (K.main === 'B') {
-    push(K.code[0], KOPPEN_MAIN.B.name, fmt(K.MAP, 0) + ' &lt; ' + fmt(10 * K.Pth, 0) + ' mm', KOPPEN_MAIN.B.test);
-    push(K.code[1], KOPPEN_SUB[K.code[1]].name,
-      fmt(K.MAP, 0) + (K.code[1] === 'W' ? ' &lt; ' : ' ≥ ') + fmt(5 * K.Pth, 0) + ' mm', KOPPEN_SUB[K.code[1]].test);
-    push(K.code[2], KOPPEN_SUB[K.code[2]].name, fmt(K.MAT, 1) + ' °C', KOPPEN_SUB[K.code[2]].test);
-  } else {
-    const m = KOPPEN_MAIN[K.main];
-    push(K.main, m.name,
-      K.main === 'A' ? fmt(K.Tcold, 1) + ' °C' :
-      K.main === 'E' ? fmt(K.Thot, 1) + ' °C' :
-      fmt(K.Thot, 1) + ' / ' + fmt(K.Tcold, 1) + ' °C', m.test);
-    for (let i = 1; i < letters.length; i++) {
-      const L = letters[i], sub = KOPPEN_SUB[L];
-      if (!sub) continue;
-      /* These read as symbols in either language — P<sub>sdry</sub> is not a
-         word — so they are assembled from literals and never sent to t(). */
-      let val = '';
-      if (L === 's') val = 'P<sub>sdry</sub> = ' + fmt(K.Psdry, 0) + ' mm · P<sub>wwet</sub> ÷ 3 = ' + fmt(K.Pwwet / 3, 0);
-      else if (L === 'w') val = 'P<sub>wdry</sub> = ' + fmt(K.Pwdry, 0) + ' mm · P<sub>swet</sub> ÷ 10 = ' + fmt(K.Pswet / 10, 0);
-      else if (L === 'f') val = 'P<sub>sdry</sub> = ' + fmt(K.Psdry, 0) + ' mm';
-      else if (L === 'a' || L === 'b' || L === 'c' || L === 'd')
-        val = fmt(K.Thot, 1) + ' °C · T<sub>mon10</sub> = ' + fmt(K.Tmon10, 0);
-      else if (L === 'm') val = 'P<sub>dry</sub> = ' + fmt(K.Pdry, 0) + ' mm';
-      else if (L === 'T' || L === 'F') val = fmt(K.Thot, 1) + ' °C';
-      push(L, sub.name, val, sub.test);
-    }
-  }
-
-  host.appendChild(section('How each letter was decided', 'Peel, Finlayson and McMahon (2007), Table 1',
-    'koppen-letters', () => csvRows([['Letter', 'Meaning', 'Value on this site', 'Criterion']]
-      .concat(rows.map(r => r.map(c => String(c).replace(/<[^>]+>/g, '').replace(/&lt;/g, '<').replace(/&gt;/g, '>')))))));
-  host.appendChild(dataTable(['Letter', 'Meaning', 'On this site', 'The criterion it tests'], rows, [1, 2, 3]));
-
-  host.appendChild(hint('clim-threshold',
-    'The aridity threshold <b>P<sub>th</sub></b> is what separates an arid climate from a merely dry-summered one, and it moves with <i>when</i> the rain falls rather than only how much: the same rainfall goes further in a cold month than in a hot one. On this site %1, so P<sub>th</sub> = <b>%2 mm</b> and the class B boundary sits at %3 mm of annual precipitation. This site has <b>%4 mm</b>.',
-    [t(K.thWhy === 'summer' ? 'at least 70 % of the rain falls in the summer half-year, so P th = 2 × MAT + 28'
-      : K.thWhy === 'winter' ? 'at least 70 % of the rain falls in the winter half-year, so P th = 2 × MAT'
-      : 'the rain is spread across both halves of the year, so P th = 2 × MAT + 14'),
-     fmt(K.Pth, 0), fmt(10 * K.Pth, 0), fmt(K.MAP, 0)]));
-
-  /* --- what the class asks of a building ---------------------------------- */
-  const note = KOPPEN_NOTE[K.code];
-  if (note) {
-    host.appendChild(section('What this climate asks of a building', K.code + ' · ' + t(mainName)));
-    host.appendChild(hint('clim-note-' + K.code, note));
-  } else {
-    host.appendChild(section('What this climate asks of a building', K.code));
-    host.appendChild(hint('clim-note-none',
-      'The shared bibliography is written for temperate and Mediterranean building and does not treat <b>%1</b> directly. The pages that follow still compute their geometry from this site’s own latitude and normals, but where a guideline is quoted from a book it will be a guideline written for another climate — read it as a method, not as a number to adopt.',
-      [K.code]));
-  }
-
-  /* --- the normals themselves, so the export carries them ----------------- */
-  host.appendChild(section('The normals this reading rests on', C.source || t('Source not named'),
-    'normals', () => csvRows([['Month', 'Mean temperature (°C)', 'Precipitation (mm)']]
-      .concat(C.t.map((v, i) => [MONTHS_EN[i], v, C.p[i]])))));
-  host.appendChild(dataTable(['Month', 'Mean temperature, °C', 'Precipitation, mm'],
-    C.t.map((v, i) => [MONTHS[i], fmt(v, 1), fmt(C.p[i], 0)]), [0]));
-  host.appendChild(hint('clim-normals',
-    'These are the twelve pairs you entered, and they are the whole of this application’s knowledge of the climate. If the station they come from is not the site — a coastal station read for an inland valley, a lowland station read for a site 400 m higher — then every page after this one inherits that difference. Name the station and the period in the field on the setup page and the export will carry it, so the reading can be audited later.'));
-}
-
 /* ------------------------------------------------------- ORIENTATION --
    The best orientation for the selected site, from its latitude and its
    Köppen class. Two computations, both geometric and both local:
@@ -2690,7 +2608,7 @@ function buildClimate(host) {
    noon is the sun's culmination wherever the site sits. What to do with
    each facade follows Gonçalves & Graça (2004), Olgyay (1963), Lechner
    (2015) and DeKay & Brown (2014); the plan-level advice follows the
-   Köppen class from the previous tab. */
+   Köppen class read on the same page. */
 const ORI_DAYS = [
   { doy:172, key:'21 Jun' },
   { doy:79,  key:'20 Mar' },
@@ -2752,151 +2670,535 @@ function orientationLead(code, main) {
   return 'ori-lead-none';
 }
 
-function buildOrientation(host) {
+function buildEnvironment(host) {
   const S = STATE.site, C = STATE.clim, K = C.k;
   const lat = S.lat, lon = S.lon, tz = lon / 15;
-  pageHead(host, 'Solar Geometry',
-    'Sun geometry for this latitude, and what each facade receives across the year. The recommendation follows the Köppen class from the previous tab.');
+  const G = MASS, RF = ROOF;
+  pageHead(host, 'Environmental',
+    'The climate the site sits in and the sun over it: the Köppen class computed from the normals, and the sun path over the building on its own plot. Every page after this one is written against both.');
 
-  /* --- headline numbers --------------------------------------------------- */
-  const noon = doy => {
-    let best = -90;
-    for (let h = 0; h < 24; h += 0.1) {
-      const a = sunPos(doy, h, lat, lon, tz).alt;
-      if (a > best) best = a;
-    }
-    return best;
-  };
-  const dayLen = doy => {
-    const ss = sunriseSunset(doy, lat, lon, tz);
-    return ss ? ss.set - ss.rise : null;
-  };
-  const hh = v => v === null ? '–' : fmt(v, 1) + ' h';
-  host.appendChild(stats([
-    statCard('Latitude', fmt(Math.abs(lat), 1), lat < 0 ? '° S' : '° N', (S.place || S.nuts)),
-    statCard('Solar noon, 21 June', fmt(noon(172), 1), '°', t('culmination of the sun')),
-    statCard('Solar noon, 21 December', fmt(noon(355), 1), '°', t('low winter sun enters deep')),
-    statCard('Day length Jun / Dec', fmt(dayLen(172), 1) + ' / ' + fmt(dayLen(355), 1), 'h',
-      t('hours of possible sun'))
+  /* ---- the workbench: the climate on the left, the building on its plot
+     under the sun path in the middle, the sun and the map on the right; the
+     tables and the longer notes follow below, folded ---- */
+  const bench = host.appendChild(el('div', { class:'bench env' }));
+  const rail = bench.appendChild(el('div', { class:'rail' }));
+  const stage = bench.appendChild(el('div', { class:'stage' }));
+  const props = bench.appendChild(el('div', { class:'props' }));
+
+  /* --- the climate, in short ----------------------------------------------- */
+  const mainName = KOPPEN_MAIN[K.main] ? KOPPEN_MAIN[K.main].name : '';
+  rail.appendChild(el('div', { class:'gh', text:'Climate' }));
+  rail.appendChild(el('div', { class:'kcode' }, [el('div', { class:'kc', text:K.code }), el('div', { class:'kn', text:t(mainName) })]));
+  const fact = (k, v) => el('div', { class:'fact' }, [el('span', { text:t(k) }), el('b', { text:v })]);
+  rail.appendChild(el('div', { class:'facts' }, [
+    fact('Mean annual temperature', fmt(K.MAT, 1) + ' °C'),
+    fact('Coldest / warmest month', fmt(K.Tcold, 1) + ' / ' + fmt(K.Thot, 1) + ' °C'),
+    fact('Mean annual precipitation', fmt(K.MAP, 0) + ' mm'),
+    fact('in the summer half-year', fmt(100 * K.Psum / K.MAP, 0) + ' %'),
+    fact('Months above 10 °C', fmt(K.Tmon10, 0)),
+    fact('Latitude', fmt(Math.abs(lat), 2) + '° ' + (lat < 0 ? 'S' : 'N')),
+    fact('Altitude', fmt(S.alt || 0, 0) + ' m')
   ]));
-
-  host.appendChild(hint('ori-method',
-    'Hours are counted geometrically — the sun above the horizon and striking the facade — in <b>solar time</b>, so noon is the culmination wherever the site sits. No cloud, no hills and no neighbouring buildings are assumed: treat the numbers as a comparison between orientations, not as energy. The summer half-year is April to September, the Köppen convention used on the previous tab.'));
-
-  /* --- the sun path -------------------------------------------------------- */
-  const tracks = ORI_DAYS.map(d => {
-    const pts = [];
-    for (let h = 0; h <= 24; h += 0.1) {
-      const sp = sunPos(d.doy, h, lat, lon, tz);
-      if (sp.alt > -0.5) pts.push({ h, alt:sp.alt, azi:sp.azi });
-    }
-    return { label:d.key, pts, noon:noon(d.doy) };
-  });
-  const yMax = Math.ceil((Math.max.apply(null, tracks.map(x => x.noon)) + 6) / 10) * 10;
-  const compass = v => COMPASS8[((Math.round(v / 45)) % 8 + 8) % 8];
-  makePanel(host, {
-    title: 'Sun path over the site',
-    note: 'Altitude against azimuth at the solstices and the equinox; dots mark solar noon',
-    aspect: 2.1,
+  const pMax = Math.max(10, Math.ceil(Math.max.apply(null, C.p) / 10) * 10);
+  const tLo = Math.min(0, Math.floor(Math.min.apply(null, C.t) / 5) * 5);
+  const tHi = Math.ceil(Math.max.apply(null, C.t) / 5) * 5;
+  const summerM = K.south ? [9, 10, 11, 0, 1, 2] : [3, 4, 5, 6, 7, 8];
+  makePanel(rail, {
+    title: 'The year, month by month',
+    heightFn: w => Math.min(w / 1.05, 250),
     render(ctx, W, H) {
-      const P = plotRect(46, 16, W - 46 - 14, H - 16 - 52, 0, 360, -2, yMax);
-      ctx.fillStyle = '#faf7f0';                       // the south quadrant
-      ctx.fillRect(P.sx(135), P.y, P.sx(225) - P.sx(135), P.h);
-      stroke(ctx, CH.line2, 1);
-      seg(ctx, P.x, px(P.sy(0)), P.x + P.w, px(P.sy(0)));
-      drawAxes(ctx, P, { xTicks:[0,45,90,135,180,225,270,315,360], xFmt:compass,
-                         yLabel:'Altitude, °', yCount:6 });
-      const cols = ['#DC2626', '#0D9488', '#2563EB'];
-      tracks.forEach((tr, i) => {
-        stroke(ctx, cols[i % 3], 2);
-        ctx.beginPath();
-        tr.pts.forEach((p, k) => { k ? ctx.lineTo(P.sx(p.azi), P.sy(p.alt)) : ctx.moveTo(P.sx(p.azi), P.sy(p.alt)); });
-        ctx.stroke();
-        const np = tr.pts.reduce((a, b) => b.alt > a.alt ? b : a, tr.pts[0]);
-        if (np) {
-          ctx.fillStyle = cols[i % 3];
-          ctx.beginPath(); ctx.arc(P.sx(np.azi), P.sy(np.alt), 3.4, 0, 6.284); ctx.fill();
-          label(ctx, tr.label + ' · ' + fmt(tr.noon, 0) + '°',
-            clamp(P.sx(np.azi) + 8, P.x, P.x + P.w - 92), P.sy(np.alt) - 7, CH.ink2, F(10), 'left', 'middle');
+      const P = plotRect(30, 10, W - 30 - 28, H - 10 - 36, -0.5, 11.5, 0, pMax);
+      const T = plotRect(P.x, P.y, P.w, P.h, -0.5, 11.5, tLo, tHi);
+      ctx.fillStyle = '#faf7f0';
+      summerM.forEach(i => ctx.fillRect(P.sx(i - 0.5), P.y, P.w / 12, P.h));
+      stroke(ctx, CH.line2, 1); seg(ctx, P.x, P.y + P.h, P.x + P.w, P.y + P.h);
+      niceTicks(0, pMax, 4).ticks.forEach(v => label(ctx, fmt(v, 0), P.x - 4, P.sy(v), '#5b82b0', FM(8.5), 'right', 'middle'));
+      niceTicks(tLo, tHi, 4).ticks.forEach(v => label(ctx, fmt(v, 0), P.x + P.w + 4, T.sy(v), '#D97706', FM(8.5), 'left', 'middle'));
+      const bw = P.w / 12 * 0.6;
+      C.p.forEach((v, i) => { const y = P.sy(v); ctx.fillStyle = '#bcd2ea'; ctx.fillRect(P.sx(i) - bw / 2, y, bw, Math.max(0, P.y + P.h - y)); });
+      stroke(ctx, '#D97706', 2);
+      ctx.beginPath(); C.t.forEach((v, i) => { const x = T.sx(i), y = T.sy(v); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }); ctx.stroke();
+      MON3.forEach((m, i) => label(ctx, m.slice(0, 1), P.sx(i), P.y + P.h + 9, CH.muted, F(8.5), 'center', 'middle'));
+      label(ctx, t('mm'), P.x - 4, P.y + P.h + 24, '#5b82b0', FM(8.5), 'right', 'middle');
+      label(ctx, '°C', P.x + P.w + 4, P.y + P.h + 24, '#D97706', FM(8.5), 'left', 'middle');
+      label(ctx, t('Precipitation') + ' · ' + t('Mean temperature'), P.x + P.w / 2, P.y + P.h + 24, CH.muted, F(8.5), 'center', 'middle');
+    },
+    csv: () => csvRows([['Month', 'Mean temperature (°C)', 'Precipitation (mm)']].concat(C.t.map((v, i) => [MONTHS_EN[i], v, C.p[i]])))
+  });
+
+  /* --- the sun over the building on its plot ------------------------------- */
+  const DAYS = [{ doy:172, key:'21 Jun', col:'#DC2626' }, { doy:79, key:'20 Mar', col:'#0D9488' }, { doy:355, key:'21 Dec', col:'#2563EB' }];
+  const VIEW = { SW:225, SE:135, NE:45, NW:315, Plan:180 };
+  const plotPos = () => ENV.plot || { lat, lon };
+  const doyLabel = doy => { let d = doy, m = 0; while (m < 11 && d > MDAYS[m]) { d -= MDAYS[m]; m++; } return d + ' ' + (LANG === 'pt' ? MON3[m].toLowerCase() : MON3[m]); };
+  const hm = h => { const m = Math.round(h * 60); return String(Math.floor(m / 60)).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0'); };
+  /** The camera: the building at the centre of a ground disc of map, under
+      a sky dome that carries the sun paths; seen obliquely from a corner, or
+      straight down as a plan. */
+  const envFrame = (W, H) => {
+    const M = roofModel(G, RF), bb = M.pl.bbox;
+    const half = Math.max(Math.hypot(bb[0], bb[1]), Math.hypot(bb[2], bb[1]), Math.hypot(bb[0], bb[3]), Math.hypot(bb[2], bb[3]));
+    /* the plot: map just round the dome; the neighbourhood: 90 m of map, the dome keeps its size */
+    const Rs = Math.max(18, 2.4 * half), Rg = ENV.wide ? Math.max(90, Rs * 1.28) : Rs * 1.28;
+    const plan = ENV.view === 'Plan', e = (plan ? 90 : 30) * RAD, al = (VIEW[ENV.view] + 180) * RAD;
+    const se = Math.sin(e), ce = Math.cos(e);
+    const top = 10, bottom = H - 10, left = 10, right = W - 10;
+    const vUp = plan ? Rg : Math.max(Rs, Rg * se), vDown = Rg * se;
+    const s = Math.min((right - left) / (2 * Rg + 4), (bottom - top) / (vUp + vDown + 3));
+    const cx = (left + right) / 2, cy = top + (vUp + 1.5) * s + Math.max(0, (bottom - top) - (vUp + vDown + 3) * s) / 2;
+    return { M, Rs, Rg, plan, se, ce, ca:Math.cos(al), sa:Math.sin(al), s, cx, cy, camH:[Math.sin(VIEW[ENV.view] * RAD), Math.cos(VIEW[ENV.view] * RAD)] };
+  };
+  /** World metres (x east, y north, z up) to the screen, and depth from the camera. */
+  const P3 = (FR, x, y, z) => { const xp = x * FR.ca - y * FR.sa, yp = x * FR.sa + y * FR.ca; return [FR.cx + xp * FR.s, FR.cy - (yp * FR.se + (z || 0) * FR.ce) * FR.s]; };
+  const depthOf = (FR, x, y, z) => (x * FR.sa + y * FR.ca) * FR.ce - (z || 0) * FR.se;
+  /** A sun position on the dome. */
+  const domePt = (FR, sp) => { const a = sp.azi * RAD, h = Math.max(0, sp.alt) * RAD; return [FR.Rs * Math.sin(a) * Math.cos(h), FR.Rs * Math.cos(a) * Math.cos(h), FR.Rs * Math.sin(h)]; };
+  const arcOf = doy => {
+    const ss = sunriseSunset(doy, lat, lon, tz), out = [];
+    if (!ss) return out;
+    for (let h = ss.rise; h <= ss.set + 1e-6; h += 0.1) { const sp = sunPos(doy, h, lat, lon, tz); if (sp.alt > -0.3) out.push({ h, sp }); }
+    const sp = sunPos(doy, ss.set, lat, lon, tz); out.push({ h:ss.set, sp });
+    return out;
+  };
+  let envPanel = null;
+  const redrawEnv = () => { if (envPanel) envPanel.draw(); };
+
+  const renderEnv = (ctx, W, H) => {
+    const FR = envFrame(W, H), M = FR.M, pt = (x, y, z) => P3(FR, x, y, z);
+    const b = (G.rot - 180) * RAD, cb = Math.cos(b), sb = Math.sin(b);
+    const toW = (x, y) => [x * cb + y * sb, -x * sb + y * cb];   // the plan as turned on Site
+    ctx.fillStyle = '#fbfbf9'; ctx.fillRect(0, 0, W, H);
+    /* the ground: a disc of map under the building */
+    const disc = [];
+    for (let a = 0; a <= 360; a += 3) disc.push(pt(FR.Rg * Math.sin(a * RAD), FR.Rg * Math.cos(a * RAD), 0));
+    const discPath = () => { ctx.beginPath(); disc.forEach((q, i) => i ? ctx.lineTo(q[0], q[1]) : ctx.moveTo(q[0], q[1])); ctx.closePath(); };
+    discPath(); ctx.fillStyle = '#eceee8'; ctx.fill();
+    let attr = null, failed = 0, shown = 0;
+    if (ENV.map !== 'none') {
+      const src = TILE_SRC[ENV.map], pp = plotPos(), cosl = Math.cos(pp.lat * RAD);
+      const z = clamp(Math.floor(Math.log2(40075016.686 * cosl / (0.8 * FR.Rg))), 14, src.max);
+      const mpp = 40075016.686 * cosl / Math.pow(2, z) / 256, [xt, yt] = mercTile(pp.lat, pp.lon, z), span = FR.Rg / (256 * mpp);
+      ctx.save(); discPath(); ctx.clip();
+      for (let tx = Math.floor(xt - span); tx <= Math.floor(xt + span); tx++) for (let ty = Math.floor(yt - span); ty <= Math.floor(yt + span); ty++) {
+        const tile = tileImg(src.url(z, tx, ty), redrawEnv);
+        if (tile.failed) { failed++; continue; }
+        if (!tile.ok) continue;
+        shown++;
+        const dx = (tx - xt) * 256 * mpp, dy = -(ty - yt) * 256 * mpp;
+        ctx.save();
+        ctx.transform(FR.s * mpp * FR.ca, -FR.s * FR.se * mpp * FR.sa, FR.s * mpp * FR.sa, FR.s * FR.se * mpp * FR.ca,
+          FR.cx + FR.s * (dx * FR.ca - dy * FR.sa), FR.cy - FR.s * FR.se * (dx * FR.sa + dy * FR.ca));
+        ctx.drawImage(tile.img, 0, 0, 256.8, 256.8);   // a hair over size, so no seam shows between tiles
+        ctx.restore();
+      }
+      ctx.restore();
+      if (shown) { discPath(); ctx.fillStyle = 'rgba(255,255,255,.14)'; ctx.fill(); attr = src.attr; }
+    }
+    discPath(); stroke(ctx, CH.line, 1.2); ctx.stroke();
+    /* the compass on the horizon */
+    for (let a = 0; a < 360; a += 15) {
+      const big = a % 90 === 0, r1 = FR.Rg * (big ? 0.93 : 0.97);
+      const p0 = pt(r1 * Math.sin(a * RAD), r1 * Math.cos(a * RAD), 0), p1 = pt(FR.Rg * Math.sin(a * RAD), FR.Rg * Math.cos(a * RAD), 0);
+      stroke(ctx, big ? CH.ink2 : CH.muted, big ? 1.4 : 1); seg(ctx, p0[0], p0[1], p1[0], p1[1]);
+    }
+    [['N', 0], ['E', 90], ['S', 180], ['W', 270]].forEach(([c, a]) => {
+      const q = pt((FR.Rg + 1.6) * Math.sin(a * RAD), (FR.Rg + 1.6) * Math.cos(a * RAD), 0);
+      ctx.fillStyle = 'rgba(251,251,249,.9)'; ctx.fillRect(q[0] - 8, q[1] - 8, 16, 16);
+      label(ctx, c, q[0], q[1], c === 'N' ? CH.ink : CH.muted, F(11, '700'), 'center', 'middle');
+    });
+
+    /* the building's shadow now: each roof piece's prism dropped along the ray */
+    const sun = sunPos(ENV.doy, ENV.h, lat, lon, tz);
+    if (sun.alt > 0.5) {
+      const k = 1 / Math.tan(sun.alt * RAD), sx = -Math.sin(sun.azi * RAD) * k, sy = -Math.cos(sun.azi * RAD) * k;
+      ctx.beginPath();
+      M.pieces.forEach(pc => {
+        const pts = [];
+        pc.poly.forEach(q => { const w = toW(q[0], q[1]), zz = M.zOf(pc.f, q[0], q[1]); pts.push(w, [w[0] + sx * zz, w[1] + sy * zz]); });
+        convexHull(pts).forEach((p2, i) => { const q = pt(p2[0], p2[1], 0); i ? ctx.lineTo(q[0], q[1]) : ctx.moveTo(q[0], q[1]); });
+        ctx.closePath();
+      });
+      ctx.fillStyle = 'rgba(20,23,26,.34)'; ctx.fill('nonzero');
+    }
+
+    /* the sun paths: the solstices and the equinox, and the day chosen; the
+       parts of the dome behind the building go down first */
+    const paths = DAYS.map(d => ({ d, pts:arcOf(d.doy).map(o => ({ h:o.h, p:domePt(FR, o.sp) })) }));
+    const cur = { d:{ doy:ENV.doy, key:doyLabel(ENV.doy), col:'#D97706' }, pts:arcOf(ENV.doy).map(o => ({ h:o.h, p:domePt(FR, o.sp) })) };
+    const drawArcs = behind => {
+      paths.concat([cur]).forEach((pa, i) => {
+        const isCur = pa === cur;
+        stroke(ctx, pa.d.col, isCur ? 2.6 : 1.8, isCur ? null : [7, 4]);
+        for (let k2 = 1; k2 < pa.pts.length; k2++) {
+          const a = pa.pts[k2 - 1].p, c = pa.pts[k2].p, mid = [(a[0] + c[0]) / 2, (a[1] + c[1]) / 2, (a[2] + c[2]) / 2];
+          if ((depthOf(FR, ...mid) > 0) !== behind) continue;
+          const qa = pt(...a), qc = pt(...c); seg(ctx, qa[0], qa[1], qc[0], qc[1]);
         }
       });
-      swatchKey(ctx, P.x, P.y + P.h + 40,
-        tracks.map((tr, i) => ({ color:cols[i % 3], label:tr.label })),
-        { cols:3, colWidth:130 });
-    },
-    csv: () => {
-      const rows = [['Solar time (h)', '21 Jun alt (°)', '21 Jun azi (°)',
-                     '20 Mar alt (°)', '20 Mar azi (°)', '21 Dec alt (°)', '21 Dec azi (°)']];
-      for (let h = 0; h <= 24; h += 0.5) {
-        const r = [h];
-        ORI_DAYS.forEach(d => { const sp = sunPos(d.doy, h, lat, lon, tz); r.push(+sp.alt.toFixed(1), +sp.azi.toFixed(1)); });
-        rows.push(r);
+    };
+    drawArcs(true);
+
+    /* the building from Site under the roof from Roof, back to front */
+    const faces = [], c3 = [FR.camH[0] * FR.ce, FR.camH[1] * FR.ce, FR.se];
+    const wallCol = ns => opaque(wallFill(ns ? 0.14 : 0.08, ns ? 0.85 : 1));
+    M.walls.forEach(wl => {
+      const sg = wl.sg, n = toW(sg.n[0], sg.n[1]);
+      if (n[0] * c3[0] + n[1] * c3[1] <= 1e-6) return;
+      const P = (u, z) => { const w = toW(sg.a[0] + (sg.b[0] - sg.a[0]) * u / sg.len, sg.a[1] + (sg.b[1] - sg.a[1]) * u / sg.len); return [w[0], w[1], z]; };
+      const wn = segWindow(sg, G);
+      faces.push({ pts:[P(0, 0), P(sg.len, 0)].concat(wl.prof.slice().reverse().map(q => P(q[0], q[1]))), fill:wallCol(sg.n[1] !== 0),
+        win:wn ? [P(wn.uc - wn.w / 2, wn.sill), P(wn.uc + wn.w / 2, wn.sill), P(wn.uc + wn.w / 2, Math.min(wn.head, M.H0)), P(wn.uc - wn.w / 2, Math.min(wn.head, M.H0))] : null });
+    });
+    M.steps.forEach(st => {
+      const n = toW(st.n[0], st.n[1]);
+      if (n[0] * c3[0] + n[1] * c3[1] <= 1e-6) return;
+      const P = (u, z) => { const w = toW(st.ax === 'x' ? st.a[0] : st.a[0] + u, st.ax === 'x' ? st.a[1] + u : st.a[1]); return [w[0], w[1], z]; };
+      faces.push({ pts:st.prof.map(q => P(q[0], q[1])).concat(st.prof.slice().reverse().map(q => P(q[0], q[2]))), fill:wallCol(st.n[1] !== 0) });
+    });
+    M.pieces.forEach(pc => {
+      const f = pc.f, nh = toW(-M.t * f.a, -M.t * f.b);
+      if (nh[0] * c3[0] + nh[1] * c3[1] + c3[2] <= 1e-6) return;
+      const kk = RF.n === 0 ? 1 : 0.87 + 0.11 * f.b + 0.05 * f.a;
+      faces.push({ pts:pc.poly.map(q => { const w = toW(q[0], q[1]); return [w[0], w[1], M.zOf(f, q[0], q[1])]; }), fill:opaque(roofFill(0.2 + 0.3 * (1 - kk), kk)), pc });
+    });
+    const dep = f2 => f2.pts.reduce((a, q) => a + depthOf(FR, q[0], q[1], q[2]), 0) / f2.pts.length;
+    const path3 = pts3 => { ctx.beginPath(); pts3.forEach((q, i) => { const p2 = pt(q[0], q[1], q[2]); i ? ctx.lineTo(p2[0], p2[1]) : ctx.moveTo(p2[0], p2[1]); }); ctx.closePath(); };
+    faces.sort((p1, q1) => dep(q1) - dep(p1)).forEach(f2 => {
+      path3(f2.pts); ctx.fillStyle = f2.fill; ctx.fill();
+      if (f2.pc) {
+        stroke(ctx, f2.fill, 1); ctx.stroke();
+        stroke(ctx, CH.ink, 1.3);
+        f2.pc.edges.forEach(e2 => {
+          const wa = toW(e2[0][0], e2[0][1]), wb = toW(e2[1][0], e2[1][1]);
+          const a = pt(wa[0], wa[1], M.zOf(f2.pc.f, e2[0][0], e2[0][1])), c = pt(wb[0], wb[1], M.zOf(f2.pc.f, e2[1][0], e2[1][1]));
+          seg(ctx, a[0], a[1], c[0], c[1]);
+        });
+        return;
       }
+      stroke(ctx, CH.ink, 1.2); ctx.stroke();
+      if (f2.win) { path3(f2.win); ctx.fillStyle = 'rgba(219,234,254,.92)'; ctx.fill(); stroke(ctx, '#2563EB', 1.1); ctx.stroke(); }
+    });
+
+    drawArcs(false);
+    /* the day labels, at each path's noon */
+    const tags = [];
+    paths.concat([cur]).forEach(pa => {
+      if (!pa.pts.length) return;
+      const top = pa.pts.reduce((a, o) => o.p[2] > a.p[2] ? o : a, pa.pts[0]), q = pt(...top.p);
+      tags.push({ q, txt:t(pa.d.key) + ' · ' + fmt(Math.asin(top.p[2] / FR.Rs) / RAD, 0) + '°', col:pa.d.col });
+    });
+    /* the hours along the day chosen */
+    cur.pts.forEach(o => {
+      const hr = Math.round(o.h * 10) / 10;
+      if (Math.abs(hr - Math.round(hr)) > 0.01 || Math.round(hr) % 2) return;
+      const q = pt(...o.p);
+      if (Math.round(hr) === 12) { ctx.fillStyle = '#D97706'; ctx.beginPath(); ctx.arc(q[0], q[1], 2.2, 0, 6.284); ctx.fill(); return; }
+      ctx.fillStyle = '#D97706'; ctx.beginPath(); ctx.arc(q[0], q[1], 2.2, 0, 6.284); ctx.fill();
+      label(ctx, String(Math.round(hr)), q[0], q[1] - 9, '#B45309', FM(9), 'center', 'middle');
+    });
+    tags.forEach(tg => {
+      ctx.font = F(10, '600'); const w = ctx.measureText(tg.txt).width;
+      ctx.fillStyle = 'rgba(255,255,255,.85)'; ctx.fillRect(tg.q[0] + 6, tg.q[1] - 16, w + 8, 14);
+      label(ctx, tg.txt, tg.q[0] + 10, tg.q[1] - 9, tg.col, F(10, '600'), 'left', 'middle');
+    });
+    /* the sun now, its ray to the building, and its handle */
+    if (sun.alt > -0.5) {
+      const sp = domePt(FR, sun), q = pt(...sp), c0 = pt(0, 0, M.H0 * 0.7);
+      stroke(ctx, 'rgba(217,119,6,.75)', 1.4, [4, 3]); seg(ctx, q[0], q[1], c0[0], c0[1]);
+      ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(q[0], q[1], 11, 0, 6.284); ctx.fill();
+      stroke(ctx, '#D97706', 1.5); ctx.stroke();
+      ctx.fillStyle = '#F59E0B'; ctx.beginPath(); ctx.arc(q[0], q[1], 7, 0, 6.284); ctx.fill();
+    }
+    /* the readout, the scale and the credits */
+    const narrow = W < 600;
+    const ridgeSh = sun.alt > 0.5 ? M.ridge / Math.tan(sun.alt * RAD) : null;
+    const line1 = doyLabel(ENV.doy) + ' · ' + hm(ENV.h) + ' ' + t('solar time');
+    const line2 = sun.alt > 0 ? t('sun') + ' ' + fmt(sun.alt, 0) + '° · ' + t('azimuth') + ' ' + fmt(sun.azi, 0) + '° · ' + t('ridge shadow') + ' ' + fmt(ridgeSh, 1) + ' m' : t('the sun is below the horizon');
+    [[line1, 14, FM(narrow ? 10 : 11.5, '600')], [line2, 30, FM(narrow ? 9.5 : 10.5)]].forEach(([txt, y, f]) => {
+      ctx.font = f; const w = ctx.measureText(txt).width;
+      ctx.fillStyle = 'rgba(255,255,255,.88)'; ctx.fillRect(6, y - 9, w + 10, 17);
+      label(ctx, txt, 11, y, CH.ink, f, 'left', 'middle');
+    });
+    const credit = attr ? t(attr) : ENV.map !== 'none' ? (failed ? t('Map tiles unavailable — the plot is drawn without them') : t('Loading the map…')) : null;
+    const cLines = [];
+    if (credit) {
+      ctx.font = F(8.5);
+      credit.split(' ').forEach(wd => { const l = cLines.length ? cLines[cLines.length - 1] + ' ' + wd : wd;
+        if (cLines.length && ctx.measureText(l).width > W * (narrow ? 0.92 : 0.6)) cLines.push(wd); else if (cLines.length) cLines[cLines.length - 1] = l; else cLines.push(wd); });
+    }
+    const stackCredit = narrow && cLines.length > 0;
+    {
+      const target = (narrow ? 70 : 110) / FR.s, nice = [2, 5, 10, 20, 50, 100].reduce((p2, q2) => Math.abs(q2 - target) < Math.abs(p2 - target) ? q2 : p2);
+      const x0 = 12, y0 = H - 16 - (stackCredit ? cLines.length * 12 + 4 : 0), x1 = x0 + nice * FR.s;
+      ctx.fillStyle = 'rgba(255,255,255,.88)'; ctx.fillRect(x0 - 4, y0 - 14, x1 - x0 + 40, 20);
+      stroke(ctx, CH.ink, 1.6); seg(ctx, x0, y0, x1, y0); seg(ctx, x0, y0 - 4, x0, y0 + 2); seg(ctx, x1, y0 - 4, x1, y0 + 2);
+      label(ctx, nice + ' m', x1 + 6, y0 - 1, CH.ink, FM(10), 'left', 'middle');
+    }
+    cLines.forEach((ln, i) => {
+      const y = H - 10 - (cLines.length - 1 - i) * 12;
+      ctx.font = F(8.5); const w = ctx.measureText(ln).width;
+      ctx.fillStyle = 'rgba(255,255,255,.85)'; ctx.fillRect(W - w - 14, y - 7, w + 10, 13);
+      ctx.fillStyle = CH.muted; ctx.textAlign = 'right'; ctx.textBaseline = 'middle'; ctx.fillText(ln, W - 9, y);   // already translated
+    });
+  };
+  envPanel = makePanel(stage, {
+    title: 'The sun over the building, on its plot',
+    note: 'The building drawn on Site, turned as set there, on a disc of map under the sun paths of the solstices, the equinox and the day chosen. Drag the sun along its path to change the hour, across the paths to change the day; the shadow follows. Drag the ground to set the building on its plot.',
+    heightFn: w => Math.round(clamp(Math.min(w * (w < 600 ? 1.05 : 0.74), (window.innerHeight || 900) - 190), 320, 900)),
+    render: renderEnv,
+    csv: () => {
+      const rows = [['Parameter', 'Value']], sp = sunPos(ENV.doy, ENV.h, lat, lon, tz), pp = plotPos(), ss = sunriseSunset(ENV.doy, lat, lon, tz), M = roofModel(G, RF);
+      rows.push(['Plot latitude (°)', +pp.lat.toFixed(6)], ['Plot longitude (°)', +pp.lon.toFixed(6)], ['Day', doyLabel(ENV.doy)], ['Solar time (h)', +ENV.h.toFixed(2)],
+        ['Sun altitude (°)', +sp.alt.toFixed(1)], ['Sun azimuth (°)', +sp.azi.toFixed(1)],
+        ['Sunrise (solar time)', ss ? hm(ss.rise) : ''], ['Sunset (solar time)', ss ? hm(ss.set) : ''], ['Day length (h)', ss ? +(ss.set - ss.rise).toFixed(2) : ''],
+        ['Ridge height (m)', +M.ridge.toFixed(2)], ['Ridge shadow length (m)', sp.alt > 0.5 ? +(M.ridge / Math.tan(sp.alt * RAD)).toFixed(2) : ''],
+        ['Base map', ENV.map === 'none' ? 'none' : TILE_SRC[ENV.map].attr]);
       return csvRows(rows);
     }
   });
 
-  /* --- what each facade receives ------------------------------------------- */
+  /* --- the sun and the map, right of the model ------------------------------ */
+  /* the solar chart itself: altitude against azimuth, the three paths and the
+     day chosen — drag the sun on it, as on the dome */
+  const tracks = DAYS.map(d => ({ d, pts:arcOf(d.doy).map(o => ({ h:o.h, alt:o.sp.alt, azi:o.sp.azi })) }));
+  const yMax = Math.ceil((Math.max.apply(null, tracks.map(tr => Math.max.apply(null, tr.pts.map(p => p.alt)))) + 6) / 10) * 10;
+  const chartRect = (W, H) => plotRect(30, 8, W - 30 - 8, H - 8 - 22, 30, 330, 0, yMax);
+  props.appendChild(el('div', { class:'gh', text:'Sun path' }));
+  const chart = makePanel(props, {
+    title: 'Sun path over the site',
+    heightFn: w => Math.min(w / 1.25, 230),
+    render(ctx, W, H) {
+      const P = chartRect(W, H);
+      ctx.fillStyle = '#faf7f0'; ctx.fillRect(P.sx(135), P.y, P.sx(225) - P.sx(135), P.h);
+      stroke(ctx, CH.line2, 1); seg(ctx, P.x, P.y + P.h, P.x + P.w, P.y + P.h);
+      [45, 90, 135, 180, 225, 270, 315].forEach(a => label(ctx, COMPASS8[a / 45], P.sx(a), P.y + P.h + 10, CH.muted, F(8.5), 'center', 'middle'));
+      niceTicks(0, yMax, 4).ticks.forEach(v => { label(ctx, fmt(v, 0) + '°', P.x - 4, P.sy(v), CH.muted, FM(8.5), 'right', 'middle'); stroke(ctx, 'rgba(20,23,26,.06)', 1); seg(ctx, P.x, P.sy(v), P.x + P.w, P.sy(v)); });
+      const curPts = arcOf(ENV.doy).map(o => ({ alt:o.sp.alt, azi:o.sp.azi }));
+      tracks.concat([{ d:{ col:'#D97706' }, pts:curPts, cur:true }]).forEach(tr => {
+        stroke(ctx, tr.d.col, tr.cur ? 2.4 : 1.6, tr.cur ? null : [6, 3]);
+        ctx.beginPath(); tr.pts.forEach((p, k) => { const x = P.sx(p.azi), y = P.sy(Math.max(0, p.alt)); k ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }); ctx.stroke();
+      });
+      const sp = sunPos(ENV.doy, ENV.h, lat, lon, tz);
+      if (sp.alt > -0.5) {
+        const x = P.sx(sp.azi), y = P.sy(Math.max(0, sp.alt));
+        ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(x, y, 8, 0, 6.284); ctx.fill(); stroke(ctx, '#D97706', 1.4); ctx.stroke();
+        ctx.fillStyle = '#F59E0B'; ctx.beginPath(); ctx.arc(x, y, 5, 0, 6.284); ctx.fill();
+      }
+    },
+    csv: () => {
+      const rows = [['Solar time (h)', '21 Jun alt (°)', '21 Jun azi (°)', '20 Mar alt (°)', '20 Mar azi (°)', '21 Dec alt (°)', '21 Dec azi (°)']];
+      for (let h = 0; h <= 24; h += 0.5) { const r = [h]; ORI_DAYS.forEach(d => { const sp = sunPos(d.doy, h, lat, lon, tz); r.push(+sp.alt.toFixed(1), +sp.azi.toFixed(1)); }); rows.push(r); }
+      return csvRows(rows);
+    }
+  });
+  const syncCtl = (c, v, f) => { c.range.value = v; c.out.textContent = f(v); };
+  const cDoy = rangeCtl('Day', 1, 365, 1, ENV.doy, v => { ENV.doy = v; clampHour(); refreshEnv(); }, v => doyLabel(v));
+  const cHour = rangeCtl('Solar time', 0, 24, 0.05, ENV.h, v => { ENV.h = v; refreshEnv(); }, v => hm(v));
+  const segDays = segCtl(null, [{ value:355, label:'21 Dec' }, { value:79, label:'20 Mar' }, { value:172, label:'21 Jun' }, { value:266, label:'23 Sep' }], ENV.doy,
+    v => { ENV.doy = v; clampHour(); refreshEnv(); });
+  let playing = null;
+  const playBtn = el('button', { class:'btn small', text:'Play the day', onclick:() => {
+    if (playing) { clearInterval(playing); playing = null; playBtn.textContent = t('Play the day'); return; }
+    const ss = sunriseSunset(ENV.doy, lat, lon, tz);
+    if (!ss) return;
+    if (ENV.h >= ss.set - 0.05) ENV.h = ss.rise;
+    playBtn.textContent = t('Pause');
+    playing = setInterval(() => {
+      ENV.h = Math.min(ss.set, ENV.h + (ss.set - ss.rise) / 90);
+      refreshEnv();
+      if (ENV.h >= ss.set - 1e-6) { clearInterval(playing); playing = null; playBtn.textContent = t('Play the day'); }
+    }, 70);
+  } });
+  props.appendChild(controls([segDays, cDoy, cHour, playBtn]));
+  const readings = props.appendChild(el('div', { class:'facts' }));
+  props.appendChild(el('div', { class:'gh', text:'Map and view' }));
+  const cMap = segCtl(null, [{ value:'sat', label:'Satellite' }, { value:'map', label:'Street' }, { value:'none', label:'None' }], ENV.map, v => { ENV.map = v; refreshEnv(); });
+  const cView = segCtl(null, Object.keys(VIEW).map(k => ({ value:k, label:k === 'Plan' ? t('Plan') : k })), ENV.view, v => { ENV.view = v; refreshEnv(); });
+  const cWide = segCtl(null, [{ value:false, label:'Plot' }, { value:true, label:'Neighbourhood' }], ENV.wide, v => { ENV.wide = v; refreshEnv(); });
+  const plotLine = el('div', { class:'hint' });
+  const resetBtn = el('button', { class:'btn small', text:'Back to the site coordinates', onclick:() => { ENV.plot = null; refreshEnv(); } });
+  props.appendChild(controls([cMap, cView, cWide]));
+  props.appendChild(el('div', { class:'rgroup' }, [plotLine, resetBtn]));
+
+  /** Keep the hour inside the day's daylight. */
+  function clampHour() {
+    const ss = sunriseSunset(ENV.doy, lat, lon, tz);
+    if (ss) ENV.h = clamp(ENV.h, Math.ceil(ss.rise * 20) / 20, Math.floor(ss.set * 20) / 20);
+  }
+  function refreshEnv() {
+    syncCtl(cDoy, ENV.doy, v => doyLabel(v));
+    syncCtl(cHour, ENV.h, v => hm(v));
+    segDays.querySelectorAll('button').forEach((b2, i) => b2.setAttribute('aria-pressed', String([355, 79, 172, 266][i] === ENV.doy)));
+    const ss = sunriseSunset(ENV.doy, lat, lon, tz), sp = sunPos(ENV.doy, ENV.h, lat, lon, tz), M = roofModel(G, RF);
+    let noonAlt = -90; if (ss) noonAlt = sunPos(ENV.doy, ss.noon, lat, lon, tz).alt;
+    readings.innerHTML = '';
+    [[t('Sun altitude'), sp.alt > 0 ? fmt(sp.alt, 1) + '°' : t('below the horizon')], [t('Sun azimuth'), fmt(sp.azi, 0) + '° · ' + COMPASS8[Math.round(sp.azi / 45) % 8]],
+     [t('Sunrise – sunset'), ss ? hm(ss.rise) + ' – ' + hm(ss.set) : '–'], [t('Day length'), ss ? fmt(ss.set - ss.rise, 1) + ' h' : '–'],
+     [t('Noon altitude'), fmt(noonAlt, 1) + '°'], [t('Ridge shadow'), sp.alt > 0.5 ? fmt(M.ridge / Math.tan(sp.alt * RAD), 1) + ' m' : '–']]
+      .forEach(([k, v]) => readings.appendChild(el('div', { class:'fact' }, [el('span', { text:k }), el('b', { text:v })])));
+    const pp = plotPos();
+    plotLine.textContent = t('Plot') + ' ' + fmt(Math.abs(pp.lat), 5) + '° ' + (pp.lat < 0 ? 'S' : 'N') + ' · ' + fmt(Math.abs(pp.lon), 5) + '° ' + (pp.lon < 0 ? 'W' : 'E')
+      + (ENV.plot ? '' : ' — ' + t('the site coordinates; drag the ground to move the building'));
+    resetBtn.style.display = ENV.plot ? '' : 'none';
+    envPanel.draw(); chart.draw();
+  }
+
+  /* --- dragging: the sun on the dome or on the chart, the ground under the
+     building. The sun moves to the day and hour nearest the pointer, looked
+     for around the present ones so it slides continuously ---------------- */
+  const nearestSun = toScreen => (px, py) => {
+    let best = null;
+    for (let dd = -18; dd <= 18; dd++) {
+      const doy = ((ENV.doy - 1 + dd) % 365 + 365) % 365 + 1;
+      for (let h = ENV.h - 1.5; h <= ENV.h + 1.5; h += 0.05) {
+        const sp = sunPos(doy, h, lat, lon, tz);
+        if (sp.alt < 0) continue;
+        const q = toScreen(sp), d = Math.hypot(q[0] - px, q[1] - py) + Math.abs(dd) * 0.08;
+        if (!best || d < best.d) best = { d, doy, h };
+      }
+    }
+    if (best) { ENV.doy = best.doy; ENV.h = Math.round(best.h * 20) / 20; refreshEnv(); }
+  };
+  const bindDrag = (panel, onDown, onMove, cursorAt) => {
+    const cv = panel.canvas;
+    cv.style.touchAction = 'none'; cv.draggable = false;
+    cv.addEventListener('dragstart', ev => ev.preventDefault());
+    let drag = null;
+    const xy = ev => { const r = cv.getBoundingClientRect(); return [ev.clientX - r.left, ev.clientY - r.top]; };
+    cv.addEventListener('pointerdown', ev => { const [x, y] = xy(ev); drag = onDown(x, y); if (!drag) return; ev.preventDefault(); try { cv.setPointerCapture(ev.pointerId); } catch (err) {} });
+    cv.addEventListener('pointermove', ev => { const [x, y] = xy(ev); if (!drag) { cv.style.cursor = cursorAt(x, y); return; } ev.preventDefault(); onMove(drag, x, y); });
+    const end = () => { drag = null; };
+    cv.addEventListener('pointerup', end); cv.addEventListener('pointercancel', end);
+  };
+  const sunOnDome = () => { const FR = envFrame(envPanel.W, envPanel.H), sp = sunPos(ENV.doy, ENV.h, lat, lon, tz); return sp.alt > -0.5 ? P3(FR, ...domePt(FR, sp)) : null; };
+  bindDrag(envPanel, (x, y) => {
+    const q = sunOnDome();
+    if (q && Math.hypot(x - q[0], y - q[1]) <= 16) return { kind:'sun' };
+    const FR = envFrame(envPanel.W, envPanel.H), xp = (x - FR.cx) / FR.s, yp = (FR.cy - y) / (FR.s * FR.se);
+    if (Math.hypot(xp, yp) > FR.Rg) return null;
+    return { kind:'pan', x, y, plot:Object.assign({}, plotPos()) };
+  }, (d, x, y) => {
+    if (d.kind === 'sun') { const FR = envFrame(envPanel.W, envPanel.H); nearestSun(sp => P3(FR, ...domePt(FR, sp)))(x, y); return; }
+    /* the ground slides under the building: the building keeps the centre,
+       its plot moves the other way */
+    const FR = envFrame(envPanel.W, envPanel.H), xp = (x - d.x) / FR.s, yp = -(y - d.y) / (FR.s * FR.se);
+    const wx = xp * FR.ca + yp * FR.sa, wy = -xp * FR.sa + yp * FR.ca;
+    ENV.plot = { lat:d.plot.lat - wy / 111320, lon:d.plot.lon - wx / (111320 * Math.cos(d.plot.lat * RAD)) };
+    refreshEnv();
+  }, (x, y) => { const q = sunOnDome(); if (q && Math.hypot(x - q[0], y - q[1]) <= 16) return 'grab';
+    const FR = envFrame(envPanel.W, envPanel.H), xp = (x - FR.cx) / FR.s, yp = (FR.cy - y) / (FR.s * FR.se); return Math.hypot(xp, yp) <= FR.Rg ? 'move' : 'default'; });
+  bindDrag(chart, (x, y) => {
+    const P = chartRect(chart.W, chart.H), sp = sunPos(ENV.doy, ENV.h, lat, lon, tz);
+    return Math.hypot(x - P.sx(sp.azi), y - P.sy(Math.max(0, sp.alt))) <= 16 ? { kind:'sun' } : null;
+  }, (d, x, y) => { const P = chartRect(chart.W, chart.H); nearestSun(sp => [P.sx(sp.azi), P.sy(sp.alt)])(x, y); },
+  (x, y) => { const P = chartRect(chart.W, chart.H), sp = sunPos(ENV.doy, ENV.h, lat, lon, tz); return Math.hypot(x - P.sx(sp.azi), y - P.sy(Math.max(0, sp.alt))) <= 16 ? 'grab' : 'default'; });
+  clampHour();
+  refreshEnv();
+  host._refresh = () => refreshEnv();   // the building may have changed on Site or Roof
+
+  /* --- below: what each facade receives, the recommendation, the reading --- */
+  const lower = host.appendChild(el('div', { class:'grid g2', style:'margin-top:6px' }));
   const FS = facadeSun(lat, lon);
   const sumLbl = lat < 0 ? 'Summer half-year (Oct–Mar)' : 'Summer half-year (Apr–Sep)';
   const winLbl = lat < 0 ? 'Winter half-year (Apr–Sep)' : 'Winter half-year (Oct–Mar)';
-  makePanel(host, {
+  makePanel(lower, {
     title: 'Direct-sun hours on each facade',
     note: 'Unobstructed vertical facades over the whole year, split by half-year',
-    aspect: 2.1,
+    aspect: 1.9,
     render(ctx, W, H) {
       const yMaxB = niceDomain(0, Math.max.apply(null, FS.annual) * 1.02, 5, 0)[1];
-      const P = plotRect(52, 16, W - 52 - 14, H - 16 - 52, -0.6, 7.6, 0, yMaxB);
-      drawAxes(ctx, P, { xTicks:[0,1,2,3,4,5,6,7], xFmt:i => COMPASS8[i],
-                         yLabel:'Hours per year', yCount:5 });
-      const gw = P.w / 8, bw = Math.min(30, gw * 0.26);
+      const P = plotRect(48, 12, W - 48 - 10, H - 12 - 44, -0.6, 7.6, 0, yMaxB);
+      drawAxes(ctx, P, { xTicks:[0,1,2,3,4,5,6,7], xFmt:i => COMPASS8[i], yLabel:'Hours per year', yCount:4 });
+      const gw = P.w / 8, bw = Math.min(26, gw * 0.26);
       for (let f = 0; f < 8; f++) {
-        const cx = P.sx(f);
-        const wv = FS.winter[f], sv = FS.summer[f];
-        ctx.fillStyle = '#2563EB';
-        const y1 = P.sy(wv);
-        ctx.fillRect(cx - bw - 1.5, y1, bw, P.y + P.h - y1);
-        ctx.fillStyle = '#D97706';
-        const y2 = P.sy(sv);
-        ctx.fillRect(cx + 1.5, y2, bw, P.y + P.h - y2);
-        label(ctx, fmt(wv + sv, 0), cx, Math.min(y1, y2) - 5, CH.ink2, FM(9.5), 'center', 'middle');
+        const cx = P.sx(f), wv = FS.winter[f], sv = FS.summer[f];
+        ctx.fillStyle = '#2563EB'; const y1 = P.sy(wv); ctx.fillRect(cx - bw - 1.5, y1, bw, P.y + P.h - y1);
+        ctx.fillStyle = '#D97706'; const y2 = P.sy(sv); ctx.fillRect(cx + 1.5, y2, bw, P.y + P.h - y2);
+        label(ctx, fmt(wv + sv, 0), cx, Math.min(y1, y2) - 5, CH.ink2, FM(9), 'center', 'middle');
       }
-      swatchKey(ctx, P.x, P.y + P.h + 40,
-        [{ color:'#2563EB', label:winLbl }, { color:'#D97706', label:sumLbl }],
-        { cols:2, colWidth:250 });
+      swatchKey(ctx, P.x, P.y + P.h + 34, [{ color:'#2563EB', label:winLbl }, { color:'#D97706', label:sumLbl }], { cols:2, colWidth:Math.min(230, P.w / 2) });
     },
-    csv: () => csvRows([['Month'].concat(ORI_KEYS)]
-      .concat(FS.monthly.map((row, m) => [MONTHS_EN[m]].concat(row.map(v => +v.toFixed(1))))))
+    csv: () => csvRows([['Month'].concat(ORI_KEYS)].concat(FS.monthly.map((row, m) => [MONTHS_EN[m]].concat(row.map(v => +v.toFixed(1))))))
   });
-
-  /* --- the recommendation --------------------------------------------------- */
-  host.appendChild(section('The recommendation for this site', K.code + ' · ' + fmt(Math.abs(lat), 1) + '° ' + (lat < 0 ? 'S' : 'N')));
+  const rec = lower.appendChild(el('div'));
+  rec.appendChild(section('The recommendation for this site', K.code + ' · ' + fmt(Math.abs(lat), 1) + '° ' + (lat < 0 ? 'S' : 'N')));
   const leadId = orientationLead(K.code, K.main);
-  host.appendChild(hint(leadId, {
+  rec.appendChild(hint(leadId, {
     'ori-lead-Csa': 'Elongate the plan east–west so the long facades face south and north; open the living rooms south with fixed plus movable shade; keep the west nearly blind; let mass and night ventilation carry July and August.',
     'ori-lead-Csb': 'Elongate the plan east–west; generous south glass for the winter with light fixed shade for a short summer; cross ventilation and moderate mass.',
     'ori-lead-Cfb': 'Daylight and wind govern, not heat: shallow plan for daylight, high windows to the south and south-east, shelter the north from prevailing Atlantic winds and driving rain, moderate inertia against condensation.',
     'ori-lead-B': 'The daily swing is the resource: compact form, small openings except a south mass or Trombe wall, heavy mass discharged by night ventilation; patio or earth tempering where the slope allows.',
     'ori-lead-none': 'Apply the hemisphere rule below: collect winter sun from the south, refuse summer sun from the east and above all the west.'
   }[leadId]));
-
-  host.appendChild(hint('ori-form',
+  rec.appendChild(hint('ori-form',
     'Long axis east–west, short ends east and west (Ching &amp; Shapiro; DeKay &amp; Brown): the south facade collects the winter, the north gives diffuse light, and the two ends that no overhang can shade stay short.'));
+  const note = KOPPEN_NOTE[K.code];
+  rec.appendChild(section('What this climate asks of a building', K.code + (note ? ' · ' + t(mainName) : '')));
+  rec.appendChild(note ? hint('clim-note-' + K.code, note) : hint('clim-note-none',
+    'The shared bibliography is written for temperate and Mediterranean building and does not treat <b>%1</b> directly. The pages that follow still compute their geometry from this site’s own latitude and normals, but where a guideline is quoted from a book it will be a guideline written for another climate — read it as a method, not as a number to adopt.', [K.code]));
 
-  host.appendChild(section('What to do with each facade',
-    'After Gonçalves & Graça (2004), Olgyay (1963), Lechner (2015) and DeKay & Brown (2014)',
-    'facade-guidance', () => csvRows([['Facade', 'Winter sun (h)', 'Summer sun (h)', 'Annual sun (h)']]
-      .concat(ORI_KEYS.map((k, f) => [k, +FS.winter[f].toFixed(0), +FS.summer[f].toFixed(0), +FS.annual[f].toFixed(0)])))));
-  host.appendChild(dataTable(['Facade', 'Winter sun, h', 'Summer sun, h', 'Annual sun, h', 'What to do with it'],
-    ORI_KEYS.map((k, f) => ['<b>' + COMPASS8[f] + '</b>', fmt(FS.winter[f], 0), fmt(FS.summer[f], 0),
-      fmt(FS.annual[f], 0), t(ORI_GUIDE[k])]), [4]));
+  /* the rest, folded: open what the design needs */
+  const fold = (title, kids) => host.appendChild(el('details', { class:'more' }, [el('summary', { text:title })].concat(kids)));
+  fold('What to do with each facade', [
+    section('What to do with each facade', 'After Gonçalves & Graça (2004), Olgyay (1963), Lechner (2015) and DeKay & Brown (2014)',
+      'facade-guidance', () => csvRows([['Facade', 'Winter sun (h)', 'Summer sun (h)', 'Annual sun (h)']]
+        .concat(ORI_KEYS.map((k, f) => [k, +FS.winter[f].toFixed(0), +FS.summer[f].toFixed(0), +FS.annual[f].toFixed(0)])))),
+    dataTable(['Facade', 'Winter sun, h', 'Summer sun, h', 'Annual sun, h', 'What to do with it'],
+      ORI_KEYS.map((k, f) => ['<b>' + COMPASS8[f] + '</b>', fmt(FS.winter[f], 0), fmt(FS.summer[f], 0), fmt(FS.annual[f], 0), t(ORI_GUIDE[k])]), [4]),
+    hint('ori-method',
+      'Hours are counted geometrically — the sun above the horizon and striking the facade — in <b>solar time</b>, so noon is the culmination wherever the site sits. No cloud, no hills and no neighbouring buildings are assumed: treat the numbers as a comparison between orientations, not as energy. The summer half-year is April to September, the Köppen convention used above.')
+  ]);
+  const rows = [];
+  const push = (letter, why, value, test) => rows.push(['<b>' + letter + '</b>', t(why), value, test]);
+  if (K.main === 'B') {
+    push(K.code[0], KOPPEN_MAIN.B.name, fmt(K.MAP, 0) + ' &lt; ' + fmt(10 * K.Pth, 0) + ' mm', KOPPEN_MAIN.B.test);
+    push(K.code[1], KOPPEN_SUB[K.code[1]].name, fmt(K.MAP, 0) + (K.code[1] === 'W' ? ' &lt; ' : ' ≥ ') + fmt(5 * K.Pth, 0) + ' mm', KOPPEN_SUB[K.code[1]].test);
+    push(K.code[2], KOPPEN_SUB[K.code[2]].name, fmt(K.MAT, 1) + ' °C', KOPPEN_SUB[K.code[2]].test);
+  } else {
+    const m = KOPPEN_MAIN[K.main];
+    push(K.main, m.name, K.main === 'A' ? fmt(K.Tcold, 1) + ' °C' : K.main === 'E' ? fmt(K.Thot, 1) + ' °C' : fmt(K.Thot, 1) + ' / ' + fmt(K.Tcold, 1) + ' °C', m.test);
+    K.code.split('').slice(1).forEach(L => {
+      const sub = KOPPEN_SUB[L];
+      if (!sub) return;
+      /* symbols in either language — P<sub>sdry</sub> is not a word */
+      let val = '';
+      if (L === 's') val = 'P<sub>sdry</sub> = ' + fmt(K.Psdry, 0) + ' mm · P<sub>wwet</sub> ÷ 3 = ' + fmt(K.Pwwet / 3, 0);
+      else if (L === 'w') val = 'P<sub>wdry</sub> = ' + fmt(K.Pwdry, 0) + ' mm · P<sub>swet</sub> ÷ 10 = ' + fmt(K.Pswet / 10, 0);
+      else if (L === 'f') val = 'P<sub>sdry</sub> = ' + fmt(K.Psdry, 0) + ' mm';
+      else if (L === 'a' || L === 'b' || L === 'c' || L === 'd') val = fmt(K.Thot, 1) + ' °C · T<sub>mon10</sub> = ' + fmt(K.Tmon10, 0);
+      else if (L === 'm') val = 'P<sub>dry</sub> = ' + fmt(K.Pdry, 0) + ' mm';
+      else if (L === 'T' || L === 'F') val = fmt(K.Thot, 1) + ' °C';
+      push(L, sub.name, val, sub.test);
+    });
+  }
+  fold('How each letter was decided', [
+    section('How each letter was decided', 'Peel, Finlayson and McMahon (2007), Table 1', 'koppen-letters', () => csvRows([['Letter', 'Meaning', 'Value on this site', 'Criterion']]
+      .concat(rows.map(r => r.map(c => String(c).replace(/<[^>]+>/g, '').replace(/&lt;/g, '<').replace(/&gt;/g, '>')))))),
+    dataTable(['Letter', 'Meaning', 'On this site', 'The criterion it tests'], rows, [1, 2, 3]),
+    hint('clim-method',
+      'The classification is Köppen–Geiger as Peel, Finlayson and McMahon (2007) state it — the formalisation that writes every criterion as an inequality rather than as a description. Nothing here was looked up: the code <b>%1</b> was computed from the normals you entered, and the table above shows which quantity decided each letter. The summer half-year is April to September in the northern hemisphere and October to March in the southern, which is a convention of the classification and not a season.', [K.code]),
+    hint('clim-threshold',
+      'The aridity threshold <b>P<sub>th</sub></b> is what separates an arid climate from a merely dry-summered one, and it moves with <i>when</i> the rain falls rather than only how much: the same rainfall goes further in a cold month than in a hot one. On this site %1, so P<sub>th</sub> = <b>%2 mm</b> and the class B boundary sits at %3 mm of annual precipitation. This site has <b>%4 mm</b>.',
+      [t(K.thWhy === 'summer' ? 'at least 70 % of the rain falls in the summer half-year, so P th = 2 × MAT + 28'
+        : K.thWhy === 'winter' ? 'at least 70 % of the rain falls in the winter half-year, so P th = 2 × MAT'
+        : 'the rain is spread across both halves of the year, so P th = 2 × MAT + 14'), fmt(K.Pth, 0), fmt(10 * K.Pth, 0), fmt(K.MAP, 0)])
+  ]);
+  fold('The normals this reading rests on', [
+    section('The normals this reading rests on', C.source || t('Source not named'), 'normals', () => csvRows([['Month', 'Mean temperature (°C)', 'Precipitation (mm)']]
+      .concat(C.t.map((v, i) => [MONTHS_EN[i], v, C.p[i]])))),
+    dataTable(['Month', 'Mean temperature, °C', 'Precipitation, mm'], C.t.map((v, i) => [MONTHS[i], fmt(v, 1), fmt(C.p[i], 0)]), [0]),
+    hint('clim-normals',
+      'These are the twelve pairs you entered, and they are the whole of this application’s knowledge of the climate. If the station they come from is not the site — a coastal station read for an inland valley, a lowland station read for a site 400 m higher — then every page after this one inherits that difference. Name the station and the period in the field on the setup page and the export will carry it, so the reading can be audited later.')
+  ]);
+  fold('The map and the sun model', [hint('env-map',
+    'The model sets the building drawn on Site — its plan, breaks and patio, turned as set there, under the roof set on Roof — on a disc of base map around its plot: satellite imagery from Esri World Imagery or the street map of OpenStreetMap, each credited on the drawing, loaded from those services by your browser (only the tile addresses leave it). The sun is computed for this site in solar time, as everywhere in this application; its paths for 21 June, 20 March and 21 December are drawn on a sky dome over the building, dashed, with the day chosen solid and its even hours marked. Drag the sun — on the dome or on the solar chart — along its path to change the hour, across the paths to change the day; the shadow on the ground is every piece of the roof dropped along the sun’s ray, as on Ventilation. Drag the ground to slide the map under the building until it stands on its plot; the plot’s coordinates go into the JSON export. <b>Neighbourhood</b> widens the map to 90 m round the plot to read the streets and the buildings around it — their shade is not computed. Imagery can be years old and a little off true position; the dome is a diagram, not to scale with the map.')]);
 }
 
 function buildSite(host) {
   const S = STATE.site, C = STATE.clim, K = C.k;
   const lat = S.lat, lon = S.lon, tz = lon / 15;
   pageHead(host, 'Site',
-    "Test a plan's massing against the Olgyay optimum — scored against the Köppen class from Climate and the sun path from Solar Geometry.");
+    "Test a plan's massing against the Olgyay optimum — scored against the Köppen class and the sun path from Environmental.");
 
   /* --- the plan laboratory: stretch it, turn it, meet Olgyay ----------------
      A top-down massing the student stretches in both directions and rotates,
@@ -5303,10 +5605,6 @@ function buildVentilation(host) {
     return 'rgb(' + v[0] + ',' + v[1] + ',' + v[2] + ')';
   };
   const vegKind = v => specOf(v.type).kind === 'bush' ? 'Bush' : 'Tree';
-  /** A low bush shelters the wall base, not the whole window band: its
-     blockage is weighted by height, full from 2 m up. Every tree reaches
-     that, so tree scores are unchanged. */
-  const vegBlock = v => 0.25 * (v.density != null ? v.density : 0.6) * clamp(v.height / 2, 0.25, 1);
   /* One plant, one sum: total height = trunk (clear stem) + canopy (crown
      depth), all in metres. The crown's radius follows from its depth by
      the species' spread, so dragging trunk or canopy re-sums the height
@@ -6110,81 +6408,136 @@ function buildVentilation(host) {
     });
     return best ? segFace(best) : 'S';
   };
-  /** Wind blockage on one facade, 0 (open) to 0.7 (fully sheltered): each
-      detached wall ~0.30 scaled by its length against a 3 m reference
-      (a 3 m wall scores exactly as before), each plant its
-      height-weighted density × 0.25, nearest facade only. */
-  const blockage = f => {
-    let b = 0;
-    VEGETATION.forEach(v => { if (sideOf(v.x, v.y) === f) b += vegBlock(v); });
-    WALLS.forEach(w => { if (sideOf(w.x, w.y) === f) b += 0.30 * clamp(w.length / 3, 0.5, 2); });
-    return clamp(b, 0, 0.7);
+  /* ---- the two ratings, in metric -----------------------------------------
+     Olgyay's bargain read as physics a first design pass can afford — not a
+     CFD run. Winter: build obstructions upwind — trees, hedges, walls — so
+     the December-to-February wind slows before it reaches the walls and
+     goes round the house; the rating is the wind speed left at the windward
+     walls, in m/s. Summer: funnel the June-to-August wind through the house;
+     the rating is the air speed the cross paths drive through it, in m/s. */
+  /** Every obstacle in the garden as points with a reach: a crown or a bush
+      is one disc (its canopy radius), a wall a row of points along it. R0 is
+      the most it can cut the wind in its lee (a solid wall 0.8; foliage by
+      its density — porous screens cut less but shelter further); Lmax the
+      distance, in heights, at which its shelter has died away. */
+  const obstacles = () => {
+    const out = [];
+    VEGETATION.forEach(v => {
+      const bush = specOf(v.type).kind === 'bush', d = v.density != null ? v.density : 0.6;
+      out.push({ ref:v, pts:[[v.x, v.y]], r:Math.max(0.4, canopyOf(v) * spreadOf(v)), h:Math.max(0.3, v.height),
+        R0:clamp((bush ? 0.2 : 0.15) + (bush ? 0.5 : 0.55) * d, 0.1, 0.75), Lmax:20, F0:(bush ? 0.12 : 0.1) * d });
+    });
+    WALLS.forEach(w => {
+      const n = Math.max(2, Math.ceil(w.length / 0.5)), pts = [];
+      for (let k = 0; k <= n; k++) { const u = -w.length / 2 + w.length * k / n; pts.push(w.along === 'y' ? [w.x, w.y + u] : [w.x + u, w.y]); }
+      out.push({ ref:w, pts, r:0.3, h:Math.max(0.3, w.height), R0:0.8, Lmax:12, F0:0.2 });
+    });
+    return out;
+  };
+  /**
+   * Winter: the wind at the windward walls. The December-to-February wind
+   * (vector mean, with the local tune) is brought to eave height over this
+   * terrain and exposure. Every wall turned into it is sampled every 0.75 m;
+   * at each sample the wind is cut by the best shelter upwind of it — an
+   * obstacle whose crown or length lies across the line back into the wind
+   * cuts up to its R0 out to 5 of its heights, fading to nothing at Lmax
+   * heights (windbreak studies: Heisler & DeWalle, 1988) — or by the
+   * building itself, whose own lee cuts 70 %. Weighed by how squarely the
+   * wind meets each wall. Returns the free wind, the wind left at the walls
+   * and the cut.
+   */
+  const winterWind = (skip) => {
+    const pl = planModel(G), H0 = h0live(), ww = seasonWind('winter'), U = eaveFor(ww.spd), u = localDir(ww.dir);
+    const obs = obstacles().filter(o => o.ref !== skip);
+    let wsum = 0, rsum = 0;
+    pl.segs.forEach(sg => {
+      const c = sg.n[0] * u[0] + sg.n[1] * u[1];
+      if (c <= 0.34) return;
+      const nS = Math.max(2, Math.ceil(sg.len / 0.75));
+      for (let k = 0; k < nS; k++) {
+        const t0 = (k + 0.5) / nS, x = sg.a[0] + (sg.b[0] - sg.a[0]) * t0 + sg.n[0] * 0.05, y = sg.a[1] + (sg.b[1] - sg.a[1]) * t0 + sg.n[1] * 0.05;
+        let red = pl.boxes.some(r => rayHitsBox([x, y, H0 * 0.5], [u[0], u[1], 0], r, H0)) ? 0.7 : 0;
+        obs.forEach(o => o.pts.forEach(q => {
+          const rx = q[0] - x, ry = q[1] - y, along = rx * u[0] + ry * u[1], lat = Math.abs(rx * u[1] - ry * u[0]);
+          if (along <= 0 || lat > o.r) return;
+          const L = along / o.h, g = L <= 5 ? 1 : L >= o.Lmax ? 0 : (o.Lmax - L) / (o.Lmax - 5);
+          red = Math.max(red, o.R0 * g);
+        }));
+        wsum += c; rsum += c * red;
+      }
+    });
+    const cut = wsum > 0 ? rsum / wsum : 0;
+    return { dir:ww.dir, spd:ww.spd, U, Uwall:U * (1 - cut), cut };
+  };
+  /**
+   * Summer: the air the cross paths drive through the house. The June-to-
+   * August wind at eave height meets each opposite pair of sides; the flow
+   * through a pair is Q = Cd · A · U · √ΔCp — Cd 0.61 for a window, A the
+   * openable areas of the two sides in series (half of each glazed area is
+   * taken to open), ΔCp 0.9 when the wind runs along the pair's axis,
+   * falling with the square of the cosine as it turns across (a teaching
+   * approximation of the wind-pressure coefficients). At the inlet the
+   * garden funnels or blocks: an obstacle upwind standing in front of the
+   * inlet windows cuts the wind by up to its R0; one standing beside the
+   * path, within 3 m of it, channels air into it, up to +40 % in all — both
+   * fading with distance to nothing at 10 of its heights. The rating is the
+   * speed of the air entering through the inlet windows — Q over their
+   * openable area — which a garden that funnels raises, and which is
+   * highest when the inlet is smaller than the outlet (Givoni); ACH is Q
+   * against the heated volume.
+   */
+  const summerAir = (skip) => {
+    const pl = planModel(G), sw = seasonWind('summer'), U = eaveFor(sw.spd), u = localDir(sw.dir);
+    const obs = obstacles().filter(o => o.ref !== skip), fr = formReach(), V = formFactor(G, RF).V;
+    const pair = (fA, fB, axis) => {
+      const cosT = Math.abs(u[0] * axis[0] + u[1] * axis[1]), dcp = 0.9 * Math.max(0.1, cosT * cosT);
+      const aA = openArea(fA), aB = openArea(fB);
+      const Ae = aA > 0 && aB > 0 ? 1 / Math.sqrt(1 / (aA * aA) + 1 / (aB * aB)) : 0;
+      /* the inlet: the side of the pair turned into the wind, at its outermost wall */
+      const nA = { S:[0, -1], N:[0, 1], E:[1, 0], W:[-1, 0] }[fA], inlet = nA[0] * u[0] + nA[1] * u[1] >= 0 ? fA : fB;
+      const sg = sunspaceWall(pl, inlet), wn = sg ? segWindow(sg, G) : null;
+      let kb = 0, kf = 0;
+      if (sg) {
+        const c = [(sg.a[0] + sg.b[0]) / 2, (sg.a[1] + sg.b[1]) / 2], half = (wn ? wn.w : sg.len * 0.5) / 2;
+        obs.forEach(o => {
+          let blk = 0, fun = 0;
+          o.pts.forEach(q => {
+            const rx = q[0] - c[0], ry = q[1] - c[1], along = rx * u[0] + ry * u[1], lat = Math.abs(rx * u[1] - ry * u[0]);
+            if (along <= 0 || along > 10 * o.h) return;
+            const g = 1 - along / (10 * o.h);
+            if (lat < half + o.r) blk = Math.max(blk, o.R0 * g);
+            else if (lat < half + o.r + 3) fun = Math.max(fun, o.F0 * g);
+          });
+          kb = Math.max(kb, blk); kf += fun;
+        });
+      }
+      const k = (1 - kb) * (1 + Math.min(0.4, kf));
+      const Q = 0.61 * Ae * U * k * Math.sqrt(dcp), aIn = inlet === fA ? aA : aB;
+      const reach = fr.total > 0 ? (axis[0] ? fr.x : fr.y) / fr.total : 0;
+      return { key:fA + '–' + fB, Q, v:aIn > 0 ? Q / aIn : 0, ach:V > 0 ? Q * 3600 / V : 0, reach, dcp, k, kb, kf, inlet, Ae };
+    };
+    const SN = pair('S', 'N', [0, 1]), EW = pair('E', 'W', [1, 0]);
+    /* the rating reads the better path that reaches at least a quarter of the floor */
+    const use = [SN, EW].filter(p => p.reach >= 0.25);
+    const best = use.length ? use.reduce((p, q) => q.v > p.v ? q : p) : null;
+    return { dir:sw.dir, spd:sw.spd, U, SN, EW, best, v:best ? best.v : 0, ach:SN.ach + EW.ach, Q:SN.Q + EW.Q };
   };
   const effectiveArea = (f1, f2) => {
-    const a1 = openArea(f1) * (1 - blockage(f1)), a2 = openArea(f2) * (1 - blockage(f2));
+    const a1 = openArea(f1), a2 = openArea(f2);
     if (a1 <= 0 || a2 <= 0) return 0;
     return 1 / Math.sqrt(1 / (a1 * a1) + 1 / (a2 * a2));
   };
-  /* Winter shelter 0–100 per facade (higher = better protected): small
-     openings and upwind shelter help; exposure hurts. A teaching index. */
-  /* Winter shelter per facade, averaged over the selected set: each month
-     weighs the calm base by its own gusts — strong months drag the score
-     down, calm ones lift it slightly — and by whether the facade faces
-     that month's wind head-on. Pick deep winter to test gust defense. */
-  const winterScore = f => {
-    const o = OPEN[f];
-    const wwrPen = clamp(1 - (o.wwr || 0) / 0.5, 0, 1);
-    const expo = windKey === 'exposed' ? 0.55 : windKey === 'sheltered' ? 1.0 : 0.8;
-    const normAz = faceAzV(f);
-    const base = ['N', 'E'].includes(['N', 'E', 'S', 'W'][Math.round(normAz / 90) % 4]) ? 0.75 : 0.6;   // by the way the side really faces
-    let sum = 0;
-    windMonths.forEach(m => {
-      const w = WIND_M[m];
-      const tdir = (w.dir + tuneDir + 360) % 360, tspd = w.spd * tuneSpd;
-      /* planting and walls on that side, plus the lee the building's own
-         form gives that side's walls against this month's wind */
-      const shelter = clamp(blockage(f) + 0.7 * windMeets(tdir, f).share, 0, 0.7);
-      const gust = clamp(3 / Math.max(0.5, tspd), 0.5, 1.2);
-      const facing = 1 - 0.15 * Math.cos((tdir - normAz) * RAD);
-      sum += clamp((0.35 + 0.35 * wwrPen + 0.3 * shelter / 0.7) * expo / 0.8 * base / 0.6 * gust * facing, 0, 1.5);
-    });
-    return Math.round(clamp(sum / windMonths.length, 0, 1) * 100);
-  };
-  /* A pair only breathes when the wind has something to push through it: the
-     score is weighted by how squarely the month's wind meets the pair axis —
-     full on, about a third across. A teaching weight, stated not hidden. */
-  const alignPair = (f1, f2, dir) => {
-    const axis = faceAzV(f1 === 'S' || f1 === 'N' ? 'N' : 'E') % 180;
-    const d = Math.abs((((dir - axis) % 180) + 180) % 180);
-    return 0.35 + 0.65 * Math.abs(Math.cos(d * RAD));
-  };
-  /* Summer cross-ventilation 0–100 per opposite pair: the series effective
-     area against a 4 m² generous reference, times eave wind against a
-     3 m/s reference, times the month's alignment. Vegetation and walls on
-     either facade throttle it. */
-  const pairScore = (f1, f2) => {
-    const ae = effectiveArea(f1, f2);
-    const areaTerm = clamp(ae / 4, 0, 1);
-    /* the pair only serves the floor it can reach across: the share of the
-       plan cross-ventilable along its axis (formReach) */
-    const fr = formReach(), reach = fr.total > 0 ? (f1 === 'S' || f1 === 'N' ? fr.y : fr.x) / fr.total : 0;
-    let sum = 0;
-    windMonths.forEach(m => {
-      const w = WIND_M[m];
-      const windTerm = clamp(eaveFor(w.spd * tuneSpd) / 3, 0.15, 1.3) / 1.3;
-      sum += 100 * (0.15 + 0.85 * areaTerm) * (0.45 + 0.55 * windTerm) * alignPair(f1, f2, (w.dir + tuneDir + 360) % 360);
-    });
-    return Math.round(clamp(sum / windMonths.length * (0.5 + 0.5 * reach), 0, 100));
-  };
-  const summerScore = () => Math.round((pairScore('S', 'N') + pairScore('E', 'W')) / 2);
-  /* Winter wind defense for the scoring system below: mean shelter across
-     the four facades — vegetation and walls, exposure and gust-aware
-     months all already inside winterScore. */
-  const winterPosture = () => Math.round((winterScore('S') + winterScore('N') + winterScore('E') + winterScore('W')) / 4);
+  /* the bands, this app's teaching cuts: winter a cut of 50 % or more at the
+     walls reads sheltered, under 25 % exposed; summer 1.0 m/s or more
+     through the inlet windows reads as a breeze through the house, under
+     0.5 m/s as still air */
+  const winterBand = w => w.cut >= 0.5 ? 'ok' : w.cut >= 0.25 ? 'empty' : 'bad';
+  const summerBand = s => s.v >= 1.0 ? 'ok' : s.v >= 0.5 ? 'empty' : 'bad';
   SCORES.ventilation = () => {
-    const fv = formVerdicts(), fr = fv.reach;
-    return { 'Winter shelter /100':winterPosture(), 'Summer tunnel /100':summerScore(),
-      'Months read':monthSetName(MON3_EN), 'Planting':VEGETATION.length, 'Detached walls':WALLS.length,
+    const fv = formVerdicts(), fr = fv.reach, ww = winterWind(), sa = summerAir();
+    return { 'Winter wind, open ground at eaves (m/s)':+ww.U.toFixed(2), 'Winter wind at the windward walls (m/s)':+ww.Uwall.toFixed(2), 'Winter wind cut (%)':Math.round(100 * ww.cut),
+      'Summer air speed at the inlet windows (m/s)':+sa.v.toFixed(2), 'Summer cross flow (m³/h)':Math.round(sa.Q * 3600), 'Summer air changes (1/h)':+sa.ach.toFixed(1),
+      'Planting':VEGETATION.length, 'Detached walls':WALLS.length,
       'Floor cross-ventilable %':Math.round(100 * fr.cross / Math.max(1e-9, fr.total)), 'Floor single-sided %':Math.round(100 * fr.single / Math.max(1e-9, fr.total)),
       'Floor beyond reach %':Math.round(100 * fr.none / Math.max(1e-9, fr.total)),
       'Glass facing the winter wind unsheltered %':Math.round(100 * fv.glassShare), 'Windward wall self-sheltered %':Math.round(100 * fv.wm.share) };
@@ -6218,9 +6571,9 @@ function buildVentilation(host) {
       winterEn:'Winter wind from ' + COMPASS8_EN[Math.round(ww.dir / 45) % 8] + ': ' + Math.round(100 * glassShare) + ' % of the glass faces it unsheltered, the building shelters ' + Math.round(100 * wm.share) + ' % of the windward wall — ' + wWord,
       summerEn:Math.round(100 * cross) + ' % of the floor cross-ventilable, ' + Math.round(100 * reach.single / Math.max(1e-9, reach.total)) + ' % single-sided, ' + Math.round(100 * reach.none / Math.max(1e-9, reach.total)) + ' % beyond reach — ' + sWord + (cross > 0 ? '; ' + aWord : '') };
   };
-  const olgyayVerdict = (w, s) => w >= 50 && s >= 50 ? 'Sheltered winter, breathing summer — the Olgyay balance'
-    : w >= 50 ? 'Sheltered but stuffy — open summer cross paths'
-    : s >= 50 ? 'Breathing summer, draughty winter — shelter the windward side'
+  const olgyayVerdict = (w, s) => w === 'ok' && s === 'ok' ? 'Sheltered winter, breathing summer — the Olgyay balance'
+    : w === 'ok' ? 'Sheltered but stuffy — open summer cross paths'
+    : s === 'ok' ? 'Breathing summer, draughty winter — shelter the windward side'
     : 'Exposed in winter, still in summer — rework both seasons';
 
   /* ---- isometric projection (same as Site tab) ---- */
@@ -6661,15 +7014,14 @@ function buildVentilation(host) {
   const pillFormW = el('span', { class:'pill empty' });
   const pillFormS = el('span', { class:'pill empty' });
   host.appendChild(hint('vent-scores',
-    'Olgyay\u2019s bargain (1963), Design with climate: exclude the winter wind, invite the summer breeze. Winter defense reads shelter planting, detached walls and exposure against each selected month\u2019s gusts — shelter multipliers after Olgyay, pp.37\u201340. Summer potential reads opposite-pair airflow against the month\u2019s wind. Bands at 50 are this app\u2019s teaching cut, not Olgyay\u2019s number.'));
+    'Olgyay’s bargain (1963): keep the winter wind out, let the summer breeze through — two ratings in metres per second. <b>Winter</b> reads the December-to-February wind (vector mean of the months, with the local tune), brought to eave height over this terrain and exposure, and follows it to every wall turned into it: at each point of those walls it is cut by the best shelter upwind — a tree, a hedge or a wall whose crown or length lies across the line back into the wind cuts it most within 5 of its own heights and less and less out to 20 heights (12 for a solid wall, whose lee is deeper but shorter), after the windbreak studies of Heisler &amp; DeWalle (1988); dense foliage cuts more than open foliage, a solid wall up to 80 %; the building’s own lee cuts 70 %. The badge is the wind left at the windward walls: build obstructions upwind and it falls, and the air goes round the house. <b>Summer</b> reads the June-to-August wind driven through each opposite pair of sides: Q = C<sub>d</sub> · A · U · √ΔC<sub>p</sub>, with C<sub>d</sub> 0.61, A the openable areas of the two sides in series (half of each glazed area), U the wind at the eaves and ΔC<sub>p</sub> 0.9 with the wind along the pair, less as it turns across. Planting or a wall standing <i>in front of</i> the inlet windows blocks the flow; standing <i>beside</i> the path, within 3 m of it, it funnels the air into the openings, up to +40 % — plant and build to the sides and keep the path open. The badge is the speed of the air entering through the inlet windows — the flow over their openable area: it rises when the garden funnels, and is highest when the inlet is smaller than the outlet (Givoni); the readout adds the air changes per hour the flow gives the house. The bands — a cut of 50 % or more reads sheltered, 25 % or less exposed; 1.0 m/s or more at the inlets reads as a breeze through the house, under 0.5 m/s as still air — are this app’s teaching cuts. A first design pass, not a wind study.'));
   host.appendChild(hint('vent-form',
-    'The two readings under the model qualify the <b>form</b> drawn on Site — the bar, its break, its patio — for air, whatever is planted round it. <b>Summer</b>: every half metre of floor looks out along the plan’s two axes to the first wall on each side. With windows on both opposite walls no more than five floor heights apart (%1 m here) it can be cross-ventilated; failing that, within 2.5 floor heights (%2 m) of a wall with a window it is single-sided; beyond both it is out of reach of natural ventilation. The 5 × and 2.5 × depths are the CIBSE AM10 rules of thumb, read on the plan’s walls rather than on rooms. A narrow bar, a wing, a recess or a patio all bring floor within reach; a deep square plan leaves its middle out. The reading also says whether the cross paths run with the June-to-August wind or across it. <b>Winter</b>: the December-to-February wind is traced onto every wall turned into it, and a wall counts as sheltered where a line back into the wind meets another part of the building — a patio’s inner walls, the lee of a wing. The share of all the glass left facing that wind unsheltered is the reading: 15 % or less reads as closed, above 35 % as open (this app’s teaching cuts). The form enters both badges: the summer tunnel of each opposite pair is scaled by the floor it can reach across, and each side’s winter shelter adds the lee the building gives its walls to that of the planting and walls.',
+    'The two readings under the model qualify the <b>form</b> drawn on Site — the bar, its break, its patio — for air, whatever is planted round it. <b>Summer</b>: every half metre of floor looks out along the plan’s two axes to the first wall on each side. With windows on both opposite walls no more than five floor heights apart (%1 m here) it can be cross-ventilated; failing that, within 2.5 floor heights (%2 m) of a wall with a window it is single-sided; beyond both it is out of reach of natural ventilation. The 5 × and 2.5 × depths are the CIBSE AM10 rules of thumb, read on the plan’s walls rather than on rooms. A narrow bar, a wing, a recess or a patio all bring floor within reach; a deep square plan leaves its middle out. The reading also says whether the cross paths run with the June-to-August wind or across it. <b>Winter</b>: the December-to-February wind is traced onto every wall turned into it, and a wall counts as sheltered where a line back into the wind meets another part of the building — a patio’s inner walls, the lee of a wing. The share of all the glass left facing that wind unsheltered is the reading: 15 % or less reads as closed, above 35 % as open (this app’s teaching cuts). The form enters both ratings: the building’s own lee cuts the winter wind at the walls it shelters, and the summer rating reads only a cross path that reaches at least a quarter of the floor.',
     [fmt(5 * G.fh, 1), fmt(2.5 * G.fh, 1)]));
   function refreshScores() {
-    const w = winterPosture(), s = summerScore();
-    const verdict = olgyayVerdict(w, s);
-    olgPill.className = 'pill ' + (w >= 50 && s >= 50 ? 'ok' : w >= 50 || s >= 50 ? 'empty' : 'bad');
-    olgPill.textContent = t(verdict);
+    const ww = winterWind(), sa = summerAir(), wb = winterBand(ww), sb = summerBand(sa);
+    olgPill.className = 'pill ' + (wb === 'ok' && sb === 'ok' ? 'ok' : wb === 'ok' || sb === 'ok' ? 'empty' : 'bad');
+    olgPill.textContent = t(olgyayVerdict(wb, sb));
     /* the form's own reading, in words and numbers */
     const fv = formVerdicts(), fr = fv.reach, pc = v => Math.round(100 * v / Math.max(1e-9, fr.total));
     pillFormW.className = 'pill ' + fv.wCls;
@@ -6917,41 +7269,45 @@ function buildVentilation(host) {
     }
 
     /* ---- score readout ---- */
-    const ws = { S:winterScore('S'), N:winterScore('N'), E:winterScore('E'), W:winterScore('W') };
-    const ss = summerScore(), narrowV = W < 600, ry = narrowV ? 66 : 14;
+    const wwR = winterWind(), saR = summerAir(), narrowV = W < 600, ry = narrowV ? 66 : 14;
+    const cmp = az => COMPASS8[Math.round(az / 45) % 8];
     ctx.fillStyle = '#14171a'; ctx.font = 'bold 10px ui-monospace'; ctx.textAlign = 'left';
-    ctx.fillText(t('Winter shelter') + ' S-'+ws.S+' N-'+ws.N+' E-'+ws.E+' W-'+ws.W, 8, ry);
-    ctx.fillStyle = '#1D4ED8'; ctx.fillText(t('Summer') + ' ' + monthSetName() + ' S–N '+pairScore('S','N')+' · E–W '+pairScore('E','W')+' · ' + t('mean') + ' '+ss+'/100', 8, ry + 12);
+    ctx.fillText(t('Winter') + ' ' + (lat < 0 ? t('Jun–Aug') : t('Dec–Feb')) + ' ' + cmp(wwR.dir) + ' ' + fmt(wwR.U, 1) + ' m/s ' + t('at the eaves') + ' → '
+      + fmt(wwR.Uwall, 1) + ' m/s ' + t('at the walls') + ' (−' + Math.round(100 * wwR.cut) + ' %)', 8, ry);
+    ctx.fillStyle = '#1D4ED8'; ctx.fillText(t('Summer') + ' ' + (lat < 0 ? t('Dec–Feb') : t('Jun–Aug')) + ' ' + cmp(saR.dir) + ' ' + fmt(saR.U, 1) + ' m/s → S–N '
+      + fmt(saR.SN.v, 2) + ' · E–W ' + fmt(saR.EW.v, 2) + ' m/s ' + t('at the inlet windows') + ' · ' + fmt(saR.ach, 0) + ' ' + t('air changes/h'), 8, ry + 12);
 
     /* ---- corner etiqueta: the Olgyay meta-evaluation on the model ----
        Winter badge reads the vegetation-and-wall windbreak (blockage after
        Olgyay pp.37-40, gust-weighted months); summer badge reads the wind
        tunnel through the opposite window pairs. No usable openings on
        either pair, no summer score — without windows it does not count. */
-    const ventColor = v => v === null ? CH.faint : v >= 80 ? '#16A34A' : v >= 50 ? '#D97706' : '#DC2626';
+    const ventColor = b => b === null ? CH.faint : b === 'ok' ? '#16A34A' : b === 'empty' ? '#D97706' : '#DC2626';
     /* The last change's effect rides beside each badge for a few seconds —
        plant a tree, see what it did to both scores without looking away. */
     const fresh = scoreDelta && performance.now() - scoreDelta.at < 3200;
-    const ventBadge = (i, value, caption, dv) => {
-      const col = ventColor(value);
+    const ventBadge = (i, value, band, caption, dv) => {
+      const col = ventColor(band);
       const x = narrowV ? 4 + i * 92 : W - 92, y = narrowV ? 4 : 6 + i * 58;
       ctx.fillStyle = '#fff';
       ctx.fillRect(x, y, 84, 52);
       stroke(ctx, col, 1.5); ctx.strokeRect(x, y, 84, 52);
-      label(ctx, value === null ? '–' : String(Math.round(value)), x + 42, y + 25, col, FM(24), 'center', 'middle');
+      label(ctx, value === null ? '–' : value, x + 42, y + 25, col, FM(22), 'center', 'middle');
       let cs = 9;   // longer translations shrink to stay inside the box
       ctx.font = F(cs);
       while (cs > 6.5 && ctx.measureText(t(caption)).width > 78) { cs -= 0.5; ctx.font = F(cs); }
       label(ctx, t(caption), x + 42, y + 44, CH.muted, F(cs), 'center', 'middle');
-      if (fresh && dv) {
-        const txt = (dv > 0 ? '+' : '−') + Math.abs(dv), dcol = dv > 0 ? '#16A34A' : '#DC2626';
+      if (fresh && dv && Math.abs(dv.v) >= 0.005) {
+        const txt = (dv.v > 0 ? '+' : '−') + fmt(Math.abs(dv.v), 2), dcol = dv.good ? '#16A34A' : '#DC2626';
         if (narrowV) label(ctx, txt, x + 80, y + 12, dcol, FM(12, '700'), 'right', 'middle');
         else { ctx.fillStyle = 'rgba(255,255,255,.9)'; ctx.fillRect(x - 46, y + 14, 42, 22); label(ctx, txt, x - 6, y + 25, dcol, FM(15, '700'), 'right', 'middle'); }
       }
     };
     const noPairFlow = effectiveArea('S', 'N') <= 0 && effectiveArea('E', 'W') <= 0;
-    ventBadge(0, winterPosture(), 'Winter shelter /100', scoreDelta && scoreDelta.w);
-    ventBadge(1, noPairFlow ? null : summerScore(), 'Summer tunnel /100', scoreDelta && scoreDelta.s);
+    /* winter: the wind left at the windward walls — lower is better; summer:
+       the air driven through the house — higher is better; both in m/s */
+    ventBadge(0, fmt(wwR.Uwall, 1), winterBand(wwR), 'm/s · winter walls', scoreDelta && scoreDelta.w);
+    ventBadge(1, noPairFlow ? null : fmt(saR.v, 2), noPairFlow ? null : summerBand(saR), 'm/s · summer inlets', scoreDelta && scoreDelta.s);
     if (shadowTag) {
       const desk = labelDesk(ctx, W, H);
       const boxPts = [];
@@ -6991,11 +7347,21 @@ function buildVentilation(host) {
         [f + ' windows w×h (m)', ws.length ? ws.map(w => w.w.toFixed(2) + '×' + (Math.min(w.head, h0live()) - w.sill).toFixed(2)).join(' + ') : 'none'],
         [f + ' WWR', +o.wwr.toFixed(2)], [f + ' overhang (m×n)', o.ovD.toFixed(2) + '×' + o.ovN],
         [f + ' fins (m×n×side)', o.finD.toFixed(2) + '×' + o.finN + '×' + o.finSide],
-        [f + ' openable area (m²)', +openArea(f).toFixed(2)], [f + ' blockage', +blockage(f).toFixed(2)],
-        [f + ' winter shelter', winterScore(f) + '/100']);
+        [f + ' openable area (m²)', +openArea(f).toFixed(2)]);
     });
-    rows.push(['Summer S–N (' + monthSetName(MON3_EN) + ')', pairScore('S','N') + '/100'], ['Summer E–W (' + monthSetName(MON3_EN) + ')', pairScore('E','W') + '/100']);
-    rows.push(['Summer cross-ventilation (' + monthSetName(MON3_EN) + ')', summerScore() + '/100']);
+    {
+      const ww = winterWind(), sa = summerAir();
+      rows.push(['Winter wind (' + (lat < 0 ? 'Jun–Aug' : 'Dec–Feb') + ', vector mean)', COMPASS8_EN[Math.round(ww.dir / 45) % 8] + ' ' + ww.spd.toFixed(1) + ' m/s at 10 m'],
+        ['Winter wind at eave height, open ground (m/s)', +ww.U.toFixed(2)], ['Winter wind at the windward walls (m/s)', +ww.Uwall.toFixed(2)],
+        ['Winter wind cut by planting, walls and the building (%)', Math.round(100 * ww.cut)],
+        ['Summer wind (' + (lat < 0 ? 'Dec–Feb' : 'Jun–Aug') + ', vector mean)', COMPASS8_EN[Math.round(sa.dir / 45) % 8] + ' ' + sa.spd.toFixed(1) + ' m/s at 10 m'],
+        ['Summer wind at eave height (m/s)', +sa.U.toFixed(2)]);
+      [sa.SN, sa.EW].forEach(pp => rows.push([pp.key + ' effective opening, in series (m²)', +pp.Ae.toFixed(2)], [pp.key + ' ΔCp', +pp.dcp.toFixed(2)],
+        [pp.key + ' inlet side', pp.inlet], [pp.key + ' garden at the inlet: blocked (%) / funnelled (%)', Math.round(100 * pp.kb) + ' / ' + Math.round(100 * Math.min(0.4, pp.kf))],
+        [pp.key + ' flow (m³/h)', Math.round(pp.Q * 3600)], [pp.key + ' air speed at the inlet windows (m/s)', +pp.v.toFixed(2)], [pp.key + ' air changes (1/h)', +pp.ach.toFixed(1)],
+        [pp.key + ' floor it reaches (%)', Math.round(100 * pp.reach)]));
+      rows.push(['Summer air speed at the inlet windows, best path (m/s)', +sa.v.toFixed(2)], ['Summer air changes, both paths (1/h)', +sa.ach.toFixed(1)]);
+    }
     rows.push(['Sun day', SH.key], ['Solar time (h)', +SH.h.toFixed(2)]);
     rows.push(['Sun altitude (°)', +sn.alt.toFixed(1)], ['Sun azimuth (°)', +sn.azi.toFixed(1)]);
     rows.push(['Ridge shadow (m)', +shadowLenV(h0live() + ((RF.n === 0 ? 0 : RF.th) ? ((RF.n === 2 || RF.n === 3) ? G.D/2 : G.D) * Math.tan(RF.th * RAD) : 0), sn.alt).toFixed(1)]);
@@ -7003,9 +7369,7 @@ function buildVentilation(host) {
     VEGETATION.forEach(v => rows.push([vegKind(v), specOf(v.type).pt + ' (' + specOf(v.type).sci + ') h=' + v.height + 'm trunk=' + trunkOf(v).toFixed(1) + 'm canopy=' + canopyOf(v).toFixed(1) + 'm ' + crownFormOf(v) + ' d=' + v.density + ' x=' + v.x + ' y=' + v.y + ' → ' + sideOf(v.x, v.y)]));
     WALLS.forEach(w => rows.push(['Wall', 'x=' + w.x + ' y=' + w.y + ' ' + w.along + ' h=' + w.height + 'm l=' + w.length + 'm → ' + sideOf(w.x, w.y)]));
     rows.push(['Köppen–Geiger', (C && C.k) ? C.k.code : '']);
-    rows.push(['Winter wind defense (0-100)', winterPosture()]);
-    rows.push(['Summer cross-ventilation (0-100)', summerScore()]);
-    rows.push(['Olgyay verdict', olgyayVerdict(winterPosture(), summerScore())]);
+    rows.push(['Olgyay verdict', olgyayVerdict(winterBand(winterWind()), summerBand(summerAir()))]);
     {
       const fv = formVerdicts(), fr = fv.reach, wm = fv.wm;
       rows.push(['Form: floor cross-ventilable (%)', Math.round(100 * fr.cross / Math.max(1e-9, fr.total))],
@@ -7281,25 +7645,24 @@ function buildVentilation(host) {
   const effectOf = sel => {
     const arr = sel.kind === 'wall' ? WALLS : VEGETATION, it = arr[sel.index];
     if (!it) return null;
-    const w1 = winterPosture(), s1 = summerScore();
-    arr.splice(sel.index, 1);
-    const w0 = winterPosture(), s0 = summerScore();
-    arr.splice(sel.index, 0, it);
+    const w1 = winterWind().Uwall, s1 = summerAir().v, w0 = winterWind(it).Uwall, s0 = summerAir(it).v;
     return { w:w1 - w0, s:s1 - s0 };
   };
-  const signed = v => (v > 0 ? '+' : v < 0 ? '−' : '±') + Math.abs(v);
+  const signed = v => (v > 0.005 ? '+' : v < -0.005 ? '−' : '±') + fmt(Math.abs(v), 2);
   const refresh = () => {
-    const nowW = winterPosture(), noFlow = effectiveArea('S', 'N') <= 0 && effectiveArea('E', 'W') <= 0;
-    const nowS = noFlow ? null : summerScore();
+    const nowW = +winterWind().Uwall.toFixed(2), noFlow = effectiveArea('S', 'N') <= 0 && effectiveArea('E', 'W') <= 0;
+    const nowS = noFlow ? null : +summerAir().v.toFixed(2);
     if (lastScores && (nowW !== lastScores.w || nowS !== lastScores.s)) {
-      scoreDelta = { w:nowW - lastScores.w, s:nowS === null || lastScores.s === null ? 0 : nowS - lastScores.s, at:performance.now() };
+      const dW = nowW - lastScores.w, dS = nowS === null || lastScores.s === null ? 0 : nowS - lastScores.s;
+      /* less winter wind at the walls is the gain; more summer air is */
+      scoreDelta = { w:{ v:dW, good:dW < 0 }, s:{ v:dS, good:dS > 0 }, at:performance.now() };
       clearTimeout(deltaTimer); deltaTimer = setTimeout(draw, 3300);
     }
     lastScores = { w:nowW, s:nowS };
     const sel0 = selItem(), eff = sel0 ? effectOf(sel0) : null;
     effLine.innerHTML = !sel0 || !eff ? t('Pick a tool on the left and click open ground; click a placed item to see what it does.')
-      : '<b>' + t(sel0.kind === 'wall' ? 'This wall' : 'This plant') + '</b>: ' + t('winter shelter') + ' <b>' + signed(eff.w) + '</b> · '
-        + t('summer tunnel') + ' <b>' + signed(eff.s) + '</b><br><span style="color:var(--muted)">' + t('what the two scores lose if it goes') + '</span>';
+      : '<b>' + t(sel0.kind === 'wall' ? 'This wall' : 'This plant') + '</b>: ' + t('winter wind at the walls') + ' <b>' + signed(eff.w) + ' m/s</b> · '
+        + t('summer air at the inlets') + ' <b>' + signed(eff.s) + ' m/s</b><br><span style="color:var(--muted)">' + t('what it changes, against the garden without it') + '</span>';
     syncEditor();
     refreshScores();
     syncWallEd();
@@ -7316,8 +7679,7 @@ function buildVentilation(host) {
       ' m/s · stack(ΔT 5K) ' + fmt(stackPa(5), 1) + ' Pa · ' + SH.key + ' ' + fmt(SH.h, 2) + ' h' +
       ' · ' + t('sun') + ' ' + fmt(sn.alt, 0) + '°/' + fmt(sn.azi, 0) + '°' +
       ' · ' + t('wind') + ' ' + monthSetName() + ' ' + dirName() + ' ' + fmt(tunedWind().spd, 1) + ' m/s' + tuneTxt() +
-      ' · S–N ' + pairScore('S','N') + ' · E–W ' + pairScore('E','W') + ' · ' + t('winter') +
-      ' S ' + winterScore('S') + '/N ' + winterScore('N') + '/E ' + winterScore('E') + '/W ' + winterScore('W')));
+      ' · ' + t('winter walls') + ' ' + fmt(winterWind().Uwall, 1) + ' m/s · ' + t('summer inlets') + ' ' + fmt(summerAir().v, 2) + ' m/s'));
     draw();
   };
   cv.addEventListener('click', clickHandler);
@@ -7334,8 +7696,7 @@ function buildVentilation(host) {
 }
 /* --------------------------------------------------------------- 8. BOOT -- */
 const TABS = [
-  { key:'climate', label:'Climate', build:buildClimate },
-  { key:'orientation', label:'Solar Geometry', build:buildOrientation },
+  { key:'environment', label:'Environmental', build:buildEnvironment },
   { key:'site', label:'Site', build:buildSite },
   { key:'roof', label:'Roof', build:buildRoof },
   { key:'openings', label:'Windows & Shading', build:buildOpenings },
@@ -7680,6 +8041,7 @@ function toDecisionsJSON() {
   return JSON.stringify({
     app:APP.name, version:APP.version, exported:new Date().toISOString(),
     site:{ place:S.place, nuts:S.nuts, lat:S.lat, lon:S.lon, alt:S.alt, use:S.use, operation:S.operation,
+      plot:ENV.plot ? { lat:+ENV.plot.lat.toFixed(6), lon:+ENV.plot.lon.toFixed(6) } : null,
       koppen:STATE.clim.k.code, normalsSource:STATE.clim.source || null },
     decisions:{
       plan:{ length:MASS.L, depth:MASS.D, mainFacadeAzimuth:MASS.rot, floors:MASS.fl, floorHeight:MASS.fh,
@@ -8183,6 +8545,7 @@ function mountApp(site, clim, keepTab, keepModel) {
   if (!(keepModel && MASS)) {   // a language switch keeps the student's model; a new site starts afresh
   SCENE.veg.length = 0; SCENE.walls.length = 0;
   MASS = { L:12, D:8, rot:180, fl:1, fh:3.0, col:null, form:'rect', wing:null, patio:{ on:false, w:4, d:3, cx:0, cy:0 } };
+  ENV.plot = null;
   ROOF = { n:2, th:Math.round(Math.abs(site.lat)), col:null, sol:{ tech:'none', cols:4, rows:2 } };
   /* One entry per local facade (S/N/E/W, matching the Roof tab's convention
      of true-south regardless of the plan's chosen rotation), each holding
@@ -8419,9 +8782,24 @@ Object.assign(PT, {
 
   /* the climate page */
   "Climate": "Clima",
-  "One code of two or three letters, computed from twelve temperatures and twelve rainfalls. Every page after this one is written against it.":
-    "Um código de duas ou três letras, calculado a partir de doze temperaturas e doze precipitações. Todas as páginas seguintes estão escritas contra ele.",
   "Köppen–Geiger": "Köppen–Geiger",
+  /* the reference notes not yet read in Portuguese */
+  "The monthly-average-day method the Roof tab carries the site’s irradiation onto a collector with: clearness index, beam and diffuse split, the beam ratio over the mean day, the isotropic sky.":
+    "O método do dia médio mensal com que o separador Telhado leva a irradiação do local até um colector: índice de limpidez, separação directa e difusa, razão da radiação directa ao longo do dia médio, céu isotrópico.",
+  "The monthly correlation that splits the horizontal irradiation into its beam and diffuse parts.":
+    "A correlação mensal que separa a irradiação horizontal nas suas partes directa e difusa.",
+  "The mean day of each month and the beam ratio on a tilted surface.":
+    "O dia médio de cada mês e a razão da radiação directa numa superfície inclinada.",
+  "The reanalysis behind the site’s daily solar radiation, {}–{}, read through Open-Meteo.":
+    "A reanálise por detrás da radiação solar diária do local, {}–{}, lida através do Open-Meteo.",
+  "The efficiency curve — η{}, a{}, a{} — a thermal collector is read by; the Roof tab uses typical flat-plate values.":
+    "A curva de rendimento — η{}, a{}, a{} — pela qual se lê um colector térmico; o separador Telhado usa valores típicos de colector plano.",
+  "The performance ratio the PV output is reduced by for a real system’s losses.":
+    "O índice de desempenho que reduz a produção fotovoltaica pelas perdas de um sistema real.",
+  "The three colour classes of solar absorptance — light {}, medium {}, dark {} — the wall colour on Site reads its albedo from.":
+    "As três classes de cor do coeficiente de absorção solar — clara {}, média {}, escura {} — de que a cor da parede no Local lê o seu albedo.",
+  "The regional forest programme each site region answers to. The Ventilation palette names the region’s PROF and the protected areas inside it (ICNF, IFCN, Governo dos Açores) whose flora its species were read from — nothing from outside the region.":
+    "O programa regional de ordenamento florestal a que responde cada região do local. A paleta de Ventilação indica o PROF da região e as áreas protegidas dentro dela (ICNF, IFCN, Governo dos Açores) de cuja flora foram lidas as suas espécies — nada de fora da região.",
   "Mean annual temperature": "Temperatura média anual",
   "Mean annual precipitation": "Precipitação média anual",
   "Months above 10 °C": "Meses acima de 10 °C",
@@ -8504,18 +8882,51 @@ Object.assign(PT, {
 
   /* the site page */
   "Site": "Local",
-  "Test a plan's massing against the Olgyay optimum — scored against the Köppen class from Climate and the sun path from Solar Geometry.":
-    "Teste uma planta contra o óptimo de Olgyay — avaliada contra a classe de Köppen de Clima e o percurso solar de Geometria Solar.",
+  "Test a plan's massing against the Olgyay optimum — scored against the Köppen class and the sun path from Environmental.":
+    "Teste uma planta contra o óptimo de Olgyay — avaliada contra a classe de Köppen e o percurso solar de Ambiente.",
 
   /* the roof page */
   "Roof": "Telhado",
   "Roof the plan drawn on Site — slopes, pitch, colour, and the sun the slope facing the main facade can collect.":
     "Cubra a planta desenhada no Local — vertentes, inclinação, cor e o sol que a vertente virada para a fachada principal pode recolher.",
 
-  /* the orientation page */
-  "Solar Geometry": "Geometria Solar",
-  "Sun geometry for this latitude, and what each facade receives across the year. The recommendation follows the Köppen class from the previous tab.":
-    "Geometria solar para esta latitude, e o que cada fachada recebe ao longo do ano. A recomendação segue a classe de Köppen da página anterior.",
+  /* the environmental page */
+  "Environmental": "Ambiente",
+  "The climate the site sits in and the sun over it: the Köppen class computed from the normals, and the sun path over the building on its own plot. Every page after this one is written against both.":
+    "O clima em que o local assenta e o sol sobre ele: a classe de Köppen calculada a partir das normais, e o percurso do sol sobre o edifício no seu próprio lote. Todas as páginas seguintes estão escritas contra ambos.",
+  "Coldest / warmest month": "Mês mais frio / mais quente",
+  "The sun over the building, on its plot": "O sol sobre o edifício, no seu lote",
+  "The building drawn on Site, turned as set there, on a disc of map under the sun paths of the solstices, the equinox and the day chosen. Drag the sun along its path to change the hour, across the paths to change the day; the shadow follows. Drag the ground to set the building on its plot.":
+    "O edifício desenhado no Local, rodado como aí definido, sobre um disco de mapa sob os percursos do sol dos solstícios, do equinócio e do dia escolhido. Arraste o sol ao longo do percurso para mudar a hora, através dos percursos para mudar o dia; a sombra acompanha. Arraste o terreno para assentar o edifício no seu lote.",
+  "Sun path": "Percurso do sol",
+  "Day": "Dia",
+  "{} Sep": "{} set",
+  "Map and view": "Mapa e vista",
+  "Satellite": "Satélite",
+  "Street": "Ruas",
+  "None": "Nenhum",
+  "Plot": "Lote",
+  "Neighbourhood": "Vizinhança",
+  "Back to the site coordinates": "Voltar às coordenadas do local",
+  "Sun altitude": "Altura do sol",
+  "Sun azimuth": "Azimute do sol",
+  "Sunrise – sunset": "Nascer – pôr do sol",
+  "Day length": "Duração do dia",
+  "Noon altitude": "Altura ao meio-dia",
+  "Ridge shadow": "Sombra da cumeeira",
+  "below the horizon": "abaixo do horizonte",
+  "the site coordinates; drag the ground to move the building": "as coordenadas do local; arraste o terreno para deslocar o edifício",
+  "solar time": "hora solar",
+  "sun": "sol",
+  "azimuth": "azimute",
+  "ridge shadow": "sombra da cumeeira",
+  "the sun is below the horizon": "o sol está abaixo do horizonte",
+  "Map tiles unavailable — the plot is drawn without them": "Mosaicos do mapa indisponíveis — o lote é desenhado sem eles",
+  "Loading the map…": "A carregar o mapa…",
+  "Imagery: Esri World Imagery — Esri, Maxar, Earthstar Geographics and the GIS User Community":
+    "Imagem: Esri World Imagery — Esri, Maxar, Earthstar Geographics e a GIS User Community",
+  "Map © OpenStreetMap contributors": "Mapa © contribuidores do OpenStreetMap",
+  "The map and the sun model": "O mapa e o modelo solar",
   "Latitude": "Latitude",
   "Solar noon, 21 June": "Meio-dia solar, 21 de Junho",
   "Solar noon, 21 December": "Meio-dia solar, 21 de Dezembro",
@@ -8825,6 +9236,19 @@ Object.assign(PT, {
   "least faces": "menos virado a",
   "windows": "janelas",
   "Form in winter": "Forma no inverno",
+  "m/s · winter walls": "m/s · paredes inverno",
+  "m/s · summer inlets": "m/s · entradas verão",
+  "at the eaves": "ao beirado",
+  "at the walls": "nas paredes",
+  "air changes/h": "renovações/h",
+  "Dec–Feb": "Dez–Fev",
+  "Jun–Aug": "Jun–Ago",
+  "winter wind at the walls": "vento de inverno nas paredes",
+  "what it changes, against the garden without it": "o que muda, contra o jardim sem ele",
+  "winter walls": "paredes inverno",
+  "summer inlets": "entradas verão",
+  "at the inlet windows": "nas janelas de entrada",
+  "summer air at the inlets": "ar de verão nas entradas",
   "Sheltered winter, breathing summer — the Olgyay balance": "Inverno abrigado, verão que respira — o equilíbrio de Olgyay",
   "Sheltered but stuffy — open summer cross paths": "Abrigado mas abafado — abra percursos cruzados de verão",
   "Breathing summer, draughty winter — shelter the windward side": "Verão que respira, inverno com correntes de ar — abrigue o lado a barlavento",
@@ -8926,7 +9350,7 @@ Object.assign(PT, {
   /* windows on the Site model */
   "Windows": "Janelas",
   "window": "janela",
-  "21 Dec": "21 Dez",
+  "21 Dec": "21 dez",
   "no window": "sem janela",
   "shadow": "sombra",
   "Window fit": "Ajuste vãos",
@@ -8949,7 +9373,9 @@ Object.assign(PT_HINT, {
   'roof-solar':
     'Escolha <b>painéis fotovoltaicos</b> ou <b>colectores térmicos</b> à esquerda do modelo e dimensione o campo — pelas colunas e filas, ou arrastando o ponto âmbar no seu canto sobre a cobertura. Os módulos assentam no maior plano da cobertura virado para a fachada principal, seja o que for que as alas, os recuos ou o pátio da planta lhe façam — filas a partir de 0,4 m acima do seu bordo mais baixo, 0,3 m para dentro dele, livres de cumeeiras, rincões e larós — pelo que ficam virados para a orientação definida no separador Local; numa cobertura plana ficam em filas sobre estrutura, à melhor inclinação, espaçadas para que o sol do meio-dia de 21 de Dezembro passe por cima da fila da frente. O sol no plano dos colectores é lido da irradiação horizontal do próprio local — radiação de onda curta diária 1991–2020 da reanálise ERA5 (Hersbach et al., 2020), via Open-Meteo — levada para o plano inclinado mês a mês pelo método de Duffie &amp; Beckman: a separação mensal em directa e difusa de Erbs, Klein &amp; Duffie, a razão da directa no dia médio de cada mês (Klein), o céu isotrópico e 20 % de reflexão do solo. A parte da melhor produção que a inclinação dá é a única pontuação da inclinação no modelo. FV: módulos de cerca de 20 % de rendimento (0,20 kWp por m²) e um índice de desempenho de 0,80 (IEC 61724-1) dão a electricidade. Térmico: um colector plano lido pela curva de rendimento da EN ISO 9806 com coeficientes típicos (η0 0,78, a1 3,5, a2 0,015), a uma temperatura média do fluido de 50 °C contra a temperatura do ar de cada mês, dá o calor que consegue captar — mais do que uma casa consome no verão, pelo que a fracção solar de um sistema real é menor. A ficha técnica de um módulo ou colector real substitui estes valores. Sem os dados do local, os números assentam num índice de limpidez assumido de 0,55 e dizem-no.',
   'vent-form':
-    'As duas leituras por baixo do modelo qualificam a <b>forma</b> desenhada no Local — a barra, a sua quebra, o seu pátio — para o ar, seja o que for que se plante à volta. <b>Verão</b>: cada meio metro de piso olha ao longo dos dois eixos da planta até à primeira parede de cada lado. Com janelas nas duas paredes opostas a não mais de cinco alturas de piso uma da outra (aqui %1 m) pode ter ventilação cruzada; não sendo assim, a menos de 2,5 alturas de piso (%2 m) de uma parede com janela é unilateral; para lá das duas fica fora do alcance da ventilação natural. As profundidades de 5 × e 2,5 × são as regras práticas do CIBSE AM10, lidas nas paredes da planta e não em compartimentos. Uma barra estreita, uma ala, um recuo ou um pátio trazem piso para dentro do alcance; uma planta quadrada funda deixa o meio de fora. A leitura diz também se os percursos cruzados seguem o vento de Junho a Agosto ou o atravessam. <b>Inverno</b>: o vento de Dezembro a Fevereiro é levado a todas as paredes voltadas para ele, e uma parede conta como abrigada onde uma linha de volta ao vento encontra outra parte do edifício — as paredes interiores de um pátio, o sotavento de uma ala. A leitura é a parte de todo o vidro que fica de frente para esse vento sem abrigo: 15 % ou menos lê-se como fechada, acima de 35 % como aberta (cortes didácticos desta aplicação). A forma entra nas duas caixas: o túnel de verão de cada par oposto é escalado pelo piso que consegue atravessar, e o abrigo de inverno de cada lado soma o sotavento que o edifício dá às suas paredes ao da plantação e dos muros.',
+    'As duas leituras por baixo do modelo qualificam a <b>forma</b> desenhada no Local — a barra, a sua quebra, o seu pátio — para o ar, seja o que for que se plante à volta. <b>Verão</b>: cada meio metro de piso olha ao longo dos dois eixos da planta até à primeira parede de cada lado. Com janelas nas duas paredes opostas a não mais de cinco alturas de piso uma da outra (aqui %1 m) pode ter ventilação cruzada; não sendo assim, a menos de 2,5 alturas de piso (%2 m) de uma parede com janela é unilateral; para lá das duas fica fora do alcance da ventilação natural. As profundidades de 5 × e 2,5 × são as regras práticas do CIBSE AM10, lidas nas paredes da planta e não em compartimentos. Uma barra estreita, uma ala, um recuo ou um pátio trazem piso para dentro do alcance; uma planta quadrada funda deixa o meio de fora. A leitura diz também se os percursos cruzados seguem o vento de Junho a Agosto ou o atravessam. <b>Inverno</b>: o vento de Dezembro a Fevereiro é levado a todas as paredes voltadas para ele, e uma parede conta como abrigada onde uma linha de volta ao vento encontra outra parte do edifício — as paredes interiores de um pátio, o sotavento de uma ala. A leitura é a parte de todo o vidro que fica de frente para esse vento sem abrigo: 15 % ou menos lê-se como fechada, acima de 35 % como aberta (cortes didácticos desta aplicação). A forma entra nas duas classificações: o sotavento do próprio edifício corta o vento de inverno nas paredes que abriga, e a classificação de verão só lê um percurso cruzado que alcance pelo menos um quarto do piso.',
+  'vent-scores':
+    'O compromisso de Olgyay (1963): manter fora o vento de inverno, deixar passar a brisa de verão — duas classificações em metros por segundo. <b>Inverno</b> lê o vento de Dezembro a Fevereiro (média vectorial dos meses, com o ajuste local), levado à altura do beirado sobre este terreno e exposição, e segue-o até cada parede voltada para ele: em cada ponto dessas paredes é cortado pelo melhor abrigo a montante — uma árvore, uma sebe ou um muro cuja copa ou comprimento atravesse a linha de volta ao vento corta-o mais dentro de 5 das suas alturas e cada vez menos até 20 alturas (12 para um muro cheio, de sotavento mais fundo mas mais curto), segundo os estudos de quebra-ventos de Heisler &amp; DeWalle (1988); folhagem densa corta mais do que folhagem aberta, um muro cheio até 80 %; o sotavento do próprio edifício corta 70 %. A caixa é o vento que resta nas paredes a barlavento: construa obstáculos a montante e ele desce, e o ar contorna a casa. <b>Verão</b> lê o vento de Junho a Agosto impelido através de cada par de lados opostos: Q = C<sub>d</sub> · A · U · √ΔC<sub>p</sub>, com C<sub>d</sub> 0,61, A as áreas que abrem dos dois lados em série (metade de cada área envidraçada), U o vento ao beirado e ΔC<sub>p</sub> 0,9 com o vento ao longo do par, menos à medida que roda para o atravessar. Plantação ou um muro <i>à frente</i> das janelas de entrada bloqueia o escoamento; <i>ao lado</i> do percurso, a menos de 3 m dele, afunila o ar para as aberturas, até +40 % — plante e construa dos lados e mantenha o percurso livre. A caixa é a velocidade do ar que entra pelas janelas de entrada — o caudal sobre a sua área que abre: sobe quando o jardim afunila, e é máxima quando a entrada é menor do que a saída (Givoni); a leitura acrescenta as renovações de ar por hora que o caudal dá à casa. As faixas — um corte de 50 % ou mais lê-se abrigado, 25 % ou menos exposto; 1,0 m/s ou mais nas entradas lê-se como brisa através da casa, abaixo de 0,5 m/s como ar parado — são cortes didácticos desta aplicação. Uma primeira passagem de projecto, não um estudo de vento.',
   'site-form':
     'Quebre o volume com as ferramentas à esquerda do modelo. O <b>L</b> trabalha uma ponta da barra, o <b>T</b> o meio, o <b>H</b> as duas pontas dos dois lados compridos. <b>Estender</b> acrescenta a ala para fora da barra; <b>Escavar</b> recorta a mesma forma dentro dela como um recuo, pelo que é a própria barra que se torna o L, o T ou o H. O ponto preto da quebra é um alcance contínuo: arrastado para fora a ala cresce, de volta à fachada regressa a barra simples, mais para dentro o recuo aprofunda-se — nunca salta para o outro lado. <b>⇆ Outra ponta</b> e <b>⇅ Outro lado</b> espelham a quebra para a ponta oposta da barra ou para o seu lado comprido oposto. <b>Abrir um pátio central</b> recorta um pátio no meio; o ponto do seu canto abre-o mais largo ou mais fundo, deixando sempre 2 m de edifício à volta e 2 m livres de qualquer recuo. Todas as paredes do contorno — de uma ala, de um recuo, de um pátio — recebem a janela que a sua orientação tem em Janelas e Sombreamento, pelo que uma quebra redistribui o vidro em vez de o esconder. Uma planta trabalhada muda o que as caixas lêem. <b>Sombra própria · inverno %</b> é a parte do sol de 21 de Dezembro nas paredes que o edifício retira a si próprio — cada parede amostrada a cada 0,75 m em três alturas, o sol a cada meia hora, cada amostra pesada por quão de frente o sol a atinge, e contada como perdida quando o raio de volta ao sol encontra alguma parte da planta (altura do beirado; coberturas inclinadas sombreiam um pouco mais). O mesmo teste a 21 de Junho dá a sombra de verão na leitura por baixo do modelo: uma quebra ou um pátio que sombreia paredes a nascente e a poente no verão ganha com isso, um que sombreia a fachada principal no inverno paga por isso. O <b>fator de forma</b> é tirado de todo o volume — cada parede até ao perfil da própria cobertura, cada plano de cobertura com a inclinação definida em Cobertura, o piso térreo — pelo que uma quebra ou um pátio quase sempre o aumenta: mais envolvente para o mesmo volume. O ajuste a Olgyay continua a ler o comprimento, a profundidade e a rotação da barra. Cobertura, Janelas e Sombreamento e Ventilação trabalham todos sobre este volume tal como está desenhado, e a exportação CAD escreve-o; a Ventilação lê também a forma para o ar — quanto do piso consegue ventilar em cruzado, quanto do seu vidro volta ao vento de inverno.',
   'roof-albedo':
@@ -8957,7 +9383,7 @@ Object.assign(PT_HINT, {
   'site-windows':
     'As janelas do modelo são as dimensionadas em <b>Janelas e Sombreamento</b> — a mesma largura, peitoril e padieira, cada uma dada pela razão vão/parede da sua fachada — pelo que rodar aqui a planta roda-as com ela. Cada etiqueta azul indica para onde essa janela fica realmente virada depois de rodada a planta, depois a largura × altura e a razão vão/parede da fachada; em Janelas e Sombreamento as fachadas mantêm os nomes que têm com a fachada principal a sul. A regra para as ler: <b>quanto maior a janela, mais deve estar virada a sul; quanto menor, mais fica virada a norte</b> (norte e sul trocam abaixo do equador). O vidro a sul recolhe o sol baixo de Inverno e é o mais fácil de sombrear do sol alto de Verão; o vidro a norte dá luz difusa e uniforme, mas quase não recebe sol de Inverno enquanto perde calor (Lechner; Gonçalves &amp; Graça). O <b>Ajuste vãos</b> lê-a: cada janela conta como uma seta que sai da sua fachada, tão longa quanto o vidro que a sua razão vão/parede pede, e o ajuste é 100 quando a soma aponta a sul, 50 a nascente ou poente, 0 a norte. As dimensões mudam-se em Janelas e Sombreamento; a rotação da planta, aqui, decide para onde olham. Janelas e Sombreamento desenha cada janela como uma faixa única no piso térreo, com no máximo 92 % da parede — com dois ou três pisos as faixas podem atingir esse limite e parecer iguais, embora a razão vão/parede, e o ajuste, continuem diferentes. Numa planta quebrada cada parede com pelo menos 1,5 m recebe a janela da sua orientação, dimensionada pela sua própria área, e a etiqueta conta as janelas viradas para esse lado com as suas larguras; o <b>Ajuste vãos</b> soma então todo o vidro de cada orientação.',
   'clim-method':
-    'A classificação é a de Köppen–Geiger tal como Peel, Finlayson e McMahon (2007) a enunciam — a formalização que escreve cada critério como uma desigualdade e não como uma descrição. Nada aqui foi consultado: o código <b>%1</b> foi calculado a partir das normais que introduziu, e o quadro abaixo mostra que grandeza decidiu cada letra. O semestre de Verão vai de Abril a Setembro no hemisfério norte e de Outubro a Março no sul, o que é uma convenção da classificação e não uma estação.',
+    'A classificação é a de Köppen–Geiger tal como Peel, Finlayson e McMahon (2007) a enunciam — a formalização que escreve cada critério como uma desigualdade e não como uma descrição. Nada aqui foi consultado: o código <b>%1</b> foi calculado a partir das normais que introduziu, e o quadro acima mostra que grandeza decidiu cada letra. O semestre de Verão vai de Abril a Setembro no hemisfério norte e de Outubro a Março no sul, o que é uma convenção da classificação e não uma estação.',
   'clim-threshold':
     'O limiar de aridez <b>P<sub>th</sub></b> é o que separa um clima árido de um clima apenas de Verão seco, e desloca-se com <i>quando</i> a chuva cai e não apenas com quanta: a mesma precipitação rende mais num mês frio do que num mês quente. Neste local %1, pelo que P<sub>th</sub> = <b>%2 mm</b> e a fronteira da classe B fica em %3 mm de precipitação anual. Este local tem <b>%4 mm</b>.',
   'clim-note-none':
@@ -8979,8 +9405,10 @@ Object.assign(PT_HINT, {
     'Estepe semi-árida quente. A amplitude diária continua a ser o recurso, mas a noite já não desce o suficiente para descarregar a massa por si só.',
   'clim-normals':
     'Estes são os doze pares que introduziu, e são todo o conhecimento que esta aplicação tem do clima. Se a estação de onde vêm não for o local — uma estação costeira lida para um vale do interior, uma estação de baixa altitude lida para um local 400 m acima — então todas as páginas seguintes herdam essa diferença. Identifique a estação e o período no campo da página inicial e a exportação levá-los-á consigo, para que a leitura possa ser auditada mais tarde.',
+  'env-map':
+    'O modelo assenta o edifício desenhado no Local — a sua planta, quebras e pátio, rodado como aí definido, sob o telhado definido em Telhado — num disco de mapa base à volta do seu lote: imagem de satélite da Esri World Imagery ou o mapa de ruas do OpenStreetMap, cada um creditado no desenho, carregados desses serviços pelo seu navegador (só os endereços dos mosaicos saem dele). O sol é calculado para este local em hora solar, como em toda esta aplicação; os seus percursos de 21 de Junho, 20 de Março e 21 de Dezembro são desenhados numa cúpula celeste sobre o edifício, a tracejado, com o dia escolhido a cheio e as suas horas pares marcadas. Arraste o sol — na cúpula ou no diagrama solar — ao longo do percurso para mudar a hora, através dos percursos para mudar o dia; a sombra no terreno é cada peça do telhado projectada segundo o raio solar, como em Ventilação. Arraste o terreno para deslizar o mapa sob o edifício até que este assente no seu lote; as coordenadas do lote seguem na exportação JSON. <b>Vizinhança</b> alarga o mapa a 90 m em torno do lote para ler as ruas e os edifícios à volta — a sombra destes não é calculada. A imagem pode ter anos e estar ligeiramente desviada da posição real; a cúpula é um diagrama, não está à escala do mapa.',
   'ori-method':
-    'As horas contam-se geometricamente — o sol acima do horizonte e a incidir na fachada — em <b>hora solar</b>, pelo que o meio-dia é a culminação onde quer que esteja o local. Sem nuvens, sem relevo e sem edifícios vizinhos: tome os números como comparação entre orientações, não como energia. O semestre de Verão vai de Abril a Setembro, a convenção de Köppen usada na página anterior.',
+    'As horas contam-se geometricamente — o sol acima do horizonte e a incidir na fachada — em <b>hora solar</b>, pelo que o meio-dia é a culminação onde quer que esteja o local. Sem nuvens, sem relevo e sem edifícios vizinhos: tome os números como comparação entre orientações, não como energia. O semestre de Verão vai de Abril a Setembro, a convenção de Köppen usada acima.',
   'ori-lead-Csa':
     'Alongue a planta de nascente a poente, de modo que as fachadas longas se voltem a sul e a norte; abra as salas a sul com sombreamento fixo mais móvel; deixe o poente quase cego; que a massa e a ventilação nocturna levem Julho e Agosto.',
   'ori-lead-Csb':
