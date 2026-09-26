@@ -656,7 +656,7 @@ details.more[open] > summary{color:var(--ink)}
 /* ------------------------------------------------------------ 0. IDENTITY -- */
 const APP = {
   name:        'Architecture Advisor',
-  version:     '1.82.0',
+  version:     '1.83.0',
   author:      'Nuno Dinis Cortiços',
   institution: 'Lisbon School of Architecture, Universidade de Lisboa',
   builtWith:   'Claude Opus 5 (Anthropic)',
@@ -1130,12 +1130,25 @@ const TILE_SRC = {
 };
 const TILE_CACHE = new Map();
 /** A tile image, loading once; `redraw` runs when it arrives or fails. */
+/** A tile with no texture at all — one flat colour — is a service with no
+    imagery at that zoom, not a photograph of the ground. */
+function tileBlank(img) {
+  try {
+    const c = document.createElement('canvas'); c.width = c.height = 16;
+    const g = c.getContext('2d'); g.drawImage(img, 0, 0, 16, 16);
+    const d = g.getImageData(0, 0, 16, 16).data;
+    let s1 = 0, s2 = 0;
+    for (let i = 0; i < d.length; i += 4) { const L = 0.3 * d[i] + 0.59 * d[i + 1] + 0.11 * d[i + 2]; s1 += L; s2 += L * L; }
+    const m = s1 / 256;
+    return Math.sqrt(Math.max(0, s2 / 256 - m * m)) < 2.5;
+  } catch (err) { return false; }
+}
 function tileImg(url, redraw) {
   let e = TILE_CACHE.get(url);
   if (!e) {
-    e = { img:new Image(), ok:false, failed:false, waiters:new Set() };
+    e = { img:new Image(), ok:false, failed:false, blank:false, waiters:new Set() };
     e.img.crossOrigin = 'anonymous';
-    e.img.onload = () => { e.ok = true; e.waiters.forEach(f => f()); e.waiters.clear(); };
+    e.img.onload = () => { e.ok = true; e.blank = tileBlank(e.img); e.waiters.forEach(f => f()); e.waiters.clear(); };
     e.img.onerror = () => { e.failed = true; e.waiters.forEach(f => f()); e.waiters.clear(); };
     e.img.src = url;
     TILE_CACHE.set(url, e);
@@ -3069,24 +3082,38 @@ function buildEnvironment(host) {
     if (ENV.map !== 'none') {
       const src = TILE_SRC[ENV.map], pp = plotPos(), cosl = Math.cos(pp.lat * RAD);
       const z = clamp(Math.floor(Math.log2(40075016.686 * cosl / (0.8 * FR.Rg))), 14, src.max);
-      const mpp = 40075016.686 * cosl / Math.pow(2, z) / 256, [xt, yt] = mercTile(pp.lat, pp.lon, z), span = FR.Rg / (256 * mpp);
+      /* one level, drawn tile by tile; a blank or missing fine tile is
+         skipped, so the coarser level laid first shows through it */
+      const level = (zl, fine) => {
+        const mpp = 40075016.686 * cosl / Math.pow(2, zl) / 256, [xt, yt] = mercTile(pp.lat, pp.lon, zl), span = FR.Rg / (256 * mpp);
+        for (let tx = Math.floor(xt - span); tx <= Math.floor(xt + span); tx++) for (let ty = Math.floor(yt - span); ty <= Math.floor(yt + span); ty++) {
+          const tile = tileImg(src.url(zl, tx, ty), redrawEnv);
+          if (tile.failed) { if (fine) failed++; continue; }
+          if (!tile.ok || (fine && tile.blank)) continue;
+          shown++;
+          const dx = (tx - xt) * 256 * mpp, dy = -(ty - yt) * 256 * mpp;
+          ctx.save();
+          ctx.transform(FR.s * mpp * FR.ca, -FR.s * FR.se * mpp * FR.sa, FR.s * mpp * FR.sa, FR.s * FR.se * mpp * FR.ca,
+            FR.cx + FR.s * (dx * FR.ca - dy * FR.sa), FR.cy - FR.s * FR.se * (dx * FR.sa + dy * FR.ca));
+          ctx.drawImage(tile.img, 0, 0, 256.8, 256.8);   // a hair over size, so no seam shows between tiles
+          ctx.restore();
+        }
+      };
       ctx.save(); discPath(); ctx.clip();
-      for (let tx = Math.floor(xt - span); tx <= Math.floor(xt + span); tx++) for (let ty = Math.floor(yt - span); ty <= Math.floor(yt + span); ty++) {
-        const tile = tileImg(src.url(z, tx, ty), redrawEnv);
-        if (tile.failed) { failed++; continue; }
-        if (!tile.ok) continue;
-        shown++;
-        const dx = (tx - xt) * 256 * mpp, dy = -(ty - yt) * 256 * mpp;
-        ctx.save();
-        ctx.transform(FR.s * mpp * FR.ca, -FR.s * FR.se * mpp * FR.sa, FR.s * mpp * FR.sa, FR.s * FR.se * mpp * FR.ca,
-          FR.cx + FR.s * (dx * FR.ca - dy * FR.sa), FR.cy - FR.s * FR.se * (dx * FR.sa + dy * FR.ca));
-        ctx.drawImage(tile.img, 0, 0, 256.8, 256.8);   // a hair over size, so no seam shows between tiles
-        ctx.restore();
-      }
+      if (z - 3 >= 12) level(z - 3, false);
+      level(z, true);
       ctx.restore();
       if (shown) { discPath(); ctx.fillStyle = 'rgba(255,255,255,.14)'; ctx.fill(); attr = src.attr; }
     }
-    if (wx.cloud > 0.04) { discPath(); ctx.fillStyle = 'rgba(52,60,70,' + (0.12 * wx.cloud).toFixed(3) + ')'; ctx.fill(); }   // the ground under an overcast sky
+    /* the light on the ground: brighter under a clear sky and a high sun,
+       duller as the month's cloud thickens, dark once the sun is down */
+    {
+      const sa0 = sunPos(ENV.doy, ENV.h, lat, lon, tz).alt, sunF = clamp((sa0 + 2) / 22, 0, 1);
+      const dim = clamp(0.42 * wx.cloud * (0.55 + 0.45 * sunF) + 0.5 * (1 - sunF), 0, 0.7), lift = 0.3 * (1 - wx.cloud) * sunF;
+      if (dim > 0.01) { discPath(); ctx.fillStyle = 'rgba(22,28,38,' + dim.toFixed(3) + ')'; ctx.fill(); }
+      if (lift > 0.01) { ctx.save(); ctx.globalCompositeOperation = 'screen'; discPath(); ctx.fillStyle = 'rgba(255,241,210,' + lift.toFixed(3) + ')'; ctx.fill(); ctx.restore(); }
+      PN.data.groundLight = { dim, lift };
+    }
     discPath(); stroke(ctx, CH.line, 1.2); ctx.stroke();
     /* the compass on the horizon */
     for (let a = 0; a < 360; a += 15) {
@@ -3300,10 +3327,36 @@ function buildEnvironment(host) {
       credit.split(' ').forEach(wd => { const l = cLines.length ? cLines[cLines.length - 1] + ' ' + wd : wd;
         if (cLines.length && ctx.measureText(l).width > W * (narrow ? 0.92 : 0.6)) cLines.push(wd); else if (cLines.length) cLines[cLines.length - 1] = l; else cLines.push(wd); });
     }
-    const stackCredit = narrow && cLines.length > 0;
+    const stackCredit = narrow && cLines.length > 0, barY = H - 16 - (stackCredit ? cLines.length * 12 + 4 : 0);
+    /* where this is: the wider area round the plot, north up, the disc of
+       the model marked on it — a click or a drag on it moves the plot */
+    PN.data.loc = null;
+    if (ENV.map !== 'none') {
+      const src = TILE_SRC[ENV.map], pp = plotPos(), cosl = Math.cos(pp.lat * RAD);
+      const S = narrow ? 88 : 124, across = 900, k = S / across, x0 = 12, y0 = barY - 18 - S;
+      const zl = clamp(Math.floor(Math.log2(40075016.686 * cosl * S / (across * 256))) + 1, 10, 17);
+      const mppL = 40075016.686 * cosl / Math.pow(2, zl) / 256, [xl, yl] = mercTile(pp.lat, pp.lon, zl), spanL = across / 2 / (256 * mppL), cxL = x0 + S / 2, cyL = y0 + S / 2;
+      ctx.save(); ctx.beginPath(); ctx.rect(x0, y0, S, S); ctx.fillStyle = '#eceee8'; ctx.fill(); ctx.clip();
+      for (let tx = Math.floor(xl - spanL); tx <= Math.floor(xl + spanL); tx++) for (let ty = Math.floor(yl - spanL); ty <= Math.floor(yl + spanL); ty++) {
+        const tile = tileImg(src.url(zl, tx, ty), redrawEnv);
+        if (!tile.ok) continue;
+        const side = 256 * mppL * k;
+        ctx.drawImage(tile.img, cxL + (tx - xl) * side, cyL + (ty - yl) * side, side + 0.6, side + 0.6);
+      }
+      ctx.restore();
+      stroke(ctx, '#fff', 3); ctx.strokeRect(x0, y0, S, S); stroke(ctx, CH.ink, 1); ctx.strokeRect(x0, y0, S, S);
+      const rr = Math.max(3.5, FR.Rg * k);
+      ctx.beginPath(); ctx.arc(cxL, cyL, rr, 0, 6.284); stroke(ctx, '#fff', 3); ctx.stroke(); stroke(ctx, '#DC2626', 1.6); ctx.stroke();
+      ctx.fillStyle = '#DC2626'; ctx.beginPath(); ctx.arc(cxL, cyL, 1.8, 0, 6.284); ctx.fill();
+      ctx.fillStyle = 'rgba(255,255,255,.85)'; ctx.fillRect(x0 + S / 2 - 7, y0 + 2, 14, 12);
+      label(ctx, 'N', x0 + S / 2, y0 + 8, CH.ink, F(9, '700'), 'center', 'middle');
+      ctx.fillStyle = 'rgba(255,255,255,.85)'; ctx.fillRect(x0 + 2, y0 + S - 13, 40, 11);
+      label(ctx, fmt(across, 0) + ' m', x0 + 5, y0 + S - 7.5, CH.ink, FM(8), 'left', 'middle');
+      PN.data.loc = { x0, y0, S, k, pp };
+    }
     {
       const target = (narrow ? 70 : 110) / FR.s, nice = [2, 5, 10, 20, 50, 100].reduce((p2, q2) => Math.abs(q2 - target) < Math.abs(p2 - target) ? q2 : p2);
-      const x0 = 12, y0 = H - 16 - (stackCredit ? cLines.length * 12 + 4 : 0), x1 = x0 + nice * FR.s;
+      const x0 = 12, y0 = barY, x1 = x0 + nice * FR.s;
       ctx.fillStyle = 'rgba(255,255,255,.88)'; ctx.fillRect(x0 - 4, y0 - 14, x1 - x0 + 40, 20);
       stroke(ctx, CH.ink, 1.6); seg(ctx, x0, y0, x1, y0); seg(ctx, x0, y0 - 4, x0, y0 + 2); seg(ctx, x1, y0 - 4, x1, y0 + 2);
       label(ctx, nice + ' m', x1 + 6, y0 - 1, CH.ink, FM(10), 'left', 'middle');
@@ -3499,13 +3552,22 @@ function buildEnvironment(host) {
     cv.addEventListener('pointerup', end); cv.addEventListener('pointercancel', end);
   };
   const sunOnDome = () => { const FR = envFrame(envPanel.W, envPanel.H), sp = sunPos(ENV.doy, ENV.h, lat, lon, tz); return sp.alt > -0.5 ? P3(FR, ...domePt(FR, sp)) : null; };
+  const onLoc = (x, y) => { const L = envPanel.data.loc; return L && x >= L.x0 && x <= L.x0 + L.S && y >= L.y0 && y <= L.y0 + L.S ? L : null; };
+  const locTo = (L, x, y) => {
+    const dx = (x - (L.x0 + L.S / 2)) / L.k, dy = -(y - (L.y0 + L.S / 2)) / L.k;
+    ENV.plot = { lat:L.pp.lat + dy / 111320, lon:L.pp.lon + dx / (111320 * Math.cos(L.pp.lat * RAD)) };
+    refreshEnv();
+  };
   bindDrag(envPanel, (x, y) => {
+    const L = onLoc(x, y);
+    if (L) { const d = { kind:'loc', L:Object.assign({}, L) }; locTo(d.L, x, y); return d; }
     const q = sunOnDome();
     if (q && Math.hypot(x - q[0], y - q[1]) <= 16) return { kind:'sun' };
     const FR = envFrame(envPanel.W, envPanel.H), xp = (x - FR.cx) / FR.s, yp = (FR.cy - y) / (FR.s * FR.se);
     if (Math.hypot(xp, yp) > FR.Rg) return null;
     return { kind:'pan', x, y, plot:Object.assign({}, plotPos()) };
   }, (d, x, y) => {
+    if (d.kind === 'loc') { locTo(d.L, x, y); return; }
     if (d.kind === 'sun') { const FR = envFrame(envPanel.W, envPanel.H); nearestSun(sp => P3(FR, ...domePt(FR, sp)))(x, y); return; }
     /* the ground slides under the building: the building keeps the centre,
        its plot moves the other way */
@@ -3513,7 +3575,7 @@ function buildEnvironment(host) {
     const wx = xp * FR.ca + yp * FR.sa, wy = -xp * FR.sa + yp * FR.ca;
     ENV.plot = { lat:d.plot.lat - wy / 111320, lon:d.plot.lon - wx / (111320 * Math.cos(d.plot.lat * RAD)) };
     refreshEnv();
-  }, (x, y) => { const q = sunOnDome(); if (q && Math.hypot(x - q[0], y - q[1]) <= 16) return 'grab';
+  }, (x, y) => { if (onLoc(x, y)) return 'crosshair'; const q = sunOnDome(); if (q && Math.hypot(x - q[0], y - q[1]) <= 16) return 'grab';
     const FR = envFrame(envPanel.W, envPanel.H), xp = (x - FR.cx) / FR.s, yp = (FR.cy - y) / (FR.s * FR.se); return Math.hypot(xp, yp) <= FR.Rg ? 'move' : 'default'; });
   bindDrag(chart, (x, y) => {
     const P = chartRect(chart.W, chart.H), sp = sunPos(ENV.doy, ENV.h, lat, lon, tz);
@@ -3625,7 +3687,7 @@ function buildEnvironment(host) {
   ]);
   fold('The map, the sun and the weather', [hint('env-weather',
     'The weather over the model is this site’s normals read at the day chosen: each month’s value sits at mid-month and the days between are interpolated. The sun grows and deepens in colour with the mean air temperature, on a scale from 0 to 28 °C; clouds gather with the precipitation, from none at 0 to a full sky at 150 mm a month, and rain falls above 10 mm. Under cloud the building’s shadow softens, since more of the light is diffuse, and each cloud’s shadow crosses the ground and the building below it. Drag across the climograph to move through the year; the model and the solar chart follow, and the day’s place in the year is marked on the climograph. This is a reading of the normals, not a record of the sky: precipitation stands in for cloudiness, which it follows through the Portuguese year but not everywhere — a coastal summer morning can be grey with sea fog and still dry. The Roof tab reads the sun actually received, from the ERA5 reanalysis.'), hint('env-map',
-    'The model sets the building drawn on Site — its plan, breaks and patio, turned as set there, under the roof set on Roof — on a disc of base map around its plot: satellite imagery from Esri World Imagery or the street map of OpenStreetMap, each credited on the drawing, loaded by your browser from those services, which see the area of map asked for. Until a plot is found the map sits on the site’s reference coordinates — a station or a region’s centre, which can fall in a river or a field. <b>Find the plot</b> takes an address in Portugal, the islands included (searched on OpenStreetMap’s Nominatim when you press Find, never as you type), coordinates in decimal degrees or degrees, minutes and seconds, or a Google Maps link pasted whole; dragging the ground then fine-tunes it, and its coordinates go into the JSON export. <b>Neighbouring buildings</b> are the footprints mapped on OpenStreetMap within ' + NB_R + ' m, read by your browser from its Overpass service (which sees the plot’s position), raised to their mapped height, else to their storeys at 3 m each, else to an assumed two storeys (one for a garage or a shed) — those assumed are outlined dashed. The one standing on the plot, and any the design overlaps, give way to the design; any standing between the eye and the design is drawn see-through. Their shadows fall on the ground with the design’s own, and where they fall on the design they are drawn on its walls and roof: each sunlit wall and roof plane is sampled about every 0.7 m and each sample’s ray to the sun followed through the neighbours, which gives the share of the sunlit envelope in their shade at the hour shown. Mapping is thorough in the cities and thinner in the country and on the islands, and trees, walls and the ground’s own slope are not in it: a plot with nothing mapped round it is not necessarily open. The sun is computed for this site in solar time, as everywhere in this application; its paths for 21 June, 20 March and 21 December are drawn on a sky dome over the building, dashed, with the day chosen solid and its even hours marked. Drag the sun — on the dome or on the solar chart — along its path to change the hour, across the paths to change the day. Imagery can be years old and a little off true position; the dome is a diagram, not to scale with the map.')]);
+    'The model sets the building drawn on Site — its plan, breaks and patio, turned as set there, under the roof set on Roof — on a disc of base map around its plot: satellite imagery from Esri World Imagery or the street map of OpenStreetMap, each credited on the drawing, loaded by your browser from those services, which see the area of map asked for. Until a plot is found the map sits on the site’s reference coordinates — a station or a region’s centre, which can fall in a river or a field. <b>Find the plot</b> takes an address in Portugal, the islands included (searched on OpenStreetMap’s Nominatim when you press Find, never as you type), coordinates in decimal degrees or degrees, minutes and seconds, or a Google Maps link pasted whole; dragging the ground then fine-tunes it, and its coordinates go into the JSON export. <b>Neighbouring buildings</b> are the footprints mapped on OpenStreetMap within ' + NB_R + ' m, read by your browser from its Overpass service (which sees the plot’s position), raised to their mapped height, else to their storeys at 3 m each, else to an assumed two storeys (one for a garage or a shed) — those assumed are outlined dashed. The one standing on the plot, and any the design overlaps, give way to the design; any standing between the eye and the design is drawn see-through. Their shadows fall on the ground with the design’s own, and where they fall on the design they are drawn on its walls and roof: each sunlit wall and roof plane is sampled about every 0.7 m and each sample’s ray to the sun followed through the neighbours, which gives the share of the sunlit envelope in their shade at the hour shown. Mapping is thorough in the cities and thinner in the country and on the islands, and trees, walls and the ground’s own slope are not in it: a plot with nothing mapped round it is not necessarily open. The sun is computed for this site in solar time, as everywhere in this application; its paths for 21 June, 20 March and 21 December are drawn on a sky dome over the building, dashed, with the day chosen solid and its even hours marked. Drag the sun — on the dome or on the solar chart — along its path to change the hour, across the paths to change the day. Imagery can be years old and a little off true position; where a service has no imagery at the finest zoom its flat tiles are skipped and the coarser level shows through. The small map in the corner shows the wider area, north up, with the model’s disc in red — press or drag on it to move the plot. The ground takes the light of the hour and the month: brighter under a clear sky and a high sun, duller as the cloud thickens, dark once the sun is down. The dome is a diagram, not to scale with the map.')]);
 }
 
 function buildSite(host) {
@@ -5279,7 +5341,7 @@ function buildOpenings(host) {
   function wwrRange(f) {
     const k = bandKey(f);
     if (k === 'S') return heating ? [0.25, 0.40] : [0.15, 0.25];
-    if (k === 'N') return [0.10, 0.20];
+    if (k === 'N') return [0.05, 0.10];   // north: least glass — no winter sun, heat lost all year
     return heating ? [0.10, 0.20] : [0.08, 0.15];
   }
   /** 0–100 score for one side's WWR against its own recommended band: 100
@@ -5308,7 +5370,7 @@ function buildOpenings(host) {
   const props = bench.appendChild(el('div', { class:'props' }));
   { const [wwrLo0, wwrHi0] = wwrRange(curFace);
   host.appendChild(hint('open-wwr',
-    'WWR bands follow Ching &amp; Shapiro’s classification (low &lt;10%, moderate 10–20%, high 20–30%, very high &gt;30%; p.242) read against Lechner’s orientation guidance — south takes the most glass, north the least of the sunlit faces, and east/west are minimised where the climate leans hot (pp.130–132, 416). The band shown for %1 in this climate is <b>%2–%3%</b>. It is this app’s own synthesis across sources, not a single citable number — treat it as a target to aim for, not a pass/fail test. Each side is judged by the way it really faces once the plan is turned on Site, and its WWR applies to every wall of the plan on that side — a wing’s, a recess’s, a patio’s. The WWR fit badge averages this test across the four sides.',
+    'WWR bands follow Ching &amp; Shapiro’s classification (low &lt;10%, moderate 10–20%, high 20–30%, very high &gt;30%; p.242) read against Lechner’s orientation guidance — south takes the most glass, north the least of the sunlit faces, and east/west are minimised where the climate leans hot (pp.130–132, 416). The band shown for %1 in this climate is <b>%2–%3%</b>. North is held to 5–10 % and starts at 5 %: it takes almost no winter sun and loses heat all year. That is this app’s bioclimatic choice, not a rule of the SCE — the regulation sets no maximum for north glass; it exempts north-quadrant glazing, and any space whose glazing is at most 5 % of its <i>floor</i> area, from the solar-factor requirement (Portaria n.º 138-I/2021). The RGEU sets the floor instead: every room needs openings of at least 1/10 of its floor area, 1.08 m² at the least (art. 71.º), and the reading for the north side says how many rooms its glass can serve. It is this app’s own synthesis across sources, not a single citable number — treat it as a target to aim for, not a pass/fail test. Each side is judged by the way it really faces once the plan is turned on Site, and its WWR applies to every wall of the plan on that side — a wing’s, a recess’s, a patio’s. The WWR fit badge averages this test across the four sides.',
     [t(faceName[curFace]), fmt(wwrLo0 * 100, 0), fmt(wwrHi0 * 100, 0)])); }
 
   const cFace = segCtl(null, FACES.map(f => ({ value:f, label:faceName[f] })), curFace,
@@ -5570,6 +5632,12 @@ function buildOpenings(host) {
     if (o.wwr < lo) { pillWWR.className = 'pill empty'; pillWWR.textContent = side + t('Below the recommended range'); }
     else if (o.wwr > hi) { pillWWR.className = 'pill bad'; pillWWR.textContent = side + t('Above the recommended range'); }
     else { pillWWR.className = 'pill ok'; pillWWR.textContent = side + t('Within the recommended range'); }
+    /* the RGEU floor under a small north glass: every room lit through
+       openings of at least 1/10 of its floor, 1.08 m² at the least */
+    if (bandKey(curFace) === 'N') {
+      const gl = winsOf(curFace).reduce((a, x) => a + x.w.glass, 0);
+      pillWWR.textContent += ' · ' + t(fmt(gl, 1) + ' m² of glass lights at most ' + fmt(10 * gl, 0) + ' m² of rooms on this side, ' + Math.floor(gl / 1.08 + 1e-9) + ' at most (RGEU art. 71.º)');
+    }
     const sc = shadingScore(curFace);
     if (sc === null) { pillShade.className = 'pill empty'; pillShade.textContent = t('No shading device on this facade'); }
     else if (sc >= 80) { pillShade.className = 'pill ok'; pillShade.textContent = t(heating ? 'Cuts summer sun while keeping winter gains' : 'Cuts most of the June-noon sun on this window'); }
@@ -5912,7 +5980,7 @@ function buildVentilation(host) {
   /* OPEN is global, set by the Openings tab; initialise if null */
   if (!OPEN) OPEN = {
     S:{wwr:0.25, sillZ:0.9, headZ:2.1, ovD:0, ovN:1, finD:0, finN:0, finSide:'both'},
-    N:{wwr:0.15, sillZ:0.9, headZ:2.1, ovD:0, ovN:1, finD:0, finN:0, finSide:'both'},
+    N:{wwr:0.05, sillZ:0.9, headZ:2.1, ovD:0, ovN:1, finD:0, finN:0, finSide:'both'},
     E:{wwr:0.10, sillZ:0.9, headZ:2.1, ovD:0, ovN:1, finD:0, finN:0, finSide:'both'},
     W:{wwr:0.10, sillZ:0.9, headZ:2.1, ovD:0, ovN:1, finD:0, finN:0, finSide:'both'}
   };
@@ -9079,6 +9147,7 @@ function mountApp(site, clim, keepTab, keepModel) {
   const faceDefault = () => ({ wwr:0.20, sillZ:0.9, headZ:2.1, ovD:0, ovN:1, finD:0, finN:0, finSide:'both' });
   OPEN = { S: faceDefault(), N: faceDefault(), E: faceDefault(), W: faceDefault() };
   OPEN.S.wwr = 0.35;   // a defensible start, not a recommendation — the badge judges it live
+  OPEN.N.wwr = 0.05;   // north starts at the low end of its band
   SUNSP = { on:false, face:'S', depth:2.2, widthFrac:0.6 };
   RWIN = { size:'78x140', s:0, n:0, e:0, w:0, sF:0.5, nF:0.5, eF:0.35, wF:0.35, fX:0 };
   }
@@ -9769,6 +9838,7 @@ Object.assign(PT, {
   "patio": "pátio",
   "Optimum": "Óptimo",
   "Readings": "Leituras",
+  "{} m² of glass lights at most {} m² of rooms on this side, {} at most (RGEU art. {}.º)": "{} m² de vidro iluminam no máximo {} m² de compartimentos deste lado, {} no máximo (RGEU art. {}.º)",
   "The solid plan is yours; the green dashed plan is the Olgyay optimum for": "A planta a cheio é a sua; a planta verde a tracejado é o óptimo de Olgyay para",
   "Web normals filled in — check the boxes": "Normais da web preenchidas — confira os quadros",
   "Blended normals filled in — check the boxes": "Normais misturadas preenchidas — confira os quadros",
@@ -9965,7 +10035,7 @@ Object.assign(PT_HINT, {
   'env-weather':
     'O tempo sobre o modelo são as normais deste local lidas no dia escolhido: o valor de cada mês fica a meio do mês e os dias entre eles são interpolados. O sol cresce e aquece de cor com a temperatura média do ar, numa escala de 0 a 28 °C; as nuvens juntam-se com a precipitação, de nenhuma a 0 a um céu coberto a 150 mm por mês, e a chuva cai acima de 10 mm. Sob nuvens a sombra do edifício suaviza-se, porque mais luz é difusa, e a sombra de cada nuvem atravessa o terreno e o edifício por baixo dela. Arraste sobre o climograma para percorrer o ano; o modelo e o diagrama solar acompanham, e o lugar do dia no ano fica marcado no climograma. É uma leitura das normais, não um registo do céu: a precipitação faz as vezes da nebulosidade, que acompanha ao longo do ano português mas não em todo o lado — uma manhã de Verão na costa pode estar cinzenta de nevoeiro marítimo e continuar seca. O separador Telhado lê o sol realmente recebido, a partir da reanálise ERA5.',
   'env-map':
-    'O modelo assenta o edifício desenhado no Local — a sua planta, quebras e pátio, rodado como aí definido, sob o telhado definido em Telhado — num disco de mapa base à volta do seu lote: imagem de satélite da Esri World Imagery ou o mapa de ruas do OpenStreetMap, cada um creditado no desenho, carregados pelo seu navegador desses serviços, que vêem a área de mapa pedida. Até se encontrar um lote, o mapa fica nas coordenadas de referência do local — uma estação ou o centro de uma região, que pode cair num rio ou num campo. <b>Encontrar o lote</b> aceita uma morada em Portugal, ilhas incluídas (procurada no Nominatim do OpenStreetMap quando carrega em Procurar, nunca enquanto escreve), coordenadas em graus decimais ou em graus, minutos e segundos, ou uma ligação do Google Maps colada inteira; arrastar o terreno afina depois a posição, e as suas coordenadas seguem na exportação JSON. <b>Edifícios vizinhos</b> são as implantações cartografadas no OpenStreetMap num raio de ' + NB_R + ' m, lidas pelo seu navegador do serviço Overpass (que vê a posição do lote), levantadas à sua altura cartografada, senão aos seus pisos a 3 m cada, senão a dois pisos supostos (um para uma garagem ou um anexo) — os supostos têm o contorno a tracejado. O que está no próprio lote, e qualquer um que o projecto sobreponha, dão lugar ao projecto; os que ficam entre o olhar e o projecto desenham-se transparentes. As suas sombras caem no terreno com a do próprio projecto e, onde caem sobre ele, desenham-se nas suas paredes e cobertura: cada parede e plano de cobertura ao sol é amostrado cerca de 0,7 m em 0,7 m e o raio de cada amostra até ao sol seguido através dos vizinhos, o que dá a parte da envolvente ao sol que está na sua sombra à hora mostrada. A cartografia é completa nas cidades e mais rala no campo e nas ilhas, e não inclui árvores, muros nem o declive do terreno: um lote sem nada cartografado à volta não está necessariamente desafogado. O sol é calculado para este local em hora solar, como em toda esta aplicação; os seus percursos de 21 de Junho, 20 de Março e 21 de Dezembro são desenhados numa cúpula celeste sobre o edifício, a tracejado, com o dia escolhido a cheio e as suas horas pares marcadas. Arraste o sol — na cúpula ou no diagrama solar — ao longo do percurso para mudar a hora, através dos percursos para mudar o dia. A imagem pode ter anos e estar ligeiramente desviada da posição real; a cúpula é um diagrama, não está à escala do mapa.',
+    'O modelo assenta o edifício desenhado no Local — a sua planta, quebras e pátio, rodado como aí definido, sob o telhado definido em Telhado — num disco de mapa base à volta do seu lote: imagem de satélite da Esri World Imagery ou o mapa de ruas do OpenStreetMap, cada um creditado no desenho, carregados pelo seu navegador desses serviços, que vêem a área de mapa pedida. Até se encontrar um lote, o mapa fica nas coordenadas de referência do local — uma estação ou o centro de uma região, que pode cair num rio ou num campo. <b>Encontrar o lote</b> aceita uma morada em Portugal, ilhas incluídas (procurada no Nominatim do OpenStreetMap quando carrega em Procurar, nunca enquanto escreve), coordenadas em graus decimais ou em graus, minutos e segundos, ou uma ligação do Google Maps colada inteira; arrastar o terreno afina depois a posição, e as suas coordenadas seguem na exportação JSON. <b>Edifícios vizinhos</b> são as implantações cartografadas no OpenStreetMap num raio de ' + NB_R + ' m, lidas pelo seu navegador do serviço Overpass (que vê a posição do lote), levantadas à sua altura cartografada, senão aos seus pisos a 3 m cada, senão a dois pisos supostos (um para uma garagem ou um anexo) — os supostos têm o contorno a tracejado. O que está no próprio lote, e qualquer um que o projecto sobreponha, dão lugar ao projecto; os que ficam entre o olhar e o projecto desenham-se transparentes. As suas sombras caem no terreno com a do próprio projecto e, onde caem sobre ele, desenham-se nas suas paredes e cobertura: cada parede e plano de cobertura ao sol é amostrado cerca de 0,7 m em 0,7 m e o raio de cada amostra até ao sol seguido através dos vizinhos, o que dá a parte da envolvente ao sol que está na sua sombra à hora mostrada. A cartografia é completa nas cidades e mais rala no campo e nas ilhas, e não inclui árvores, muros nem o declive do terreno: um lote sem nada cartografado à volta não está necessariamente desafogado. O sol é calculado para este local em hora solar, como em toda esta aplicação; os seus percursos de 21 de Junho, 20 de Março e 21 de Dezembro são desenhados numa cúpula celeste sobre o edifício, a tracejado, com o dia escolhido a cheio e as suas horas pares marcadas. Arraste o sol — na cúpula ou no diagrama solar — ao longo do percurso para mudar a hora, através dos percursos para mudar o dia. A imagem pode ter anos e estar ligeiramente desviada da posição real; onde um serviço não tem imagem no zoom mais fino, os seus mosaicos lisos são ignorados e mostra-se o nível mais grosso. O pequeno mapa no canto mostra a área envolvente, com o norte para cima e o disco do modelo a vermelho — carregue ou arraste sobre ele para mover o lote. O terreno toma a luz da hora e do mês: mais claro sob céu limpo e sol alto, mais baço à medida que a nebulosidade aumenta, escuro depois do pôr do sol. A cúpula é um diagrama, não está à escala do mapa.',
   'ori-method':
     'As horas contam-se geometricamente — o sol acima do horizonte e a incidir na fachada — em <b>hora solar</b>, pelo que o meio-dia é a culminação onde quer que esteja o local. Sem nuvens, sem relevo e sem edifícios vizinhos: tome os números como comparação entre orientações, não como energia. O semestre de Verão vai de Abril a Setembro, a convenção de Köppen usada acima.',
   'ori-lead-Csa':
@@ -9997,7 +10067,7 @@ Object.assign(PT_HINT, {
   'ori-ff':
     'Fator de forma FF = envolvente exterior ÷ volume aquecido, em m⁻¹ — paredes até ao beirado, triângulos de empena, vertentes e piso térreo sobre o volume que encerram, uma única zona, tudo exterior. Mais baixo é mais compacto: os abrigos redondos de pastores da Monchique são o extremo vernacular (Gonçalves & Graça). É o mesmo rácio a que o REH chama <i>factor de forma</i>, aqui enunciado como pura geometria sem limites — o Construction Advisor continua daí. A pastilha pinta-o de verde até 0,7 (compacto), âmbar até 1,1 (moderado) e vermelho acima (disperso): faixas didácticas, não limites. Não move a nota de ajuste.',
   'open-wwr':
-    'As faixas de WWR seguem a classificação de Ching &amp; Shapiro (baixa &lt;10%, moderada 10–20%, alta 20–30%, muito alta &gt;30%; p.242), lida à luz da orientação de Lechner — o sul recebe mais vidro, o norte o menos das fachadas com sol, e este/oeste são minimizados onde o clima pende para quente (pp.130–132, 416). A faixa mostrada para %1 neste clima é <b>%2–%3%</b>. É uma síntese própria desta aplicação entre fontes, não um número único citável — trate-a como uma meta a atingir, não um teste de aprovação. Cada lado é avaliado pelo sentido para onde realmente fica virado depois de rodada a planta no Local, e a sua razão vão/parede aplica-se a todas as paredes da planta desse lado — de uma ala, de um recuo, de um pátio. A caixa Ajuste WWR faz a média deste teste nos quatro lados.',
+    'As faixas de WWR seguem a classificação de Ching &amp; Shapiro (baixa &lt;10%, moderada 10–20%, alta 20–30%, muito alta &gt;30%; p.242), lida à luz da orientação de Lechner — o sul recebe mais vidro, o norte o menos das fachadas com sol, e este/oeste são minimizados onde o clima pende para quente (pp.130–132, 416). A faixa mostrada para %1 neste clima é <b>%2–%3%</b>. O norte fica entre 5 e 10 % e começa em 5 %: quase não recebe sol de Inverno e perde calor todo o ano. É uma escolha bioclimática desta aplicação, não uma regra do SCE — o regulamento não fixa máximo para o vidro a norte; dispensa do requisito de factor solar os vãos orientados no quadrante norte e qualquer espaço cujos envidraçados não excedam 5 % da sua área de <i>pavimento</i> (Portaria n.º 138-I/2021). O RGEU fixa antes o mínimo: cada compartimento precisa de vãos com pelo menos 1/10 da sua área, e nunca menos de 1,08 m² (art. 71.º), e a leitura do lado norte diz quantos compartimentos o seu vidro pode servir. É uma síntese própria desta aplicação entre fontes, não um número único citável — trate-a como uma meta a atingir, não um teste de aprovação. Cada lado é avaliado pelo sentido para onde realmente fica virado depois de rodada a planta no Local, e a sua razão vão/parede aplica-se a todas as paredes da planta desse lado — de uma ala, de um recuo, de um pátio. A caixa Ajuste WWR faz a média deste teste nos quatro lados.',
   'open-shading':
     'Uma pala horizontal corta o sol alto de Verão no vidro virado ao equador, usando a mesma geometria do ângulo de perfil da inclinação do telhado no separador anterior (Olgyay, pp.79–80; Lechner, pp.249–253). O vidro a este e a oeste recebe sol baixo, quase rasante, de manhã e ao fim da tarde, que uma pala mal toca — os brises verticais respondem a isso: a própria tabela de coeficientes de sombreamento de Olgyay dá aos brises verticais fixos nas paredes este/oeste cerca de 0,31 (ou seja, cortando cerca de dois terços do ganho não sombreado), contra cerca de 0,20–0,25 para uma pala contínua a sul e 0,10–0,15 para lâminas horizontais móveis (pp.70–71) — os brises ganham mesmo o seu lugar no sol baixo e oblíquo a este e a oeste, mais a oeste do que a este uma vez somado o calor da tarde. Lechner nota ainda que os dispositivos horizontais continuam a superar os brises mesmo aí, e que os brises servem sobretudo o lado do equador de uma fachada oblíqua (pp.255–259); numa parede virada a sul, um brise só falha no único momento em que o sol fica exactamente perpendicular ao vidro — o meio-dia solar — continuando a cortar o sol oblíquo da manhã e da tarde no resto do dia, pelo que o seu contributo aí também pode ser substancial, cobrindo apenas horas diferentes das de uma pala. Várias lâminas mais rasas ou vários brises mais estreitos cortam o mesmo ângulo que um dispositivo único mais profundo, bloqueando menos a vista — um caixote de ovos é os dois empilhados, não somados (DeKay &amp; Brown, Estratégia 91, pp.248–249). Ambos ficam directamente sobre o vão: uma única pala acompanha a verga, várias lâminas distribuem-se de cima a baixo por todo o envidraçado, e os brises correm da esquerda para a direita ao longo da largura escolhida — nunca flutuando afastados da própria janela. Num clima de aquecimento, uma boa pala discrimina por estação — corta o sol alto de Junho mas ainda deixa entrar o sol baixo de Dezembro que alivia a factura do aquecimento — pelo que a nota de sombreamento abaixo premeia essa diferença e não a profundidade em si: um dispositivo suficientemente profundo para bloquear Verão e Inverno por igual não vale mais do que nenhum.',
   'open-sunspace':
