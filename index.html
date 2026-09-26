@@ -404,6 +404,8 @@ footer{border-top:1px solid var(--line); margin-top:26px; background:var(--wash)
 details.more{border-top:1px solid var(--line); margin:6px 0 0; padding:2px 0}
 details.more > summary{cursor:pointer; font-size:13px; font-weight:600; color:var(--ink2); padding:9px 0; list-style-position:inside}
 details.more[open] > summary{color:var(--ink)}
+.findplot{display:flex; gap:6px; margin-top:6px}
+.findplot input{flex:1; min-width:0; font:inherit; font-size:12px; color:var(--ink); background:#fff; border:1px solid var(--line); border-radius:5px; padding:5px 7px}
 .canvas-wrap canvas.wx{position:absolute; left:0; top:0; width:100%; display:block; pointer-events:none}
 @media(max-width:1100px){.bench.env{grid-template-columns:1fr}.bench.env .stage{order:-1}.bench.env .rail{order:2}}
 @media(max-width:1100px){.bench{grid-template-columns:1fr}.bench .rgroup{flex-direction:row; flex-wrap:wrap}.bench .rgroup .btn{width:auto}
@@ -650,7 +652,7 @@ details.more[open] > summary{color:var(--ink)}
 /* ------------------------------------------------------------ 0. IDENTITY -- */
 const APP = {
   name:        'Architecture Advisor',
-  version:     '1.80.0',
+  version:     '1.81.0',
   author:      'Nuno Dinis Cortiços',
   institution: 'Lisbon School of Architecture, Universidade de Lisboa',
   builtWith:   'Claude Opus 5 (Anthropic)',
@@ -1110,7 +1112,7 @@ let MASS = null, ROOF = null, OPEN = null, SUNSP = null, RWIN = null;
 /* The Environmental tab's view: the day and solar hour driven on its sun
    path, the base map, the camera, and where the building stands on its plot
    (null: on the site's own coordinates). */
-const ENV = { doy:172, h:12, map:'sat', view:'SW', plot:null, wide:false };
+const ENV = { doy:172, h:12, map:'sat', view:'SW', plot:null, wide:false, nb:true };
 /* --- base-map tiles, drawn straight onto the canvas ------------------------
    Two public tile services in the Web Mercator grid, no key needed:
    satellite imagery from Esri World Imagery and the street map from
@@ -1152,6 +1154,88 @@ function convexHull(pts) {
   lo.pop(); hi.pop();
   return lo.concat(hi);
 }
+
+/* --- the plot on the ground: where it is, and what stands around it -------
+   A plot is found from an address (OpenStreetMap's Nominatim, searched in
+   Portugal only, on request, never as-you-type), from coordinates, or from
+   a Google Maps link pasted whole. The buildings round it are read from
+   OpenStreetMap through the Overpass API: footprints kept in latitude and
+   longitude, so the plot can slide under them without asking again, asked
+   afresh once it moves more than 50 m from where they were read. */
+const PT_BOXES = [[36.8, 42.2, -9.6, -6.1], [32.3, 33.2, -17.4, -16.2], [36.8, 39.9, -31.4, -24.9], [29.9, 30.2, -16.1, -15.8]];
+const inPortugal = (la, lo) => PT_BOXES.some(b => la >= b[0] && la <= b[1] && lo >= b[2] && lo <= b[3]);
+const distM = (a, b) => Math.hypot((a.lat - b.lat) * 111320, (a.lon - b.lon) * 111320 * Math.cos(a.lat * Math.PI / 180));
+/** Coordinates in any of the forms a student is likely to paste. */
+function parseSpot(s) {
+  s = String(s || '').trim();
+  let m = s.match(/!3d(-?\d+\.\d+)!4d(-?\d+\.\d+)/) || s.match(/@(-?\d+\.\d+),(-?\d+\.\d+)/)
+    || s.match(/[?&](?:q|ll|query|center|destination)=(-?\d+\.\d+)(?:,|%2C)\s*(-?\d+\.\d+)/i);
+  if (m) return { lat:+m[1], lon:+m[2] };
+  m = s.match(/(\d{1,2})\s*°\s*(\d{1,2})\s*['′]\s*([\d.,]+)\s*(?:"|″|'')?\s*([NS])[\s,;]+(\d{1,3})\s*°\s*(\d{1,2})\s*['′]\s*([\d.,]+)\s*(?:"|″|'')?\s*([EWO])/i);
+  if (m) {
+    const d = (a, b, c, h) => (+a + b / 60 + parseFloat(String(c).replace(',', '.')) / 3600) * (/[SWO]/i.test(h) ? -1 : 1);
+    return { lat:d(m[1], m[2], m[3], m[4]), lon:d(m[5], m[6], m[7], m[8]) };
+  }
+  m = s.match(/^(-?\d{1,2}(?:\.\d+)?)\s*[,;\s]\s*(-?\d{1,3}(?:\.\d+)?)$/) || s.match(/^(-?\d{1,2},\d+)\s*[;\s]\s*(-?\d{1,3},\d+)$/);
+  if (m) return { lat:+m[1].replace(',', '.'), lon:+m[2].replace(',', '.') };
+  return null;
+}
+const NB = { at:null, want:null, list:[], status:'idle', seq:0, timer:0 };
+const NB_R = 170;   // metres round the plot: the widest map, and the shadows reaching into it
+/** A building's height from its tags: the height itself, else its storeys
+    at 3 m, else an assumed two storeys (one for a garage or a shed). */
+function osmHeight(tg) {
+  const num = v => { const x = parseFloat(String(v).replace(',', '.')); return isFinite(x) && x > 0 ? x : null; };
+  const h = num(tg.height);
+  if (h) return { h:Math.min(h, 250), how:'tagged' };
+  const lv = num(tg['building:levels']);
+  if (lv) return { h:Math.min(lv, 80) * 3 + (num(tg['roof:levels']) || 0) * 1.5, how:'storeys' };
+  return { h:/^(garage|garages|shed|hut|carport|kiosk|roof|toilets|container)$/.test(tg.building) ? 3 : 6, how:'assumed' };
+}
+function parseOsmBuildings(js) {
+  const out = [];
+  (js && js.elements || []).forEach(e => {
+    const tg = e.tags || {};
+    if (!tg.building || tg.building === 'no') return;
+    const rings = e.type === 'way' && e.geometry ? [e.geometry]
+      : e.type === 'relation' && e.members ? e.members.filter(m => m.role === 'outer' && m.geometry).map(m => m.geometry) : [];
+    const ht = osmHeight(tg);
+    rings.forEach(g => {
+      const ll = g.map(q => [q.lat, q.lon]);
+      if (ll.length > 3 && ll[0][0] === ll[ll.length - 1][0] && ll[0][1] === ll[ll.length - 1][1]) ll.pop();
+      else if (e.type === 'relation') return;          // an outer ring split over several ways: left out
+      if (ll.length >= 3) out.push({ ll, h:ht.h, how:ht.how });
+    });
+  });
+  return out;
+}
+/** Ask for the buildings round a point, once the plot has settled there:
+    not again where they were read (or failed to be) until the plot moves
+    50 m, nor while a request for the same spot is on its way. */
+function wantNeighbours(pos, done) {
+  if (!ENV.nb) return;
+  if (NB.at && distM(NB.at, pos) < 50) return;
+  if (NB.want && distM(NB.want, pos) < 50) return;
+  clearTimeout(NB.timer);
+  const seq = ++NB.seq;
+  NB.want = pos; NB.status = 'loading';
+  NB.timer = setTimeout(() => {
+    const q = '[out:json][timeout:25];(way["building"](around:' + NB_R + ',' + pos.lat.toFixed(6) + ',' + pos.lon.toFixed(6) + ');'
+      + 'relation["building"]["type"="multipolygon"](around:' + NB_R + ',' + pos.lat.toFixed(6) + ',' + pos.lon.toFixed(6) + '););out geom;';
+    fetch('https://overpass-api.de/api/interpreter', { method:'POST', headers:{ 'Content-Type':'application/x-www-form-urlencoded' }, body:'data=' + encodeURIComponent(q) })
+      .then(r => r.ok ? r.json() : Promise.reject(new Error(r.status)))
+      .then(js => { if (seq !== NB.seq) return; NB.at = pos; NB.want = null; NB.list = parseOsmBuildings(js); NB.status = NB.list.length ? 'ok' : 'empty'; done(); })
+      .catch(() => { if (seq !== NB.seq) return; NB.at = pos; NB.want = null; NB.list = []; NB.status = 'failed'; done(); });
+  }, 600);
+}
+/** Does the segment ab cross the segment cd? */
+const segCross = (ax, ay, bx, by, cx, cy, dx, dy) => {
+  const d = (bx - ax) * (dy - cy) - (by - ay) * (dx - cx);
+  if (Math.abs(d) < 1e-12) return false;
+  const u = ((cx - ax) * (dy - cy) - (cy - ay) * (dx - cx)) / d, v = ((cx - ax) * (by - ay) - (cy - ay) * (bx - ax)) / d;
+  return u >= 0 && u <= 1 && v >= 0 && v <= 1;
+};
+const inPoly = (x, y, P) => { let c = false; for (let i = 0, j = P.length - 1; i < P.length; j = i++) if ((P[i][1] > y) !== (P[j][1] > y) && x < (P[j][0] - P[i][0]) * (y - P[i][1]) / (P[j][1] - P[i][1]) + P[i][0]) c = !c; return c; };
 /* Planting and detached walls live here, not inside Ventilation, so the CAD
    export can read them and a language switch keeps them; SCENE.plant is set
    by Ventilation to describe a plant's solid for export. Each tab registers
@@ -2812,7 +2896,7 @@ function buildEnvironment(host) {
     if (!FR) return;
     const n = Math.round(CLOUDS.length * wx.cloud), nd = Math.round(DROPS.length * wx.rain);
     const ex = FR.Rg * FR.s, ey = ex * FR.se, kS = clamp(W / 700, 0.6, 1.25);
-    const skyTop = 58, skyBot = FR.cy - ey - 4, sky = !FR.plan && skyBot - skyTop > 36;
+    const skyTop = ENV.plot ? 58 : 74, skyBot = FR.cy - ey - 4, sky = !FR.plan && skyBot - skyTop > 36;
     CLOUDS.slice(0, n).forEach(c => {
       const R = (12 + 12 * c.size) * kS, x = ((c.u + tt * c.sp * 0.018) % 1) * (W + 4 * R) - 2 * R;
       const gy = FR.cy + (c.gy * 1.5 - 0.75) * ey, a = 0.1 + 0.16 * wx.cloud;
@@ -2908,7 +2992,7 @@ function buildEnvironment(host) {
     const vUp = plan ? Rg : Math.max(Rs, Rg * se), vDown = Rg * se;
     const s = Math.min((right - left) / (2 * Rg + 4), (bottom - top) / (vUp + vDown + 3));
     const cx = (left + right) / 2, cy = top + (vUp + 1.5) * s + Math.max(0, (bottom - top) - (vUp + vDown + 3) * s) / 2;
-    return { M, Rs, Rg, plan, se, ce, ca:Math.cos(al), sa:Math.sin(al), s, cx, cy, camH:[Math.sin(VIEW[ENV.view] * RAD), Math.cos(VIEW[ENV.view] * RAD)] };
+    return { M, Rs, Rg, half, plan, se, ce, ca:Math.cos(al), sa:Math.sin(al), s, cx, cy, camH:[Math.sin(VIEW[ENV.view] * RAD), Math.cos(VIEW[ENV.view] * RAD)] };
   };
   /** World metres (x east, y north, z up) to the screen, and depth from the camera. */
   const P3 = (FR, x, y, z) => { const xp = x * FR.ca - y * FR.sa, yp = x * FR.sa + y * FR.ca; return [FR.cx + xp * FR.s, FR.cy - (yp * FR.se + (z || 0) * FR.ce) * FR.s]; };
@@ -2924,12 +3008,49 @@ function buildEnvironment(host) {
   };
   let envPanel = null;
   const redrawEnv = () => { if (envPanel) envPanel.draw(); };
+  /** The buildings round the plot in metres from its centre (x east, y
+      north). The one standing on the plot, and any the design overlaps,
+      give way to the design. */
+  const nbLocal = planW => {
+    if (!ENV.nb || !NB.list.length) return [];
+    const pp = plotPos(), cl = Math.cos(pp.lat * RAD), out = [];
+    NB.list.forEach(b => {
+      const pts = b.ll.map(q => [(q[1] - pp.lon) * 111320 * cl, (q[0] - pp.lat) * 111320]);
+      let area = 0; const bb = [Infinity, Infinity, -Infinity, -Infinity];
+      pts.forEach((q, i) => { const r = pts[(i + 1) % pts.length]; area += q[0] * r[1] - r[0] * q[1];
+        bb[0] = Math.min(bb[0], q[0]); bb[1] = Math.min(bb[1], q[1]); bb[2] = Math.max(bb[2], q[0]); bb[3] = Math.max(bb[3], q[1]); });
+      if (bb[0] > NB_R || bb[2] < -NB_R || bb[1] > NB_R || bb[3] < -NB_R) return;
+      if (inPoly(0, 0, pts) || planW.some(pl => pl.some(q => inPoly(q[0], q[1], pts)) || pts.some(q => inPoly(q[0], q[1], pl)))) return;
+      out.push({ pts, h:b.h, how:b.how, bb, ccw:area > 0, cx:(bb[0] + bb[2]) / 2, cy:(bb[1] + bb[3]) / 2, r:Math.hypot(bb[2] - bb[0], bb[3] - bb[1]) / 2 });
+    });
+    return out;
+  };
+  /** Is a point on the design in a neighbour's shade? The ray to the sun is
+      followed as far as the neighbour's height can still reach it. */
+  const nbBlocker = (nbs, sun, reach) => {
+    const ta = Math.tan(sun.alt * RAD), ux = Math.sin(sun.azi * RAD), uy = Math.cos(sun.azi * RAD);
+    const L = nbs.reduce((a, b) => Math.max(a, b.h), 0) / ta;
+    const box = [Math.min(-reach, -reach + ux * L), Math.min(-reach, -reach + uy * L), Math.max(reach, reach + ux * L), Math.max(reach, reach + uy * L)];
+    const cand = nbs.filter(b => b.bb[2] >= box[0] && b.bb[0] <= box[2] && b.bb[3] >= box[1] && b.bb[1] <= box[3]);
+    return (px, py, pz) => {
+      for (const b of cand) {
+        if (pz >= b.h) continue;
+        const l = (b.h - pz) / ta, qx = px + ux * l, qy = py + uy * l;
+        if (Math.max(px, qx) < b.bb[0] || Math.min(px, qx) > b.bb[2] || Math.max(py, qy) < b.bb[1] || Math.min(py, qy) > b.bb[3]) continue;
+        const P = b.pts;
+        for (let i = 0, j = P.length - 1; i < P.length; j = i++) if (segCross(px, py, qx, qy, P[j][0], P[j][1], P[i][0], P[i][1])) return true;
+      }
+      return false;
+    };
+  };
+  const ccwPoly = poly => { let a = 0; poly.forEach((q, i) => { const r = poly[(i + 1) % poly.length]; a += q[0] * r[1] - r[0] * q[1]; }); return a < 0 ? poly.slice().reverse() : poly; };
 
   const renderEnv = (ctx, W, H, PN) => {
     const FR = envFrame(W, H), M = FR.M, pt = (x, y, z) => P3(FR, x, y, z), wx = weatherOf(ENV.doy);
     PN.data.FR = FR;
     const b = (G.rot - 180) * RAD, cb = Math.cos(b), sb = Math.sin(b);
     const toW = (x, y) => [x * cb + y * sb, -x * sb + y * cb];   // the plan as turned on Site
+    const nbs = nbLocal(M.pieces.map(pc => pc.poly.map(q => toW(q[0], q[1])))), inDisc = nbs.filter(b => Math.hypot(b.cx, b.cy) < FR.Rg * 0.98);
     ctx.fillStyle = 'rgb(' + Math.round(251 - 22 * wx.cloud) + ',' + Math.round(251 - 18 * wx.cloud) + ',' + Math.round(249 - 12 * wx.cloud) + ')';
     ctx.fillRect(0, 0, W, H);                  // the sky greys with the month's cloud
     /* the ground: a disc of map under the building */
@@ -2974,16 +3095,27 @@ function buildEnvironment(host) {
 
     /* the building's shadow now: each roof piece's prism dropped along the ray */
     const sun = sunPos(ENV.doy, ENV.h, lat, lon, tz);
+    const shadeA = 0.34 * (1 - 0.55 * wx.cloud);   // softer under cloud: more of the light is diffuse
     if (sun.alt > 0.5) {
       const k = 1 / Math.tan(sun.alt * RAD), sx = -Math.sin(sun.azi * RAD) * k, sy = -Math.cos(sun.azi * RAD) * k;
+      const sub = poly => { ccwPoly(poly).forEach((p2, i) => { const q = pt(p2[0], p2[1], 0); i ? ctx.lineTo(q[0], q[1]) : ctx.moveTo(q[0], q[1]); }); ctx.closePath(); };
+      ctx.save(); discPath(); ctx.clip();
       ctx.beginPath();
       M.pieces.forEach(pc => {
         const pts = [];
         pc.poly.forEach(q => { const w = toW(q[0], q[1]), zz = M.zOf(pc.f, q[0], q[1]); pts.push(w, [w[0] + sx * zz, w[1] + sy * zz]); });
-        convexHull(pts).forEach((p2, i) => { const q = pt(p2[0], p2[1], 0); i ? ctx.lineTo(q[0], q[1]) : ctx.moveTo(q[0], q[1]); });
-        ctx.closePath();
+        sub(convexHull(pts));
       });
-      ctx.fillStyle = 'rgba(20,23,26,' + (0.34 * (1 - 0.55 * wx.cloud)).toFixed(3) + ')'; ctx.fill('nonzero');   // softer under cloud: more of the light is diffuse
+      /* a neighbour's shadow: its footprint, its roof dropped along the ray,
+         and each wall swept between them */
+      nbs.forEach(b => {
+        if (Math.hypot(b.cx, b.cy) - b.r - b.h * k > FR.Rg) return;
+        const P = b.pts, T = P.map(q => [q[0] + sx * b.h, q[1] + sy * b.h]);
+        sub(P); sub(T);
+        P.forEach((q, i) => { const j = (i + 1) % P.length; sub([q, P[j], T[j], T[i]]); });
+      });
+      ctx.fillStyle = 'rgba(20,23,26,' + shadeA.toFixed(3) + ')'; ctx.fill('nonzero');
+      ctx.restore();
     }
 
     /* the sun paths: the solstices and the equinox, and the day chosen; the
@@ -3006,12 +3138,31 @@ function buildEnvironment(host) {
     /* the building from Site under the roof from Roof, back to front */
     const faces = [], c3 = [FR.camH[0] * FR.ce, FR.camH[1] * FR.ce, FR.se];
     const wallCol = ns => opaque(wallFill(ns ? 0.14 : 0.08, ns ? 0.85 : 1));
+    /* where the neighbours shade the design now: its sunlit walls and roof
+       sampled every 0.7 m or so, each sample's ray to the sun followed */
+    const blocked = sun.alt > 0.5 && nbs.length ? nbBlocker(nbs, sun, FR.half) : null;
+    const su = [Math.sin(sun.azi * RAD) * Math.cos(sun.alt * RAD), Math.cos(sun.azi * RAD) * Math.cos(sun.alt * RAD), Math.sin(sun.alt * RAD)];
+    const stat = { sunlit:0, shaded:0 };
     M.walls.forEach(wl => {
       const sg = wl.sg, n = toW(sg.n[0], sg.n[1]);
-      if (n[0] * c3[0] + n[1] * c3[1] <= 1e-6) return;
       const P = (u, z) => { const w = toW(sg.a[0] + (sg.b[0] - sg.a[0]) * u / sg.len, sg.a[1] + (sg.b[1] - sg.a[1]) * u / sg.len); return [w[0], w[1], z]; };
+      let cells = null;
+      if (blocked && n[0] * su[0] + n[1] * su[1] > 0.02) {
+        const prof = wl.prof, zMax = Math.max.apply(null, prof.map(q => q[1]));
+        const zAt = u => { for (let i = 1; i < prof.length; i++) if (u <= prof[i][0] + 1e-9) { const a = prof[i - 1], b = prof[i], d = b[0] - a[0]; return d > 1e-9 ? a[1] + (b[1] - a[1]) * (u - a[0]) / d : Math.max(a[1], b[1]); } return prof[prof.length - 1][1]; };
+        const nu = clamp(Math.ceil(sg.len / 0.7), 2, 32), nz = clamp(Math.ceil(zMax / 0.7), 2, 16), du = sg.len / nu, dz = zMax / nz;
+        cells = [];
+        for (let i = 0; i < nu; i++) for (let j = 0; j < nz; j++) {
+          const uc = (i + 0.5) * du, zc = (j + 0.5) * dz;
+          if (zc > zAt(uc)) continue;
+          stat.sunlit += du * dz;
+          const w = P(uc, zc);
+          if (blocked(w[0] + n[0] * 0.05, w[1] + n[1] * 0.05, zc)) { stat.shaded += du * dz; cells.push([P(i * du, j * dz), P((i + 1) * du, j * dz), P((i + 1) * du, (j + 1) * dz), P(i * du, (j + 1) * dz)]); }
+        }
+      }
+      if (n[0] * c3[0] + n[1] * c3[1] <= 1e-6) return;
       const wn = segWindow(sg, G);
-      faces.push({ pts:[P(0, 0), P(sg.len, 0)].concat(wl.prof.slice().reverse().map(q => P(q[0], q[1]))), fill:wallCol(sg.n[1] !== 0),
+      faces.push({ pts:[P(0, 0), P(sg.len, 0)].concat(wl.prof.slice().reverse().map(q => P(q[0], q[1]))), fill:wallCol(sg.n[1] !== 0), cells,
         win:wn ? [P(wn.uc - wn.w / 2, wn.sill), P(wn.uc + wn.w / 2, wn.sill), P(wn.uc + wn.w / 2, Math.min(wn.head, M.H0)), P(wn.uc - wn.w / 2, Math.min(wn.head, M.H0))] : null });
     });
     M.steps.forEach(st => {
@@ -3021,15 +3172,64 @@ function buildEnvironment(host) {
       faces.push({ pts:st.prof.map(q => P(q[0], q[1])).concat(st.prof.slice().reverse().map(q => P(q[0], q[2]))), fill:wallCol(st.n[1] !== 0) });
     });
     M.pieces.forEach(pc => {
-      const f = pc.f, nh = toW(-M.t * f.a, -M.t * f.b);
+      const f = pc.f, nh = toW(-M.t * f.a, -M.t * f.b), R = (x, y) => { const w = toW(x, y); return [w[0], w[1], M.zOf(f, x, y)]; };
+      let cells = null;
+      if (blocked && nh[0] * su[0] + nh[1] * su[1] + su[2] > 0.02) {
+        const sec = Math.hypot(1, M.t * Math.hypot(f.a, f.b)), xs = pc.poly.map(q => q[0]), ys = pc.poly.map(q => q[1]);
+        const x0 = Math.min.apply(null, xs), y0 = Math.min.apply(null, ys), wx0 = Math.max.apply(null, xs) - x0, wy0 = Math.max.apply(null, ys) - y0;
+        const nx = clamp(Math.ceil(wx0 / 0.7), 1, 40), ny = clamp(Math.ceil(wy0 / 0.7), 1, 40), dx = wx0 / nx, dy = wy0 / ny;
+        cells = [];
+        for (let i = 0; i < nx; i++) for (let j = 0; j < ny; j++) {
+          const xc = x0 + (i + 0.5) * dx, yc = y0 + (j + 0.5) * dy;
+          if (!inPoly(xc, yc, pc.poly)) continue;
+          stat.sunlit += dx * dy * sec;
+          const w = R(xc, yc);
+          if (blocked(w[0], w[1], w[2] + 0.05)) { stat.shaded += dx * dy * sec; cells.push([R(x0 + i * dx, y0 + j * dy), R(x0 + (i + 1) * dx, y0 + j * dy), R(x0 + (i + 1) * dx, y0 + (j + 1) * dy), R(x0 + i * dx, y0 + (j + 1) * dy)]); }
+        }
+      }
       if (nh[0] * c3[0] + nh[1] * c3[1] + c3[2] <= 1e-6) return;
       const kk = RF.n === 0 ? 1 : 0.87 + 0.11 * f.b + 0.05 * f.a;
-      faces.push({ pts:pc.poly.map(q => { const w = toW(q[0], q[1]); return [w[0], w[1], M.zOf(f, q[0], q[1])]; }), fill:opaque(roofFill(0.2 + 0.3 * (1 - kk), kk)), pc });
+      faces.push({ pts:pc.poly.map(q => R(q[0], q[1])), fill:opaque(roofFill(0.2 + 0.3 * (1 - kk), kk)), pc, cells });
     });
+    /* the neighbours: flat-topped prisms, their sunlit walls lighter; any
+       standing between the eye and the design is drawn see-through */
+    const dBox = [Infinity, Infinity, -Infinity, -Infinity];
+    faces.forEach(f2 => f2.pts.forEach(q => { const p2 = pt(q[0], q[1], q[2]); dBox[0] = Math.min(dBox[0], p2[0]); dBox[1] = Math.min(dBox[1], p2[1]); dBox[2] = Math.max(dBox[2], p2[0]); dBox[3] = Math.max(dBox[3], p2[1]); }));
+    const dDepth = depthOf(FR, 0, 0, M.H0 / 2);
+    inDisc.forEach(b => {
+      const sb2 = [Infinity, Infinity, -Infinity, -Infinity];
+      b.pts.forEach(q => [0, b.h].forEach(z => { const p2 = pt(q[0], q[1], z); sb2[0] = Math.min(sb2[0], p2[0]); sb2[1] = Math.min(sb2[1], p2[1]); sb2[2] = Math.max(sb2[2], p2[0]); sb2[3] = Math.max(sb2[3], p2[1]); }));
+      b.ghost = !FR.plan && depthOf(FR, b.cx, b.cy, b.h / 2) < dDepth && sb2[0] < dBox[2] + 8 && sb2[2] > dBox[0] - 8 && sb2[1] < dBox[3] + 8 && sb2[3] > dBox[1] - 8;
+    });
+    inDisc.forEach(b => {
+      const P = b.pts, sgn = b.ccw ? 1 : -1;
+      P.forEach((a, i) => {
+        const c = P[(i + 1) % P.length], nx = sgn * (c[1] - a[1]), ny = -sgn * (c[0] - a[0]);
+        if (nx * c3[0] + ny * c3[1] <= 1e-6) return;
+        faces.push({ pts:[[a[0], a[1], 0], [c[0], c[1], 0], [c[0], c[1], b.h], [a[0], a[1], b.h]], fill:sun.alt > 0.5 && nx * su[0] + ny * su[1] > 0 ? '#e2e5e9' : '#cbd0d6', nb:b });
+      });
+      faces.push({ pts:P.map(q => [q[0], q[1], b.h]), fill:'#c3c8ce', nb:b, top:true });
+    });
+    PN.data.nbStat = { n:nbs.length, drawn:inDisc.length, assumed:nbs.filter(b => b.how === 'assumed').length, storeys:nbs.filter(b => b.how === 'storeys').length,
+      sunUp:sun.alt > 0.5, sunlit:stat.sunlit, shaded:stat.shaded };
     const dep = f2 => f2.pts.reduce((a, q) => a + depthOf(FR, q[0], q[1], q[2]), 0) / f2.pts.length;
     const path3 = pts3 => { ctx.beginPath(); pts3.forEach((q, i) => { const p2 = pt(q[0], q[1], q[2]); i ? ctx.lineTo(p2[0], p2[1]) : ctx.moveTo(p2[0], p2[1]); }); ctx.closePath(); };
     faces.sort((p1, q1) => dep(q1) - dep(p1)).forEach(f2 => {
-      path3(f2.pts); ctx.fillStyle = f2.fill; ctx.fill();
+      path3(f2.pts);
+      if (!(f2.nb && f2.nb.ghost)) { ctx.fillStyle = f2.fill; ctx.fill(); }
+      if (f2.nb) {
+        if (f2.nb.ghost) { ctx.fillStyle = 'rgba(251,251,249,.62)'; ctx.fill(); }   // see-through, over what it hid
+        stroke(ctx, f2.nb.ghost ? 'rgba(110,118,128,.85)' : '#8d949c', 0.8, f2.top && f2.nb.how === 'assumed' ? [3, 2] : null); ctx.stroke(); return;   // dashed: height assumed
+      }
+      if (f2.win) { path3(f2.win); ctx.fillStyle = 'rgba(219,234,254,.92)'; ctx.fill(); stroke(ctx, '#2563EB', 1.1); ctx.stroke(); }
+      if (f2.cells && f2.cells.length) {
+        ctx.save(); path3(f2.pts); ctx.clip();
+        ctx.beginPath();
+        f2.cells.forEach(q4 => { q4.forEach((q, i) => { const p2 = pt(q[0], q[1], q[2]); i ? ctx.lineTo(p2[0], p2[1]) : ctx.moveTo(p2[0], p2[1]); }); ctx.closePath(); });
+        ctx.fillStyle = 'rgba(20,23,26,' + shadeA.toFixed(3) + ')'; ctx.fill('nonzero');
+        ctx.restore();
+      }
+      path3(f2.pts);
       if (f2.pc) {
         stroke(ctx, f2.fill, 1); ctx.stroke();
         stroke(ctx, CH.ink, 1.3);
@@ -3041,7 +3241,7 @@ function buildEnvironment(host) {
         return;
       }
       stroke(ctx, CH.ink, 1.2); ctx.stroke();
-      if (f2.win) { path3(f2.win); ctx.fillStyle = 'rgba(219,234,254,.92)'; ctx.fill(); stroke(ctx, '#2563EB', 1.1); ctx.stroke(); }
+      if (f2.win) { path3(f2.win); stroke(ctx, '#2563EB', 1.1); ctx.stroke(); }
     });
 
     drawArcs(false);
@@ -3078,12 +3278,15 @@ function buildEnvironment(host) {
     const line1 = doyLabel(ENV.doy) + ' · ' + hm(ENV.h) + ' ' + t('solar time');
     const line2 = sun.alt > 0 ? t('sun') + ' ' + fmt(sun.alt, 0) + '° · ' + t('azimuth') + ' ' + fmt(sun.azi, 0) + '° · ' + t('ridge shadow') + ' ' + fmt(ridgeSh, 1) + ' m' : t('the sun is below the horizon');
     const nl = normalsLine(wx.m), line3 = nl[0] + ': ' + nl[1];
-    [[line1, 14, FM(narrow ? 10 : 11.5, '600')], [line2, 30, FM(narrow ? 9.5 : 10.5)], [line3, 46, FM(narrow ? 9.5 : 10.5)]].forEach(([txt, y, f]) => {
-      ctx.font = f; const w = ctx.measureText(txt).width;
+    const lines = [[line1, 14, FM(narrow ? 10 : 11.5, '600'), CH.ink], [line2, 30, FM(narrow ? 9.5 : 10.5), CH.ink], [line3, 46, FM(narrow ? 9.5 : 10.5), CH.ink]];
+    if (!ENV.plot) lines.push([t('Map at the site’s reference coordinates — find the plot under Map and view'), 62, F(narrow ? 9.5 : 10.5, '600'), '#B45309']);
+    lines.forEach(([txt, y, f, col]) => {
+      ctx.font = f; const w = ctx.measureText(t(txt)).width;
       ctx.fillStyle = 'rgba(255,255,255,.88)'; ctx.fillRect(6, y - 9, w + 10, 17);
-      label(ctx, txt, 11, y, CH.ink, f, 'left', 'middle');
+      label(ctx, txt, 11, y, col, f, 'left', 'middle');
     });
-    const credit = attr ? t(attr) : ENV.map !== 'none' ? (failed ? t('Map tiles unavailable — the plot is drawn without them') : t('Loading the map…')) : null;
+    const credit = [attr ? t(attr) : ENV.map !== 'none' ? (failed ? t('Map tiles unavailable — the plot is drawn without them') : t('Loading the map…')) : null,
+      inDisc.length ? t('Buildings © OpenStreetMap contributors') : null].filter(Boolean).join(' · ') || null;
     const cLines = [];
     if (credit) {
       ctx.font = F(8.5);
@@ -3123,6 +3326,9 @@ function buildEnvironment(host) {
         ['Sunrise (solar time)', ss ? hm(ss.rise) : ''], ['Sunset (solar time)', ss ? hm(ss.set) : ''], ['Day length (h)', ss ? +(ss.set - ss.rise).toFixed(2) : ''],
         ['Ridge height (m)', +M.ridge.toFixed(2)], ['Ridge shadow length (m)', sp.alt > 0.5 ? +(M.ridge / Math.tan(sp.alt * RAD)).toFixed(2) : ''],
         ['Base map', ENV.map === 'none' ? 'none' : TILE_SRC[ENV.map].attr]);
+      const ns = envPanel.data.nbStat;
+      if (ENV.nb && ns && ns.n) rows.push(['Neighbouring buildings (OpenStreetMap, within ' + NB_R + ' m)', ns.n], ['  heights from storeys × 3 m', ns.storeys], ['  heights assumed (2 storeys, 1 for sheds)', ns.assumed],
+        ['Sunlit walls and roof now (m²)', +ns.sunlit.toFixed(1)], ['  of which in the neighbours\u2019 shade (m²)', +ns.shaded.toFixed(1)]);
       return csvRows(rows);
     }
   });
@@ -3185,12 +3391,41 @@ function buildEnvironment(host) {
   props.appendChild(controls([segDays, cDoy, cHour, playBtn]));
   const readings = props.appendChild(el('div', { class:'facts' }));
   props.appendChild(el('div', { class:'gh', text:'Map and view' }));
+  /* find the plot: an address in Portugal, coordinates, or a Google Maps link */
+  const findInp = el('input', { type:'text', placeholder:t('Address, “lat, lon” or a Google Maps link'), 'aria-label':t('Find the plot') });
+  const findMsg = el('div', { class:'hint' });
+  const place = (pos, name) => {
+    let note = '';
+    if (!inPortugal(pos.lat, pos.lon) && inPortugal(pos.lat, -Math.abs(pos.lon))) { pos = { lat:pos.lat, lon:-Math.abs(pos.lon) }; note = t('Longitude read as west.') + ' '; }
+    if (!inPortugal(pos.lat, pos.lon)) { findMsg.textContent = t('That point lies outside Portugal and its islands.'); return; }
+    ENV.plot = { lat:pos.lat, lon:pos.lon };
+    const km = distM(pos, { lat, lon }) / 1000;
+    findMsg.textContent = (name ? name + '. ' : '') + note + (km > 40 ? t(fmt(km, 0) + ' km from the site whose climate this page reads — change the site if the plot lies elsewhere.') : '');
+    refreshEnv();
+  };
+  const findPlot = q => {
+    q = String(q || '').trim();
+    if (!q) return;
+    const spot = parseSpot(q);
+    if (spot) { place(spot, null); return; }
+    findMsg.textContent = t('Searching…');
+    fetch('https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&countrycodes=pt&accept-language=' + (LANG === 'pt' ? 'pt' : 'en') + '&q=' + encodeURIComponent(q))
+      .then(r => r.ok ? r.json() : Promise.reject(new Error(r.status)))
+      .then(js => {
+        if (!js || !js.length) { findMsg.textContent = t('Nothing found for that address in Portugal.'); return; }
+        place({ lat:+js[0].lat, lon:+js[0].lon }, String(js[0].display_name || '').split(',').slice(0, 3).join(','));
+      })
+      .catch(() => { findMsg.textContent = t('The address search is unavailable — paste coordinates or a Google Maps link instead.'); });
+  };
+  props.appendChild(el('form', { class:'findplot', onsubmit:ev => { ev.preventDefault(); findPlot(findInp.value); } }, [findInp, el('button', { class:'btn small', type:'submit', text:'Find' })]));
+  props.appendChild(findMsg);
   const cMap = segCtl(null, [{ value:'sat', label:'Satellite' }, { value:'map', label:'Street' }, { value:'none', label:'None' }], ENV.map, v => { ENV.map = v; refreshEnv(); });
   const cView = segCtl(null, Object.keys(VIEW).map(k => ({ value:k, label:k === 'Plan' ? t('Plan') : k })), ENV.view, v => { ENV.view = v; refreshEnv(); });
   const cWide = segCtl(null, [{ value:false, label:'Plot' }, { value:true, label:'Neighbourhood' }], ENV.wide, v => { ENV.wide = v; refreshEnv(); });
   const plotLine = el('div', { class:'hint' });
   const resetBtn = el('button', { class:'btn small', text:'Back to the site coordinates', onclick:() => { ENV.plot = null; refreshEnv(); } });
-  props.appendChild(controls([cMap, cView, cWide]));
+  const cNb = checkCtl('Neighbouring buildings (OpenStreetMap)', ENV.nb, v => { ENV.nb = v; if (v && NB.status === 'failed') NB.at = NB.want = null; refreshEnv(); });
+  props.appendChild(controls([cMap, cView, cWide, cNb]));
   props.appendChild(el('div', { class:'rgroup' }, [plotLine, resetBtn]));
 
   /** Keep the hour inside the day's daylight. */
@@ -3204,16 +3439,27 @@ function buildEnvironment(host) {
     segDays.querySelectorAll('button').forEach((b2, i) => b2.setAttribute('aria-pressed', String([355, 79, 172, 266][i] === ENV.doy)));
     const ss = sunriseSunset(ENV.doy, lat, lon, tz), sp = sunPos(ENV.doy, ENV.h, lat, lon, tz), M = roofModel(G, RF);
     let noonAlt = -90; if (ss) noonAlt = sunPos(ENV.doy, ss.noon, lat, lon, tz).alt;
+    wantNeighbours(plotPos(), () => { if (host.isConnected) refreshEnv(); });
+    envPanel.draw();                           // first, so the neighbours' shade can be read below
+    const ns = envPanel.data.nbStat || { n:0 }, nbRows = [];
+    if (!ENV.nb) nbRows.push([t('Neighbouring buildings'), t('off')]);
+    else if (NB.status === 'failed') nbRows.push([t('Neighbouring buildings'), t('unavailable')]);
+    else if (NB.status === 'loading' && !ns.n) nbRows.push([t('Neighbouring buildings'), t('loading…')]);
+    else if (!ns.n) nbRows.push([t('Neighbouring buildings'), t('none mapped here')]);
+    else {
+      nbRows.push([t('Neighbouring buildings'), ns.assumed ? t(ns.n + ' (' + ns.assumed + ' heights assumed)') : String(ns.n)]);
+      nbRows.push([t('Sunlit walls and roof in their shade'), ns.sunUp && ns.sunlit > 0 ? fmt(100 * ns.shaded / ns.sunlit, 0) + ' %' : '–']);
+    }
     readings.innerHTML = '';
     [[t('Sun altitude'), sp.alt > 0 ? fmt(sp.alt, 1) + '°' : t('below the horizon')], [t('Sun azimuth'), fmt(sp.azi, 0) + '° · ' + COMPASS8[Math.round(sp.azi / 45) % 8]],
      [t('Sunrise – sunset'), ss ? hm(ss.rise) + ' – ' + hm(ss.set) : '–'], [t('Day length'), ss ? fmt(ss.set - ss.rise, 1) + ' h' : '–'],
-     [t('Noon altitude'), fmt(noonAlt, 1) + '°'], [t('Ridge shadow'), sp.alt > 0.5 ? fmt(M.ridge / Math.tan(sp.alt * RAD), 1) + ' m' : '–'], normalsLine(monthOf(ENV.doy))]
+     [t('Noon altitude'), fmt(noonAlt, 1) + '°'], [t('Ridge shadow'), sp.alt > 0.5 ? fmt(M.ridge / Math.tan(sp.alt * RAD), 1) + ' m' : '–'], normalsLine(monthOf(ENV.doy))].concat(nbRows)
       .forEach(([k, v]) => readings.appendChild(el('div', { class:'fact' }, [el('span', { text:k }), el('b', { text:v })])));
     const pp = plotPos();
     plotLine.textContent = t('Plot') + ' ' + fmt(Math.abs(pp.lat), 5) + '° ' + (pp.lat < 0 ? 'S' : 'N') + ' · ' + fmt(Math.abs(pp.lon), 5) + '° ' + (pp.lon < 0 ? 'W' : 'E')
-      + (ENV.plot ? '' : ' — ' + t('the site coordinates; drag the ground to move the building'));
+      + (ENV.plot ? '' : ' — ' + t('the site coordinates; find the plot above, or drag the ground to move the building'));
     resetBtn.style.display = ENV.plot ? '' : 'none';
-    envPanel.draw(); chart.draw(); clim.draw();
+    chart.draw(); clim.draw();
     wxKick();
   }
 
@@ -3372,7 +3618,7 @@ function buildEnvironment(host) {
   ]);
   fold('The map, the sun and the weather', [hint('env-weather',
     'The weather over the model is this site’s normals read at the day chosen: each month’s value sits at mid-month and the days between are interpolated. The sun grows and deepens in colour with the mean air temperature, on a scale from 0 to 28 °C; clouds gather with the precipitation, from none at 0 to a full sky at 150 mm a month, and rain falls above 10 mm. Under cloud the building’s shadow softens, since more of the light is diffuse, and each cloud’s shadow crosses the ground and the building below it. Drag across the climograph to move through the year; the model and the solar chart follow, and the day’s place in the year is marked on the climograph. This is a reading of the normals, not a record of the sky: precipitation stands in for cloudiness, which it follows through the Portuguese year but not everywhere — a coastal summer morning can be grey with sea fog and still dry. The Roof tab reads the sun actually received, from the ERA5 reanalysis.'), hint('env-map',
-    'The model sets the building drawn on Site — its plan, breaks and patio, turned as set there, under the roof set on Roof — on a disc of base map around its plot: satellite imagery from Esri World Imagery or the street map of OpenStreetMap, each credited on the drawing, loaded from those services by your browser (only the tile addresses leave it). The sun is computed for this site in solar time, as everywhere in this application; its paths for 21 June, 20 March and 21 December are drawn on a sky dome over the building, dashed, with the day chosen solid and its even hours marked. Drag the sun — on the dome or on the solar chart — along its path to change the hour, across the paths to change the day; the shadow on the ground is every piece of the roof dropped along the sun’s ray, as on Ventilation. Drag the ground to slide the map under the building until it stands on its plot; the plot’s coordinates go into the JSON export. <b>Neighbourhood</b> widens the map to 90 m round the plot to read the streets and the buildings around it — their shade is not computed. Imagery can be years old and a little off true position; the dome is a diagram, not to scale with the map.')]);
+    'The model sets the building drawn on Site — its plan, breaks and patio, turned as set there, under the roof set on Roof — on a disc of base map around its plot: satellite imagery from Esri World Imagery or the street map of OpenStreetMap, each credited on the drawing, loaded by your browser from those services, which see the area of map asked for. Until a plot is found the map sits on the site’s reference coordinates — a station or a region’s centre, which can fall in a river or a field. <b>Find the plot</b> takes an address in Portugal, the islands included (searched on OpenStreetMap’s Nominatim when you press Find, never as you type), coordinates in decimal degrees or degrees, minutes and seconds, or a Google Maps link pasted whole; dragging the ground then fine-tunes it, and its coordinates go into the JSON export. <b>Neighbouring buildings</b> are the footprints mapped on OpenStreetMap within ' + NB_R + ' m, read by your browser from its Overpass service (which sees the plot’s position), raised to their mapped height, else to their storeys at 3 m each, else to an assumed two storeys (one for a garage or a shed) — those assumed are outlined dashed. The one standing on the plot, and any the design overlaps, give way to the design; any standing between the eye and the design is drawn see-through. Their shadows fall on the ground with the design’s own, and where they fall on the design they are drawn on its walls and roof: each sunlit wall and roof plane is sampled about every 0.7 m and each sample’s ray to the sun followed through the neighbours, which gives the share of the sunlit envelope in their shade at the hour shown. Mapping is thorough in the cities and thinner in the country and on the islands, and trees, walls and the ground’s own slope are not in it: a plot with nothing mapped round it is not necessarily open. The sun is computed for this site in solar time, as everywhere in this application; its paths for 21 June, 20 March and 21 December are drawn on a sky dome over the building, dashed, with the day chosen solid and its even hours marked. Drag the sun — on the dome or on the solar chart — along its path to change the hour, across the paths to change the day. Imagery can be years old and a little off true position; the dome is a diagram, not to scale with the map.')]);
 }
 
 function buildSite(host) {
@@ -9080,6 +9326,26 @@ Object.assign(PT, {
   "The building from Site on its plot, under the sun paths of the solstices, the equinox and the day chosen. Drag the sun along its path for the hour, across the paths for the day; drag the ground to place the building. The sky follows the month’s normals: the warmer, the stronger the sun; the wetter, the more cloud and rain.":
     "O edifício do Local no seu lote, sob os percursos do sol dos solstícios, do equinócio e do dia escolhido. Arraste o sol ao longo do percurso para a hora, através dos percursos para o dia; arraste o terreno para situar o edifício. O céu segue as normais do mês: quanto mais quente, mais forte o sol; quanto mais chuvoso, mais nuvens e chuva.",
   "Drag across the months to move the day.": "Arraste sobre os meses para mudar o dia.",
+  "Address, “lat, lon” or a Google Maps link": "Morada, «lat, lon» ou uma ligação do Google Maps",
+  "Find the plot": "Encontrar o lote",
+  "Find": "Procurar",
+  "Longitude read as west.": "Longitude lida como oeste.",
+  "That point lies outside Portugal and its islands.": "Esse ponto fica fora de Portugal e das suas ilhas.",
+  "{} km from the site whose climate this page reads — change the site if the plot lies elsewhere.": "{} km do local cujo clima esta página lê — mude o local se o lote ficar noutro sítio.",
+  "Searching…": "A procurar…",
+  "Nothing found for that address in Portugal.": "Nada encontrado para essa morada em Portugal.",
+  "The address search is unavailable — paste coordinates or a Google Maps link instead.": "A pesquisa de moradas não está disponível — cole antes coordenadas ou uma ligação do Google Maps.",
+  "Neighbouring buildings (OpenStreetMap)": "Edifícios vizinhos (OpenStreetMap)",
+  "Neighbouring buildings": "Edifícios vizinhos",
+  "off": "desligado",
+  "unavailable": "indisponível",
+  "loading…": "a carregar…",
+  "none mapped here": "nenhum cartografado aqui",
+  "{} ({} heights assumed)": "{} ({} alturas supostas)",
+  "Sunlit walls and roof in their shade": "Paredes e cobertura ao sol na sua sombra",
+  "Buildings © OpenStreetMap contributors": "Edifícios © contribuidores do OpenStreetMap",
+  "Map at the site’s reference coordinates — find the plot under Map and view": "Mapa nas coordenadas de referência do local — encontre o lote em Mapa e vista",
+  "the site coordinates; find the plot above, or drag the ground to move the building": "as coordenadas do local; encontre o lote acima, ou arraste o terreno para deslocar o edifício",
   "The map, the sun and the weather": "O mapa, o sol e o tempo",
   "Sun path": "Percurso do sol",
   "Day": "Dia",
@@ -9098,7 +9364,6 @@ Object.assign(PT, {
   "Noon altitude": "Altura ao meio-dia",
   "Ridge shadow": "Sombra da cumeeira",
   "below the horizon": "abaixo do horizonte",
-  "the site coordinates; drag the ground to move the building": "as coordenadas do local; arraste o terreno para deslocar o edifício",
   "solar time": "hora solar",
   "sun": "sol",
   "azimuth": "azimute",
@@ -9590,7 +9855,7 @@ Object.assign(PT_HINT, {
   'env-weather':
     'O tempo sobre o modelo são as normais deste local lidas no dia escolhido: o valor de cada mês fica a meio do mês e os dias entre eles são interpolados. O sol cresce e aquece de cor com a temperatura média do ar, numa escala de 0 a 28 °C; as nuvens juntam-se com a precipitação, de nenhuma a 0 a um céu coberto a 150 mm por mês, e a chuva cai acima de 10 mm. Sob nuvens a sombra do edifício suaviza-se, porque mais luz é difusa, e a sombra de cada nuvem atravessa o terreno e o edifício por baixo dela. Arraste sobre o climograma para percorrer o ano; o modelo e o diagrama solar acompanham, e o lugar do dia no ano fica marcado no climograma. É uma leitura das normais, não um registo do céu: a precipitação faz as vezes da nebulosidade, que acompanha ao longo do ano português mas não em todo o lado — uma manhã de Verão na costa pode estar cinzenta de nevoeiro marítimo e continuar seca. O separador Telhado lê o sol realmente recebido, a partir da reanálise ERA5.',
   'env-map':
-    'O modelo assenta o edifício desenhado no Local — a sua planta, quebras e pátio, rodado como aí definido, sob o telhado definido em Telhado — num disco de mapa base à volta do seu lote: imagem de satélite da Esri World Imagery ou o mapa de ruas do OpenStreetMap, cada um creditado no desenho, carregados desses serviços pelo seu navegador (só os endereços dos mosaicos saem dele). O sol é calculado para este local em hora solar, como em toda esta aplicação; os seus percursos de 21 de Junho, 20 de Março e 21 de Dezembro são desenhados numa cúpula celeste sobre o edifício, a tracejado, com o dia escolhido a cheio e as suas horas pares marcadas. Arraste o sol — na cúpula ou no diagrama solar — ao longo do percurso para mudar a hora, através dos percursos para mudar o dia; a sombra no terreno é cada peça do telhado projectada segundo o raio solar, como em Ventilação. Arraste o terreno para deslizar o mapa sob o edifício até que este assente no seu lote; as coordenadas do lote seguem na exportação JSON. <b>Vizinhança</b> alarga o mapa a 90 m em torno do lote para ler as ruas e os edifícios à volta — a sombra destes não é calculada. A imagem pode ter anos e estar ligeiramente desviada da posição real; a cúpula é um diagrama, não está à escala do mapa.',
+    'O modelo assenta o edifício desenhado no Local — a sua planta, quebras e pátio, rodado como aí definido, sob o telhado definido em Telhado — num disco de mapa base à volta do seu lote: imagem de satélite da Esri World Imagery ou o mapa de ruas do OpenStreetMap, cada um creditado no desenho, carregados pelo seu navegador desses serviços, que vêem a área de mapa pedida. Até se encontrar um lote, o mapa fica nas coordenadas de referência do local — uma estação ou o centro de uma região, que pode cair num rio ou num campo. <b>Encontrar o lote</b> aceita uma morada em Portugal, ilhas incluídas (procurada no Nominatim do OpenStreetMap quando carrega em Procurar, nunca enquanto escreve), coordenadas em graus decimais ou em graus, minutos e segundos, ou uma ligação do Google Maps colada inteira; arrastar o terreno afina depois a posição, e as suas coordenadas seguem na exportação JSON. <b>Edifícios vizinhos</b> são as implantações cartografadas no OpenStreetMap num raio de ' + NB_R + ' m, lidas pelo seu navegador do serviço Overpass (que vê a posição do lote), levantadas à sua altura cartografada, senão aos seus pisos a 3 m cada, senão a dois pisos supostos (um para uma garagem ou um anexo) — os supostos têm o contorno a tracejado. O que está no próprio lote, e qualquer um que o projecto sobreponha, dão lugar ao projecto; os que ficam entre o olhar e o projecto desenham-se transparentes. As suas sombras caem no terreno com a do próprio projecto e, onde caem sobre ele, desenham-se nas suas paredes e cobertura: cada parede e plano de cobertura ao sol é amostrado cerca de 0,7 m em 0,7 m e o raio de cada amostra até ao sol seguido através dos vizinhos, o que dá a parte da envolvente ao sol que está na sua sombra à hora mostrada. A cartografia é completa nas cidades e mais rala no campo e nas ilhas, e não inclui árvores, muros nem o declive do terreno: um lote sem nada cartografado à volta não está necessariamente desafogado. O sol é calculado para este local em hora solar, como em toda esta aplicação; os seus percursos de 21 de Junho, 20 de Março e 21 de Dezembro são desenhados numa cúpula celeste sobre o edifício, a tracejado, com o dia escolhido a cheio e as suas horas pares marcadas. Arraste o sol — na cúpula ou no diagrama solar — ao longo do percurso para mudar a hora, através dos percursos para mudar o dia. A imagem pode ter anos e estar ligeiramente desviada da posição real; a cúpula é um diagrama, não está à escala do mapa.',
   'ori-method':
     'As horas contam-se geometricamente — o sol acima do horizonte e a incidir na fachada — em <b>hora solar</b>, pelo que o meio-dia é a culminação onde quer que esteja o local. Sem nuvens, sem relevo e sem edifícios vizinhos: tome os números como comparação entre orientações, não como energia. O semestre de Verão vai de Abril a Setembro, a convenção de Köppen usada acima.',
   'ori-lead-Csa':
