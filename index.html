@@ -483,14 +483,12 @@ footer{border-top:1px solid var(--line); margin-top:26px; background:var(--wash)
           mean temperatures and the twelve monthly precipitation totals. This application ships none: normals are
           measured data and it has no authority to invent them. Take them from the IPMA <i>normais climatológicas</i>
           for the nearest station, from another national service, or from a gridded product such as WorldClim, and
-          name the source so the export carries it. Pick an IPMA station below and press
-          Fill boxes — the twelve pairs and the station coordinates are entered for you. Where no station fits the site, press Blend nearest — inverse-distance over the embedded stations — or Fetch web normals — reanalysis for these coordinates.</p>
+          name the source so the export carries it. Pick an IPMA station below and the twelve pairs and the station coordinates are entered for you. Where no station fits the site, press Blend nearest — inverse-distance over the embedded stations — or Fetch web normals — reanalysis for these coordinates.</p>
         <div id="normGrid"></div>
         <div class="fld" style="margin-top:12px;max-width:520px">
           <label for="inpSource" data-t="fldSource">Where the normals come from</label>
           <div style="display:flex;gap:8px">
             <input type="text" id="inpSource" list="srcList" placeholder="IPMA, Lisboa/Gago Coutinho, 1981–2010" autocomplete="off" style="flex:1">
-            <button type="button" class="btn" id="btnSrcFill" data-t="srcFill">Fill boxes</button>
             <button type="button" class="btn" id="btnSrcBlend" data-t="srcBlend">Blend nearest</button>
             <button type="button" class="btn" id="btnSrcWeb" data-t="srcWeb">Fetch web normals</button>
           </div>
@@ -527,7 +525,7 @@ footer{border-top:1px solid var(--line); margin-top:26px; background:var(--wash)
             <option value="IPMA, Santa Cruz das Flores, 1981–2010"></option>
             <option value="WorldClim v2.1, 1970–2000"></option>
           </datalist>
-          <span class="sub" data-t="fldSourceSub">Written into every CSV and PNG this application exports. Pick an IPMA station and press Fill boxes — fichas at ipma.pt/oclima/normais.clima — or name your own source. Blends and web fetches name themselves.</span>
+          <span class="sub" data-t="fldSourceSub">Written into every CSV and PNG this application exports. Pick an IPMA station — its normals fill in — fichas at ipma.pt/oclima/normais.clima — or name your own source. Blends and web fetches name themselves.</span>
           <span class="fieldstatus" id="srcStatus"></span>
         </div>
       </div>
@@ -8336,12 +8334,12 @@ Object.assign(STATIC_PT, {
   opRenovation: 'Grande intervenção',
   fldOpSub: 'Um edifício novo ainda pode escolher a sua orientação e a sua forma; uma reabilitação tem de tomar ambas como as encontra.',
   normTitle: 'Normais mensais',
-  normBody: 'Köppen–Geiger é calculado, não consultado, pelo que precisa das doze temperaturas médias mensais e dos doze totais mensais de precipitação. Esta aplicação não traz nenhuns: as normais são dados medidos e ela não tem autoridade para os inventar. Tome-os das <i>normais climatológicas</i> do IPMA para a estação mais próxima, de outro serviço nacional, ou de um produto em grelha como o WorldClim, e identifique a fonte para que a exportação a leve consigo. Escolha abaixo uma estação do IPMA e carregue em Preencher caixas — os doze pares e as coordenadas da estação são introduzidos por si. Onde nenhuma estação servir o local, carregue em Misturar próximas — distância inversa sobre as estações incorporadas — ou em Buscar na web — reanálise para estas coordenadas.',
+  normBody: 'Köppen–Geiger é calculado, não consultado, pelo que precisa das doze temperaturas médias mensais e dos doze totais mensais de precipitação. Esta aplicação não traz nenhuns: as normais são dados medidos e ela não tem autoridade para os inventar. Tome-os das <i>normais climatológicas</i> do IPMA para a estação mais próxima, de outro serviço nacional, ou de um produto em grelha como o WorldClim, e identifique a fonte para que a exportação a leve consigo. Escolha abaixo uma estação do IPMA e os doze pares e as coordenadas da estação são introduzidos por si. Onde nenhuma estação servir o local, carregue em Misturar próximas — distância inversa sobre as estações incorporadas — ou em Buscar na web — reanálise para estas coordenadas.',
   srcFill: 'Preencher caixas',
   srcBlend: 'Misturar próximas',
   srcWeb: 'Buscar na web',
   fldSource: 'De onde vêm as normais',
-  fldSourceSub: 'Escrita em cada CSV e cada PNG que esta aplicação exporta. Escolha uma estação do IPMA e carregue em Preencher caixas — fichas em ipma.pt/oclima/normais.clima — ou indique a sua própria fonte. As misturas e as leituras web identificam-se sozinhas.',
+  fldSourceSub: 'Escrita em cada CSV e cada PNG que esta aplicação exporta. Escolha uma estação do IPMA — as suas normais preenchem-se — fichas em ipma.pt/oclima/normais.clima — ou indique a sua própria fonte. As misturas e as leituras web identificam-se sozinhas.',
   btnGo: 'Percorrer o projecto',
   ex1h: 'Fundada na literatura de projecto',
   ex1p: 'Olgyay, Lechner, DeKay e Brown, Hyde, Ching e Shapiro, Brophy e Lewis. Cada orientação nomeia o livro de onde vem, e onde os livros divergem a aplicação di-lo em vez de os reduzir a uma média.',
