@@ -392,7 +392,8 @@ footer{border-top:1px solid var(--line); margin-top:26px; background:var(--wash)
 .bench .fpick .hint{flex-basis:100%; margin-top:2px}
 .bench .readings{margin:8px 0 0; gap:6px}
 .bench .readings .pill{white-space:normal; line-height:1.5}
-.bench.env{grid-template-columns:230px minmax(0,1fr) 280px}
+.bench.env{grid-template-columns:270px minmax(0,1fr) 290px}
+.bench.env .stage{position:sticky; top:100px}
 .bench.site{grid-template-columns:320px minmax(0,1fr)}
 .bench.site .stage{position:sticky; top:100px}
 .bench .sidegrp{display:flex; flex-direction:column; gap:4px}
@@ -405,13 +406,14 @@ footer{border-top:1px solid var(--line); margin-top:26px; background:var(--wash)
 .facts{display:flex; flex-direction:column; margin:2px 0 8px}
 .facts .fact{display:flex; justify-content:space-between; gap:10px; font-size:12px; color:var(--ink2); border-bottom:1px solid var(--line2); padding:3px 0}
 .facts .fact b{font-family:var(--mono); font-weight:500; color:var(--ink); white-space:nowrap}
+.bench .facts .fact b{white-space:normal; text-align:right; overflow-wrap:anywhere}   /* a long status wraps inside its column */
 details.more{border-top:1px solid var(--line); margin:6px 0 0; padding:2px 0}
 details.more > summary{cursor:pointer; font-size:13px; font-weight:600; color:var(--ink2); padding:9px 0; list-style-position:inside}
 details.more[open] > summary{color:var(--ink)}
 .findplot{display:flex; gap:6px; margin-top:6px}
 .findplot input{flex:1; min-width:0; font:inherit; font-size:12px; color:var(--ink); background:#fff; border:1px solid var(--line); border-radius:5px; padding:5px 7px}
 .canvas-wrap canvas.wx{position:absolute; left:0; top:0; width:100%; display:block; pointer-events:none}
-@media(max-width:1100px){.bench.site{grid-template-columns:1fr}.bench.site .stage{position:static; order:-1}.bench.env{grid-template-columns:1fr}.bench.env .stage{order:-1}.bench.env .rail{order:2}}
+@media(max-width:1100px){.bench.site{grid-template-columns:1fr}.bench.site .stage{position:static; order:-1}.bench.env{grid-template-columns:1fr}.bench.env .stage{position:static; order:-1}.bench.env .props{order:2}}
 @media(max-width:1100px){.bench{grid-template-columns:1fr}.bench .rgroup{flex-direction:row; flex-wrap:wrap}.bench .rgroup .btn{width:auto}
   .bench .props .controls{flex-direction:row; flex-wrap:wrap}}
 </style>
@@ -656,7 +658,7 @@ details.more[open] > summary{color:var(--ink)}
 /* ------------------------------------------------------------ 0. IDENTITY -- */
 const APP = {
   name:        'Architecture Advisor',
-  version:     '1.84.0',
+  version:     '1.85.0',
   author:      'Nuno Dinis Cortiços',
   institution: 'Lisbon School of Architecture, Universidade de Lisboa',
   builtWith:   'Claude Opus 5 (Anthropic)',
@@ -2831,14 +2833,15 @@ function buildEnvironment(host) {
   pageHead(host, 'Environmental',
     'The climate the site sits in and the sun over it: the Köppen class computed from the normals, and the sun path over the building on its own plot. Every page after this one is written against both.');
 
-  /* ---- the workbench: the climate and the solar chart on the left, the
-     building on its plot under the sun path in the middle, the climograph,
-     the day and the map on the right; the tables and the longer notes
-     follow below, folded ---- */
+  /* ---- the workbench: the climate, the day and every map and view
+     option on the left; the building on its plot under the sun path in the
+     middle, kept in view; both charts and the readings on the right; the
+     tables and the longer notes follow below, folded ---- */
   const bench = host.appendChild(el('div', { class:'bench env' }));
   const rail = bench.appendChild(el('div', { class:'rail' }));
   const stage = bench.appendChild(el('div', { class:'stage' }));
   const props = bench.appendChild(el('div', { class:'props' }));
+  const stick = () => { const hd = document.querySelector('header'); stage.style.top = ((hd ? hd.offsetHeight : 0) + 8) + 'px'; };
 
   /* --- the climate, in short ----------------------------------------------- */
   const mainName = KOPPEN_MAIN[K.main] ? KOPPEN_MAIN[K.main].name : '';
@@ -3393,10 +3396,11 @@ function buildEnvironment(host) {
         if (cLines.length && ctx.measureText(l).width > W * (narrow ? 0.92 : 0.6)) cLines.push(wd); else if (cLines.length) cLines[cLines.length - 1] = l; else cLines.push(wd); });
     }
     const stackCredit = narrow && cLines.length > 0, barY = H - 16 - (stackCredit ? cLines.length * 12 + 4 : 0);
-    /* where this is: the wider area round the plot, north up, the disc of
-       the model marked on it — a click or a drag on it moves the plot */
+    /* where this is, in the neighbourhood view: the wider area round the
+       plot, north up, the disc of the model marked on it — a click or a
+       drag on it moves the plot */
     PN.data.loc = null;
-    if (ENV.map !== 'none') {
+    if (ENV.map !== 'none' && ENV.wide) {
       const src = TILE_SRC[ENV.map], pp = plotPos(), cosl = Math.cos(pp.lat * RAD);
       const S = narrow ? 88 : 124, across = 900, k = S / across, x0 = 12, y0 = barY - 18 - S;
       const zl = clamp(Math.floor(Math.log2(40075016.686 * cosl * S / (across * 256))) + 1, 10, 17);
@@ -3458,14 +3462,14 @@ function buildEnvironment(host) {
     }
   });
 
-  /* --- the solar chart, left of the model; the day and the map, right ------- */
+  /* --- the solar chart, right of the model; the day and the map, left ------- */
   /* the solar chart itself: altitude against azimuth, the three paths and the
      day chosen — drag the sun on it, as on the dome */
   const tracks = DAYS.map(d => ({ d, pts:arcOf(d.doy).map(o => ({ h:o.h, alt:o.sp.alt, azi:o.sp.azi })) }));
   const yMax = Math.ceil((Math.max.apply(null, tracks.map(tr => Math.max.apply(null, tr.pts.map(p => p.alt)))) + 6) / 10) * 10;
   const chartRect = (W, H) => plotRect(30, 8, W - 30 - 8, H - 8 - 22, 30, 330, 0, yMax);
-  rail.appendChild(el('div', { class:'gh', text:'Sun path' }));   // on the left, under the climate
-  const chart = makePanel(rail, {
+  props.appendChild(el('div', { class:'gh', text:'Sun path' }));   // on the right, under the climograph
+  const chart = makePanel(props, {
     title: 'Sun path over the site',
     heightFn: w => Math.min(w / 1.25, 230),
     render(ctx, W, H, PN) {
@@ -3514,9 +3518,10 @@ function buildEnvironment(host) {
       if (ENV.h >= ss.set - 1e-6) { clearInterval(playing); playing = null; playBtn.textContent = t('Play the day'); }
     }, 70);
   } });
-  props.appendChild(controls([segDays, cDoy, cHour, playBtn]));
+  rail.appendChild(el('div', { class:'gh', text:'Day and hour' }));
+  rail.appendChild(controls([segDays, cDoy, cHour, playBtn]));
   const readings = props.appendChild(el('div', { class:'facts' }));
-  props.appendChild(el('div', { class:'gh', text:'Map and view' }));
+  rail.appendChild(el('div', { class:'gh', text:'Map and view' }));
   /* find the plot: an address in Portugal, coordinates, or a Google Maps link */
   const findInp = el('input', { type:'text', placeholder:t('Address, “lat, lon” or a Google Maps link'), 'aria-label':t('Find the plot') });
   const findMsg = el('div', { class:'hint', text:STATE.note || '' });
@@ -3547,16 +3552,16 @@ function buildEnvironment(host) {
       })
       .catch(() => { findMsg.textContent = t('The address search is unavailable — paste coordinates or a Google Maps link instead.'); });
   };
-  props.appendChild(el('form', { class:'findplot', onsubmit:ev => { ev.preventDefault(); findPlot(findInp.value); } }, [findInp, el('button', { class:'btn small', type:'submit', text:'Find' })]));
-  props.appendChild(findMsg);
+  rail.appendChild(el('form', { class:'findplot', onsubmit:ev => { ev.preventDefault(); findPlot(findInp.value); } }, [findInp, el('button', { class:'btn small', type:'submit', text:'Find' })]));
+  rail.appendChild(findMsg);
   const cMap = segCtl(null, [{ value:'sat', label:'Satellite' }, { value:'map', label:'Street' }, { value:'none', label:'None' }], ENV.map, v => { ENV.map = v; refreshEnv(); });
   const cView = segCtl(null, Object.keys(VIEW).map(k => ({ value:k, label:k === 'Plan' ? t('Plan') : k })), ENV.view, v => { ENV.view = v; refreshEnv(); });
   const cWide = segCtl(null, [{ value:false, label:'Plot' }, { value:true, label:'Neighbourhood' }], ENV.wide, v => { ENV.wide = v; refreshEnv(); });
   const plotLine = el('div', { class:'hint' });
   const resetBtn = el('button', { class:'btn small', text:'Back to the coordinates set up', onclick:() => resiteHome() });
   const cNb = checkCtl('Neighbouring buildings (OpenStreetMap)', ENV.nb, v => { ENV.nb = v; if (v && NB.status === 'failed') { NB.at = NB.want = null; NB.tries = 0; } refreshEnv(); });
-  props.appendChild(controls([cMap, cView, cWide, cNb]));
-  props.appendChild(el('div', { class:'rgroup' }, [plotLine, resetBtn]));
+  rail.appendChild(controls([cMap, cView, cWide, cNb]));
+  rail.appendChild(el('div', { class:'rgroup' }, [plotLine, resetBtn]));
 
   /** Keep the hour inside the day's daylight. */
   function clampHour() {
@@ -3663,7 +3668,8 @@ function buildEnvironment(host) {
   wxLayer(clim, drawWeatherClim); wxLayer(envPanel, drawWeatherEnv); wxLayer(chart, drawWeatherChart);
   clampHour();
   refreshEnv();
-  host._refresh = () => refreshEnv();   // the building may have changed on Site or Roof
+  stick();
+  host._refresh = () => { stick(); refreshEnv(); };   // the building may have changed on Site or Roof
 
   /* --- below: what each facade receives, the recommendation, the reading --- */
   const lower = host.appendChild(el('div', { class:'grid g2', style:'margin-top:6px' }));
@@ -3761,7 +3767,7 @@ function buildEnvironment(host) {
   ]);
   fold('The map, the sun and the weather', [hint('env-weather',
     'The weather over the model is this site’s normals read at the day chosen: each month’s value sits at mid-month and the days between are interpolated. The sun grows and deepens in colour with the mean air temperature, on a scale from 0 to 28 °C; clouds gather with the precipitation, from none at 0 to a full sky at 150 mm a month, and rain falls above 10 mm. Under cloud the building’s shadow softens, since more of the light is diffuse, and each cloud’s shadow crosses the ground and the building below it. Drag across the climograph to move through the year; the model and the solar chart follow, and the day’s place in the year is marked on the climograph. This is a reading of the normals, not a record of the sky: precipitation stands in for cloudiness, which it follows through the Portuguese year but not everywhere — a coastal summer morning can be grey with sea fog and still dry. The Roof tab reads the sun actually received, from the ERA5 reanalysis.'), hint('env-map',
-    'The model sets the building drawn on Site — its plan, breaks and patio, turned as set there, under the roof set on Roof — on a disc of base map around its plot: satellite imagery from Esri World Imagery or the street map of OpenStreetMap, each credited on the drawing, loaded by your browser from those services, which see the area of map asked for. Until a plot is found the map may sit on the region’s reference coordinates — its main town’s centre, which can fall in a river or a field. <b>Find the plot</b> takes an address in Portugal, the islands included (searched on OpenStreetMap’s Nominatim when you press Find, never as you type), coordinates in decimal degrees or degrees, minutes and seconds, or a Google Maps link pasted whole; dragging the ground, or pressing on the small map, moves it. <b>The site follows the plot</b>: once the plot settles, its coordinates become the site’s and every page is rebuilt on them — the normals by the setup’s own order (the IPMA station within 5 km, else the nearest stations blended; web normals read again where they were the source; normals you typed, or a station you picked, stay yours), the Köppen class, the sun on every page, the ground’s height there (the Copernicus DEM, asked of Open-Meteo) and the municipality and its region (asked of Nominatim once the plot has moved 300 m). The model, the windows and the day chosen stay as they were; <b>Back to the coordinates set up</b> returns to the setup’s site. <b>Neighbouring buildings</b> are the footprints mapped on OpenStreetMap within ' + NB_R + ' m, read by your browser from the public Overpass servers (which see the plot’s position; when one is busy the next is asked) and kept in this browser for 30 days, so a spot read once shows at once and its buildings stay when a later request fails; raised to their mapped height, else to their storeys at 3 m each, else to an assumed two storeys (one for a garage or a shed) — those assumed are outlined dashed. The one standing on the plot, and any the design overlaps, give way to the design; any standing between the eye and the design is drawn see-through. Their shadows fall on the ground with the design’s own, and where they fall on the design they are drawn on its walls and roof: each sunlit wall and roof plane is sampled about every 0.7 m and each sample’s ray to the sun followed through the neighbours, which gives the share of the sunlit envelope in their shade at the hour shown. Mapping is thorough in the cities and thinner in the country and on the islands, and trees, walls and the ground’s own slope are not in it: a plot with nothing mapped round it is not necessarily open. The sun is computed for this site in solar time, as everywhere in this application; its paths for 21 June, 20 March and 21 December are drawn on a sky dome over the building, dashed, with the day chosen solid and its even hours marked. Drag the sun — on the dome or on the solar chart — along its path to change the hour, across the paths to change the day. Imagery can be years old and a little off true position; where a service has no imagery at the finest zoom its flat tiles are skipped and the coarser level shows through. The small map in the corner shows the wider area, north up, with the model’s disc in red — press or drag on it to move the plot. The ground takes the light of the hour and the month: brighter under a clear sky and a high sun, duller as the cloud thickens, dark once the sun is down. The dome is a diagram, not to scale with the map; in the neighbourhood view it rises over most of the map and its paths are drawn bolder, on a white edge that keeps them legible over the imagery.')]);
+    'The model sets the building drawn on Site — its plan, breaks and patio, turned as set there, under the roof set on Roof — on a disc of base map around its plot: satellite imagery from Esri World Imagery or the street map of OpenStreetMap, each credited on the drawing, loaded by your browser from those services, which see the area of map asked for. Until a plot is found the map may sit on the region’s reference coordinates — its main town’s centre, which can fall in a river or a field. <b>Find the plot</b> takes an address in Portugal, the islands included (searched on OpenStreetMap’s Nominatim when you press Find, never as you type), coordinates in decimal degrees or degrees, minutes and seconds, or a Google Maps link pasted whole; dragging the ground, or pressing on the small map of the neighbourhood view, moves it. <b>The site follows the plot</b>: once the plot settles, its coordinates become the site’s and every page is rebuilt on them — the normals by the setup’s own order (the IPMA station within 5 km, else the nearest stations blended; web normals read again where they were the source; normals you typed, or a station you picked, stay yours), the Köppen class, the sun on every page, the ground’s height there (the Copernicus DEM, asked of Open-Meteo) and the municipality and its region (asked of Nominatim once the plot has moved 300 m). The model, the windows and the day chosen stay as they were; <b>Back to the coordinates set up</b> returns to the setup’s site. <b>Neighbouring buildings</b> are the footprints mapped on OpenStreetMap within ' + NB_R + ' m, read by your browser from the public Overpass servers (which see the plot’s position; when one is busy the next is asked) and kept in this browser for 30 days, so a spot read once shows at once and its buildings stay when a later request fails; raised to their mapped height, else to their storeys at 3 m each, else to an assumed two storeys (one for a garage or a shed) — those assumed are outlined dashed. The one standing on the plot, and any the design overlaps, give way to the design; any standing between the eye and the design is drawn see-through. Their shadows fall on the ground with the design’s own, and where they fall on the design they are drawn on its walls and roof: each sunlit wall and roof plane is sampled about every 0.7 m and each sample’s ray to the sun followed through the neighbours, which gives the share of the sunlit envelope in their shade at the hour shown. Mapping is thorough in the cities and thinner in the country and on the islands, and trees, walls and the ground’s own slope are not in it: a plot with nothing mapped round it is not necessarily open. The sun is computed for this site in solar time, as everywhere in this application; its paths for 21 June, 20 March and 21 December are drawn on a sky dome over the building, dashed, with the day chosen solid and its even hours marked. Drag the sun — on the dome or on the solar chart — along its path to change the hour, across the paths to change the day. Imagery can be years old and a little off true position; where a service has no imagery at the finest zoom its flat tiles are skipped and the coarser level shows through. In the neighbourhood view a small map in the corner shows the wider area, north up, with the model’s disc in red — press or drag on it to move the plot. The ground takes the light of the hour and the month: brighter under a clear sky and a high sun, duller as the cloud thickens, dark once the sun is down. The dome is a diagram, not to scale with the map; in the neighbourhood view it rises over most of the map and its paths are drawn bolder, on a white edge that keeps them legible over the imagery.')]);
 }
 
 function buildSite(host) {
@@ -9788,6 +9794,7 @@ Object.assign(PT, {
   "Map at the site’s reference coordinates — find the plot under Map and view": "Mapa nas coordenadas de referência do local — encontre o lote em Mapa e vista",
   "The map, the sun and the weather": "O mapa, o sol e o tempo",
   "Sun path": "Percurso do sol",
+  "Day and hour": "Dia e hora",
   "Day": "Dia",
   "{} Sep": "{} set",
   "Map and view": "Mapa e vista",
@@ -10330,7 +10337,7 @@ Object.assign(PT_HINT, {
   'env-weather':
     'O tempo sobre o modelo são as normais deste local lidas no dia escolhido: o valor de cada mês fica a meio do mês e os dias entre eles são interpolados. O sol cresce e aquece de cor com a temperatura média do ar, numa escala de 0 a 28 °C; as nuvens juntam-se com a precipitação, de nenhuma a 0 a um céu coberto a 150 mm por mês, e a chuva cai acima de 10 mm. Sob nuvens a sombra do edifício suaviza-se, porque mais luz é difusa, e a sombra de cada nuvem atravessa o terreno e o edifício por baixo dela. Arraste sobre o climograma para percorrer o ano; o modelo e o diagrama solar acompanham, e o lugar do dia no ano fica marcado no climograma. É uma leitura das normais, não um registo do céu: a precipitação faz as vezes da nebulosidade, que acompanha ao longo do ano português mas não em todo o lado — uma manhã de Verão na costa pode estar cinzenta de nevoeiro marítimo e continuar seca. O separador Telhado lê o sol realmente recebido, a partir da reanálise ERA5.',
   'env-map':
-    'O modelo assenta o edifício desenhado no Local — a sua planta, quebras e pátio, rodado como aí definido, sob o telhado definido em Telhado — num disco de mapa base à volta do seu lote: imagem de satélite da Esri World Imagery ou o mapa de ruas do OpenStreetMap, cada um creditado no desenho, carregados pelo seu navegador desses serviços, que vêem a área de mapa pedida. Até se encontrar um lote, o mapa pode ficar nas coordenadas de referência da região — o centro da sua cidade principal, que pode cair num rio ou num campo. <b>Encontrar o lote</b> aceita uma morada em Portugal, ilhas incluídas (procurada no Nominatim do OpenStreetMap quando carrega em Procurar, nunca enquanto escreve), coordenadas em graus decimais ou em graus, minutos e segundos, ou uma ligação do Google Maps colada inteira; arrastar o terreno, ou carregar no pequeno mapa, desloca-o. <b>O local segue o lote</b>: quando o lote assenta, as suas coordenadas passam a ser as do local e todas as páginas são refeitas sobre elas — as normais pela ordem do próprio arranque (a estação do IPMA a menos de 5 km, senão a mistura das estações mais próximas; as normais da web lidas de novo onde eram a fonte; as normais que escreveu, ou uma estação que escolheu, continuam suas), a classe de Köppen, o sol em todas as páginas, a altitude do terreno nesse ponto (o MDT Copernicus, pedido ao Open-Meteo) e o concelho e a sua região (pedidos ao Nominatim quando o lote se desloca 300 m). O modelo, as janelas e o dia escolhido ficam como estavam; <b>Voltar às coordenadas definidas no início</b> regressa ao local do arranque. <b>Edifícios vizinhos</b> são as implantações cartografadas no OpenStreetMap num raio de ' + NB_R + ' m, lidas pelo seu navegador dos servidores públicos Overpass (que vêem a posição do lote; quando um está ocupado pede-se ao seguinte) e guardadas neste navegador durante 30 dias, de modo que um sítio já lido aparece logo e os seus edifícios ficam quando um pedido seguinte falha; levantadas à sua altura cartografada, senão aos seus pisos a 3 m cada, senão a dois pisos supostos (um para uma garagem ou um anexo) — os supostos têm o contorno a tracejado. O que está no próprio lote, e qualquer um que o projecto sobreponha, dão lugar ao projecto; os que ficam entre o olhar e o projecto desenham-se transparentes. As suas sombras caem no terreno com a do próprio projecto e, onde caem sobre ele, desenham-se nas suas paredes e cobertura: cada parede e plano de cobertura ao sol é amostrado cerca de 0,7 m em 0,7 m e o raio de cada amostra até ao sol seguido através dos vizinhos, o que dá a parte da envolvente ao sol que está na sua sombra à hora mostrada. A cartografia é completa nas cidades e mais rala no campo e nas ilhas, e não inclui árvores, muros nem o declive do terreno: um lote sem nada cartografado à volta não está necessariamente desafogado. O sol é calculado para este local em hora solar, como em toda esta aplicação; os seus percursos de 21 de Junho, 20 de Março e 21 de Dezembro são desenhados numa cúpula celeste sobre o edifício, a tracejado, com o dia escolhido a cheio e as suas horas pares marcadas. Arraste o sol — na cúpula ou no diagrama solar — ao longo do percurso para mudar a hora, através dos percursos para mudar o dia. A imagem pode ter anos e estar ligeiramente desviada da posição real; onde um serviço não tem imagem no zoom mais fino, os seus mosaicos lisos são ignorados e mostra-se o nível mais grosso. O pequeno mapa no canto mostra a área envolvente, com o norte para cima e o disco do modelo a vermelho — carregue ou arraste sobre ele para mover o lote. O terreno toma a luz da hora e do mês: mais claro sob céu limpo e sol alto, mais baço à medida que a nebulosidade aumenta, escuro depois do pôr do sol. A cúpula é um diagrama, não está à escala do mapa; na vista da vizinhança ergue-se sobre a maior parte do mapa e os seus percursos desenham-se mais fortes, sobre um bordo branco que os mantém legíveis sobre a imagem.',
+    'O modelo assenta o edifício desenhado no Local — a sua planta, quebras e pátio, rodado como aí definido, sob o telhado definido em Telhado — num disco de mapa base à volta do seu lote: imagem de satélite da Esri World Imagery ou o mapa de ruas do OpenStreetMap, cada um creditado no desenho, carregados pelo seu navegador desses serviços, que vêem a área de mapa pedida. Até se encontrar um lote, o mapa pode ficar nas coordenadas de referência da região — o centro da sua cidade principal, que pode cair num rio ou num campo. <b>Encontrar o lote</b> aceita uma morada em Portugal, ilhas incluídas (procurada no Nominatim do OpenStreetMap quando carrega em Procurar, nunca enquanto escreve), coordenadas em graus decimais ou em graus, minutos e segundos, ou uma ligação do Google Maps colada inteira; arrastar o terreno, ou carregar no pequeno mapa da vista da vizinhança, desloca-o. <b>O local segue o lote</b>: quando o lote assenta, as suas coordenadas passam a ser as do local e todas as páginas são refeitas sobre elas — as normais pela ordem do próprio arranque (a estação do IPMA a menos de 5 km, senão a mistura das estações mais próximas; as normais da web lidas de novo onde eram a fonte; as normais que escreveu, ou uma estação que escolheu, continuam suas), a classe de Köppen, o sol em todas as páginas, a altitude do terreno nesse ponto (o MDT Copernicus, pedido ao Open-Meteo) e o concelho e a sua região (pedidos ao Nominatim quando o lote se desloca 300 m). O modelo, as janelas e o dia escolhido ficam como estavam; <b>Voltar às coordenadas definidas no início</b> regressa ao local do arranque. <b>Edifícios vizinhos</b> são as implantações cartografadas no OpenStreetMap num raio de ' + NB_R + ' m, lidas pelo seu navegador dos servidores públicos Overpass (que vêem a posição do lote; quando um está ocupado pede-se ao seguinte) e guardadas neste navegador durante 30 dias, de modo que um sítio já lido aparece logo e os seus edifícios ficam quando um pedido seguinte falha; levantadas à sua altura cartografada, senão aos seus pisos a 3 m cada, senão a dois pisos supostos (um para uma garagem ou um anexo) — os supostos têm o contorno a tracejado. O que está no próprio lote, e qualquer um que o projecto sobreponha, dão lugar ao projecto; os que ficam entre o olhar e o projecto desenham-se transparentes. As suas sombras caem no terreno com a do próprio projecto e, onde caem sobre ele, desenham-se nas suas paredes e cobertura: cada parede e plano de cobertura ao sol é amostrado cerca de 0,7 m em 0,7 m e o raio de cada amostra até ao sol seguido através dos vizinhos, o que dá a parte da envolvente ao sol que está na sua sombra à hora mostrada. A cartografia é completa nas cidades e mais rala no campo e nas ilhas, e não inclui árvores, muros nem o declive do terreno: um lote sem nada cartografado à volta não está necessariamente desafogado. O sol é calculado para este local em hora solar, como em toda esta aplicação; os seus percursos de 21 de Junho, 20 de Março e 21 de Dezembro são desenhados numa cúpula celeste sobre o edifício, a tracejado, com o dia escolhido a cheio e as suas horas pares marcadas. Arraste o sol — na cúpula ou no diagrama solar — ao longo do percurso para mudar a hora, através dos percursos para mudar o dia. A imagem pode ter anos e estar ligeiramente desviada da posição real; onde um serviço não tem imagem no zoom mais fino, os seus mosaicos lisos são ignorados e mostra-se o nível mais grosso. Na vista da vizinhança, um pequeno mapa no canto mostra a área envolvente, com o norte para cima e o disco do modelo a vermelho — carregue ou arraste sobre ele para mover o lote. O terreno toma a luz da hora e do mês: mais claro sob céu limpo e sol alto, mais baço à medida que a nebulosidade aumenta, escuro depois do pôr do sol. A cúpula é um diagrama, não está à escala do mapa; na vista da vizinhança ergue-se sobre a maior parte do mapa e os seus percursos desenham-se mais fortes, sobre um bordo branco que os mantém legíveis sobre a imagem.',
   'ori-method':
     'As horas contam-se geometricamente — o sol acima do horizonte e a incidir na fachada — em <b>hora solar</b>, pelo que o meio-dia é a culminação onde quer que esteja o local. Sem nuvens, sem relevo e sem edifícios vizinhos: tome os números como comparação entre orientações, não como energia. O semestre de Verão vai de Abril a Setembro, a convenção de Köppen usada acima.',
   'ori-lead-Csa':
