@@ -658,7 +658,7 @@ details.more[open] > summary{color:var(--ink)}
 /* ------------------------------------------------------------ 0. IDENTITY -- */
 const APP = {
   name:        'Architecture Advisor',
-  version:     '1.87.0',
+  version:     '1.88.0',
   author:      'Nuno Dinis Cortiços',
   institution: 'Lisbon School of Architecture, Universidade de Lisboa',
   builtWith:   'Claude Opus 5 (Anthropic)',
@@ -7934,7 +7934,8 @@ function buildVentilation(host) {
 
     /* ---- sun shadow of the whole volume on the garden: every roof piece's
        prism dropped along the sun ray, filled as one path ---- */
-    let shadowTag = null;
+    let shadowTag = null, shadeHit = null;
+    const shadeDbg = { wall: 0, roof: 0 };
     const M = FR.M;
     const sun = sunPos(SH.doy, SH.h, lat, lon, tz);
     const sunL = localDir(sun.azi);   // toward the sun, in the plan's frame
@@ -7963,6 +7964,36 @@ function buildVentilation(host) {
         const pts = [];
         for (let a2 = 0; a2 < 360; a2 += 30) pts.push([cxp + rr * Math.cos(a2 * RAD), cyp + rr * Math.sin(a2 * RAD)]);
         poly(pts, 'rgba(20,23,26,.10)', null, 1);
+      });
+      /* Blockers so the sun shadows reach the house itself: each crown its
+         canopy slab, each detached wall its thin slab. The house does not
+         shade itself here — faces turned from the sun are dark already. */
+      const blocks = [];
+      VEGETATION.forEach(v => {
+        if (v.height < 0.4) return;
+        const r = Math.max(0.4, canopyOf(v) * spreadOf(v)), z0 = trunkOf(v);
+        blocks.push({ x0: v.x - r, y0: v.y - r, z0, x1: v.x + r, y1: v.y + r, z1: z0 + canopyOf(v) });
+      });
+      WALLS.forEach(w => {
+        if (w.height < 0.4) return;
+        const hw = w.length / 2, t = 0.12;
+        if (w.along === 'y') blocks.push({ x0: w.x - t, y0: w.y - hw, z0: 0, x1: w.x + t, y1: w.y + hw, z1: w.height });
+        else blocks.push({ x0: w.x - hw, y0: w.y - t, z0: 0, x1: w.x + hw, y1: w.y + t, z1: w.height });
+      });
+      const scA = Math.cos(sun.alt * RAD), snA = Math.sin(sun.alt * RAD), sD = [sunL[0] * scA, sunL[1] * scA, snA];
+      shadeHit = (px, py, pz) => blocks.some(b => {
+        let t0 = 1e-6, t1 = Infinity;
+        const lo = [b.x0, b.y0, b.z0], hi = [b.x1, b.y1, b.z1], pp = [px, py, pz];
+        for (let k = 0; k < 3; k++) {
+          const dk = sD[k];
+          if (Math.abs(dk) < 1e-12) { if (pp[k] < lo[k] || pp[k] > hi[k]) return false; continue; }
+          let ta = (lo[k] - pp[k]) / dk, tb = (hi[k] - pp[k]) / dk;
+          if (ta > tb) { const q = ta; ta = tb; tb = q; }
+          if (ta > t0) t0 = ta;
+          if (tb < t1) t1 = tb;
+          if (t0 > t1) return false;
+        }
+        return true;
       });
     }
 
@@ -8003,7 +8034,7 @@ function buildVentilation(host) {
     M.walls.forEach(wl => {
       const sg = wl.sg;
       if (!wallSeen(sg.n)) return;
-      items.push({ pts:[onWallV(sg, 0, 0), onWallV(sg, sg.len, 0)].concat(wl.prof.slice().reverse().map(q => onWallV(sg, q[0], q[1]))), fill:wallCol(sg.n[1] !== 0), sg });
+      items.push({ pts:[onWallV(sg, 0, 0), onWallV(sg, sg.len, 0)].concat(wl.prof.slice().reverse().map(q => onWallV(sg, q[0], q[1]))), fill:wallCol(sg.n[1] !== 0), sg, prof:wl.prof });
       const wn = wins.find(o => o.sg === sg);
       if (wn) devsOf(sg, wn.w).devs.forEach(dv => items.push({ pts:dv.pts, dev:dv }));
     });
@@ -8024,6 +8055,26 @@ function buildVentilation(host) {
       if (it.dev) { poly(it.pts, it.dev.ov ? 'rgba(217,119,6,.22)' : 'rgba(220,38,38,.18)', it.dev.ov ? '#D97706' : '#DC2626', 1.2); return; }
       pathV(it.pts); ctx.fillStyle = it.fill; ctx.fill();
       if (it.pc) {
+        if (shadeHit) {
+          /* Crown and wall shade sampled about every metre over the plane. */
+          const pg = it.pc.poly;
+          let bx0 = 1e9, bx1 = -1e9, by0 = 1e9, by1 = -1e9;
+          pg.forEach(q => { if (q[0] < bx0) bx0 = q[0]; if (q[0] > bx1) bx1 = q[0]; if (q[1] < by0) by0 = q[1]; if (q[1] > by1) by1 = q[1]; });
+          ctx.fillStyle = 'rgba(20,23,26,.22)';
+          for (let gx = Math.floor(bx0) + 0.5; gx < bx1; gx += 1) for (let gy = Math.floor(by0) + 0.5; gy < by1; gy += 1) {
+            let ins = false;
+            for (let i = 0, j = pg.length - 1; i < pg.length; j = i++) {
+              const a = pg[i], b = pg[j];
+              if ((a[1] > gy) !== (b[1] > gy) && gx < (b[0] - a[0]) * (gy - a[1]) / (b[1] - a[1]) + a[0]) ins = !ins;
+            }
+            if (!ins) continue;
+            const z = M.zOf(it.pc.f, gx, gy) + 0.06;
+            if (!shadeHit(gx, gy, z)) continue;
+            const c = [[gx - 0.45, gy - 0.45], [gx + 0.45, gy - 0.45], [gx + 0.45, gy + 0.45], [gx - 0.45, gy + 0.45]].map(q => proj(q[0], q[1], z));
+            ctx.beginPath(); c.forEach((p2, m) => m ? ctx.lineTo(p2[0], p2[1]) : ctx.moveTo(p2[0], p2[1])); ctx.closePath(); ctx.fill();
+            shadeDbg.roof++;
+          }
+        }
         stroke(ctx, it.fill, 1); ctx.stroke();
         stroke(ctx, CH.ink, 1.5);
         it.pc.edges.forEach(e => { const a2 = proj(e[0][0], e[0][1], M.zOf(it.pc.f, e[0][0], e[0][1])), b2 = proj(e[1][0], e[1][1], M.zOf(it.pc.f, e[1][0], e[1][1])); seg(ctx, a2[0], a2[1], b2[0], b2[1]); });
@@ -8035,7 +8086,52 @@ function buildVentilation(host) {
         const lit = sun.alt > 0 && it.sg.n[0] * sunL[0] + it.sg.n[1] * sunL[1] > 0;
         devsOf(it.sg, wn.w).glass.forEach(gl => poly(gl, lit ? 'rgba(191,219,254,.95)' : 'rgba(219,234,254,.85)', lit ? '#2563EB' : CH.ink2, lit ? 1.8 : 1.2));
       }
+      if (shadeHit && it.sg && it.prof && sun.alt > 0 && it.sg.n[0] * sunL[0] + it.sg.n[1] * sunL[1] > 0) {
+        /* A crown or garden wall between this sunlit face and the sun: per
+           column how high the shade climbs, drawn as runs like on Site. */
+        const sg = it.sg, nU = Math.max(4, Math.ceil(sg.len / 0.5));
+        const hAt = u => {
+          const pr = it.prof;
+          if (!pr.length) return H0;
+          if (u <= pr[0][0]) return pr[0][1];
+          for (let k = 1; k < pr.length; k++) {
+            if (u <= pr[k][0]) {
+              const a = pr[k - 1], b = pr[k], f = (u - a[0]) / Math.max(1e-9, b[0] - a[0]);
+              return a[1] + (b[1] - a[1]) * f;
+            }
+          }
+          return pr[pr.length - 1][1];
+        };
+        const ray = (u, z) => {
+          const q = onWallV(sg, u, z);
+          return shadeHit(q[0] + sg.n[0] * 0.08, q[1] + sg.n[1] * 0.08, z);
+        };
+        const tops = [];
+        for (let i = 0; i < nU; i++) {
+          const u = (i + 0.5) / nU * sg.len, h = hAt(u);
+          if (!ray(u, 0.05)) { tops.push(0); continue; }
+          if (ray(u, h - 0.01)) { tops.push(h); shadeDbg.wall++; continue; }
+          let lo = 0.05, hi = h;
+          for (let k = 0; k < 10; k++) { const mz = (lo + hi) / 2; if (ray(u, mz)) lo = mz; else hi = mz; }
+          tops.push(lo); shadeDbg.wall++;
+        }
+        const SP = (u, z) => { const q = onWallV(sg, u, z); return proj(q[0], q[1], q[2]); };
+        ctx.fillStyle = 'rgba(20,23,26,.30)';
+        let i = 0;
+        while (i < nU) {
+          if (!tops[i]) { i++; continue; }
+          let j = i;
+          while (j + 1 < nU && tops[j + 1]) j++;
+          const ptsTop = [];
+          for (let k2 = i; k2 <= j; k2++) ptsTop.push(SP((k2 + 0.5) / nU * sg.len, tops[k2]));
+          const u0 = i / nU * sg.len, u1 = (j + 1) / nU * sg.len;
+          const pg = [SP(u0, 0), SP(u1, 0), SP(u1, tops[j])].concat(ptsTop.reverse()).concat([SP(u0, tops[i])]);
+          ctx.beginPath(); pg.forEach((c, m) => m ? ctx.lineTo(c[0], c[1]) : ctx.moveTo(c[0], c[1])); ctx.closePath(); ctx.fill();
+          i = j + 1;
+        }
+      }
     });
+    window.__arcaShade = { wall: shadeDbg.wall, roof: shadeDbg.roof, sunAlt: +sun.alt.toFixed(1) };
     wins.forEach(o => {
       if (wallSeen(o.sg.n)) return;
       const g2 = devsOf(o.sg, o.w);
@@ -8267,7 +8363,7 @@ function buildVentilation(host) {
 
   ventPanel = makePanel(stage, {
     title: 'One model \u2014 site, roof, windows, sun and air',
-    note: 'Volume and eave height from Site, slopes from Roof, openings and sunspace from Windows & Shading, shadows from the same sun, airflow from the opposite pairs \u2014 pick a tool on the left, click the ground to place; the selection and the view are on the right',
+    note: 'Volume and eave height from Site, slopes from Roof, openings and sunspace from Windows & Shading, shadows from the same sun on the garden and the house, airflow from the opposite pairs \u2014 pick a tool on the left, click the ground to place; the selection and the view are on the right',
     heightFn: w => w < 600 ? Math.round(w * 0.95 + 80) : Math.round(clamp(w * 0.64, 340, 660)),
     render: renderVent,
     csv: ventCSV
@@ -10500,7 +10596,7 @@ Object.assign(PT, {
   "Detached walls": "Muros isolados",
   "Ventilation scores — winter defense, summer breeze": "Pontuações de ventilação — defesa de inverno, brisa de verão",
   "Volume and eave height from Site, slopes from Roof, openings and sunspace from Windows & Shading, shadows from the same sun, airflow from the opposite pairs \u2014 pick a tool on the left, click the ground to place; the selection and the view are on the right":
-    "Volume e altura do beirado do Local, vertentes da Cobertura, vãos e estufa de Janelas e Sombreamento, sombras do mesmo sol, escoamento pelos pares opostos \u2014 escolha uma ferramenta à esquerda, clique no terreno para colocar; a selecção e a vista estão à direita",
+    "Volume e altura do beirado do Local, vertentes da Cobertura, vãos e estufa de Janelas e Sombreamento, sombras do mesmo sol no jardim e na casa, escoamento pelos pares opostos \u2014 escolha uma ferramenta à esquerda, clique no terreno para colocar; a selecção e a vista estão à direita",
   /* planting on Ventilation: the regional palette and its species */
   "Native planting for": "Plantação autóctone para",
   "sources for this region only": "fontes apenas desta região",
