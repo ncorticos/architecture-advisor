@@ -658,7 +658,7 @@ details.more[open] > summary{color:var(--ink)}
 /* ------------------------------------------------------------ 0. IDENTITY -- */
 const APP = {
   name:        'Architecture Advisor',
-  version:     '1.86.0',
+  version:     '1.87.0',
   author:      'Nuno Dinis Cortiços',
   institution: 'Lisbon School of Architecture, Universidade de Lisboa',
   builtWith:   'Claude Opus 5 (Anthropic)',
@@ -7455,7 +7455,7 @@ function buildVentilation(host) {
   const cAnim = checkCtl('Animate wind', airAnim, v => { airAnim = v; airKick(); });
   viewBox.appendChild(cAnim);
   viewBox.appendChild(hint('vent-air',
-    'The blue layer rides at about half the eave height and follows the month wind around every volume of the proposal: dots travel at true metres per second, darker where a wing squeezes them faster at its shoulders, paler where the wind stalls against a windward wall and in the lazy wake behind each volume. Stylised deflection — potential-flow-like around each footprint plus a wake deficit — not CFD; planting, detached walls and neighbours throttle scores and shade, not these lines.'));
+    'The blue layer rides at about half the eave height and follows the month wind around every volume, wall and plant of the proposal: dots travel at true metres per second, darker where squeezed faster, paler in stalls and wakes. Walls block like buildings; crowns bleed air through, slowed by density, size and height — trunk, canopy and all — so a high crown on a clear stem barely stirs this layer while a bushy windbreak bends the whole pattern. Stylised deflection, not CFD.'));
 
   /* ---- turn the model: same facade-picking camera as Windows & Shading ---- */
   host.appendChild(section('Turn the model',
@@ -7734,10 +7734,12 @@ function buildVentilation(host) {
      with a slow wake behind each. Stagnation upwind, faster at the
      shoulders, lazy wake: the three things a student should see a proposal
      do to the wind. The dominant (nearest-influence) box steers each point,
-     far field relaxes to the month wind. Speeds are true m/s at the layer
-     height; planting, detached walls and neighbours throttle scores and
-     shade, not these lines. Rebuilt every redraw (cheap), stored in plan
-     metres so any camera flip just re-projects. */
+     far field relaxes to the month wind. Walls block like buildings; crowns
+     bleed air through, slowed by density, size and height — trunk, canopy
+     and all — so a high crown on a clear stem barely stirs the layer while
+     a bushy windbreak bends the whole pattern. Speeds are true m/s at the
+     layer height. Rebuilt every redraw (cheap), stored in plan metres so
+     any camera flip just re-projects. */
   const buildAirField = () => {
     const wm = tunedWind();
     const toA = (wm.dir + 180) % 360;
@@ -7754,12 +7756,47 @@ function buildVentilation(host) {
     });
     const holes = pp.neg.slice();
     const inNeg = (x, y) => holes.some(h => x > h[0] + 1e-6 && x < h[2] - 1e-6 && y > h[1] + 1e-6 && y < h[3] - 1e-6);
-    const maxAu = Math.max(...boxes.map(b => b.au)), maxBw = Math.max(...boxes.map(b => b.bw));
+    WALLS.forEach(w => {
+      if (w.height < midH) return;
+      const hw = w.length / 2, t = 0.2;
+      const r = w.along === 'y' ? [w.x - t, w.y - hw, w.x + t, w.y + hw]
+        : [w.x - hw, w.y - t, w.x + hw, w.y + t];
+      /* Extents are wall-relative: absolute plan coords would centre a
+         giant phantom ellipse on the origin and evacuate half the site. */
+      const cs = [[-hw, -t], [hw, -t], [hw, t], [-hw, t]];
+      boxes.push({ r, cx: w.x, cy: w.y,
+        au: Math.max(...cs.map(q => Math.abs(q[0] * tx + q[1] * ty)), 0.15),
+        bw: Math.max(...cs.map(q => Math.abs(-q[0] * ty + q[1] * tx)), 0.15) });
+    });
+    /* A crown at the layer is a porous disc (bleed, never blocked); a clear
+       stem alone is a thin one; above it all is free air. Trunk radius and
+       crown radius are nominal — trunk from height, crown from depth ×
+       spread, exactly the drawn silhouette's own numbers. */
+    const puffs = [];
+    VEGETATION.forEach(v => {
+      const sp = specOf(v.type);
+      if (!sp) return;
+      const trunk = trunkOf(v), canopy = canopyOf(v);
+      const dens = clamp(v.density != null ? v.density : 0.6, 0, 1);
+      if (midH < trunk) {
+        if (trunk > 0.2) puffs.push({ x: v.x, y: v.y, r: 0.15 + 0.015 * v.height, k: 0.55 * dens, wake: 1.6 });
+      } else if (midH <= trunk + canopy) {
+        puffs.push({ x: v.x, y: v.y, r: Math.max(0.4, canopy * (sp.spr != null ? sp.spr : 0.5)), k: dens, wake: 2.4 });
+      }
+    });
+    let maxAu = 0.5, maxBw = 0.5;
+    const reach = (x, y, pad) => {
+      const u = x * tx + y * ty, w = -x * ty + y * tx;
+      maxAu = Math.max(maxAu, Math.abs(u) + pad); maxBw = Math.max(maxBw, Math.abs(w) + pad);
+    };
+    boxes.forEach(b => [[b.r[0], b.r[1]], [b.r[2], b.r[3]]].forEach(q => reach(q[0], q[1], 0)));
+    puffs.forEach(q => reach(q.x, q.y, 3 * q.r + 4));
     const field = (x, y) => {
       if (inNeg(x, y)) return { ux: tx, uy: ty, sf: 1 };
       let bi = 0, bd = 1e18, bu = 0, bw2 = 0;
       boxes.forEach((b, i) => {
-        const u = (x * tx + y * ty) / b.au, w = (-x * ty + y * tx) / b.bw;
+        const dx = x - (b.cx || 0), dy = y - (b.cy || 0);
+        const u = (dx * tx + dy * ty) / b.au, w = (-dx * ty + dy * tx) / b.bw;
         const d = Math.max(0, Math.hypot(u, w) - R);
         if (d < bd) { bd = d; bi = i; bu = u; bw2 = w; }
       });
@@ -7771,32 +7808,63 @@ function buildVentilation(host) {
       const vr = (1 - q) * c, vt = -(1 + q) * e;
       const dx = vr * c - vt * e, dy = vr * e + vt * c;
       let sf = Math.hypot(dx, dy);
-      if (uu > R) sf *= 1 - 0.7 * Math.exp(-(((uu - R) / 1.3) ** 2)) * Math.exp(-((ww / 1.2) ** 2));
       const qu = b.au * dx, qw = b.bw * dy;
       const il = 1 / (Math.hypot(qu * tx - qw * ty, qu * ty + qw * tx) || 1);
       const wvx = (qu * tx - qw * ty) * il, wvy = (qu * ty + qw * tx) * il;
       const fx = wgt * wvx + (1 - wgt) * tx, fy = wgt * wvy + (1 - wgt) * ty;
       const fl = 1 / (Math.hypot(fx, fy) || 1);
-      return { ux: fx * fl, uy: fy * fl, sf: Math.min(1.5, wgt * sf + (1 - wgt)) };
+      let ux = fx * fl, uy = fy * fl, sfs = Math.min(1.5, wgt * sf + (1 - wgt));
+      /* Wakes superpose from every solid: a nearest-body-only rule lets a
+         big ellipse mask a thin wall's wake wherever their normalized
+         distances disagree. Each wake starts at its downstream face (ou=1)
+         and decays over its cross-flow scale. */
+      for (const o of boxes) {
+        const ox = x - (o.cx || 0), oy = y - (o.cy || 0);
+        const ou = (ox * tx + oy * ty) / o.au, ow = (-ox * ty + oy * tx) / o.bw;
+        if (ou > 1) {
+          const oW = Math.max(o.au, 1.5 * o.bw);
+          sfs *= 1 - 0.7 * Math.exp(-((((ou - 1) * o.au / oW) / 1.3) ** 2)) * Math.exp(-((ow / 1.2) ** 2));
+        }
+      }
+      let pw = 0;
+      for (const pf of puffs) {
+        const ddx = x - pf.x, ddy = y - pf.y;
+        const u = ddx * tx + ddy * ty, w = -ddx * ty + ddy * tx;
+        const wu = u > 0 ? u / pf.wake : u;
+        const q2 = (wu * wu + w * w) / (pf.r * pf.r);
+        if (q2 > 9) continue;
+        const def = pf.k * Math.exp(-q2);
+        sfs *= (1 - def);
+        pw += (w >= 0 ? 1 : -1) * def * 0.35;
+      }
+      const pxx = ux + pw * -ty, pyy = uy + pw * tx;
+      const pl = Math.hypot(pxx, pyy) || 1;
+      return { ux: pxx / pl, uy: pyy / pl, sf: Math.max(0.05, sfs) };
     };
     const clampBox = (x, y) => {
       for (let pass = 0; pass < 2; pass++) boxes.forEach(b => {
         if (inNeg(x, y)) return;
-        let uu = (x * tx + y * ty) / b.au, ww = (-x * ty + y * tx) / b.bw;
+        const cx = b.cx || 0, cy = b.cy || 0;
+        let uu = ((x - cx) * tx + (y - cy) * ty) / b.au, ww = (-(x - cx) * ty + (y - cy) * tx) / b.bw;
         const r = Math.hypot(uu, ww);
         if (r < R && r > 1e-9) {
           uu *= R / r; ww *= R / r;
-          x = uu * b.au * tx - ww * b.bw * ty;
-          y = uu * b.au * ty + ww * b.bw * tx;
+          x = cx + uu * b.au * tx - ww * b.bw * ty;
+          y = cy + uu * b.au * ty + ww * b.bw * tx;
         }
       });
       return [x, y];
     };
     const lead = Math.max(7, 1.6 * maxAu), trail = Math.max(9, 2.2 * maxAu);
     const across = maxBw + Math.max(4, maxBw);
+    /* Wide sites spread thirteen lines paper-thin (a 5 m wake box can fall
+       between two lines and read null), so the count grows with the span to
+       keep ~2.5 m lateral spacing. The reseed signature already keys on the
+       count, so geometry changes still restart the tracers. */
+    const NL = Math.max(13, Math.min(40, Math.ceil(2 * (across + 6) / 2.5)));
     const lines = [];
-    for (let i = 0; i < 13; i++) {
-      const w0 = -across + 2 * across * (i / 12);
+    for (let i = 0; i < NL; i++) {
+      const w0 = NL < 2 ? 0 : -across + 2 * across * (i / (NL - 1));
       let px = -tx * (maxAu + lead) - ty * w0, py = -ty * (maxAu + lead) + tx * w0;
       [px, py] = clampBox(px, py);
       const pts = [];
@@ -7814,7 +7882,7 @@ function buildVentilation(host) {
       for (let k = 1; k < thin.length; k++) cum.push(cum[k - 1] + Math.hypot(thin[k].x - thin[k - 1].x, thin[k].y - thin[k - 1].y));
       lines.push({ pts: thin, cum, len: cum[cum.length - 1] });
     }
-    const sig = [Math.round(toA), G.L, G.D, G.form || 'rect', lines.length].join('|');
+    const sig = [Math.round(toA), G.L, G.D, G.form || 'rect', VEGETATION.length, WALLS.length, lines.length].join('|');
     if (!ventAir || ventAir.sig !== sig) {
       const parts = [];
       lines.forEach((L, li) => {
@@ -10564,7 +10632,7 @@ Object.assign(PT_HINT, {
   'open-accuracy':
     'Este separador dimensiona vidro e sombreamento como um primeiro esboço de projecto — regras geométricas de bolso, não uma simulação. Não modela luz difusa ou reflectida, encandeamento, ganhos internos ou solares, nem um céu real, e o valor de sombreamento abaixo é a média de um conjunto fixo de horas do dia em 21 de Junho e 21 de Dezembro apenas, não do ano inteiro nem de um ficheiro climático real. O próprio Olgyay chamou aos seus coeficientes de sombreamento "valores aproximados" (p.67); Lechner recomenda verificar qualquer desenho de sombreamento com um modelo físico (p.251); Ching &amp; Shapiro notam que o dimensionamento óptimo do vidro "deveria ser calculado por simulação computacional" (p.101). Um valor fora do intervalo colorido não está proibido — alguns programas precisam disso — mas trate-o como um sinal a justificar, não uma opção por defeito.',
   'vent-air':
-    'A camada azul anda a cerca de meia altura do beirado e segue o vento do mês em torno de todos os volumes da proposta: os pontos viajam a metros por segundo verdadeiros, mais escuros onde uma asa os aperta mais depressa nos ombros, mais pálidos onde o vento estagna contra uma parede de barlavento e na esteira preguiçosa atrás de cada volume. Deflexão estilizada — quase-potencial em torno de cada implantação mais défice de esteira — não é CFD; a vegetação, os muros destacados e os vizinhos travam as notas e a sombra, não estas linhas.',
+    'A camada azul anda a cerca de meia altura do beirado e segue o vento do mês em torno de todos os volumes, muros e plantas da proposta: os pontos viajam a metros por segundo verdadeiros, mais escuros onde passam mais depressa, mais pálidos nas estagnações e esteiras. Os muros bloqueiam como edifícios; as copas deixam passar o ar, travado pela densidade, tamanho e altura — tronco, copa e tudo — por isso uma copa alta em fuste limpo mal mexe nesta camada enquanto uma sebe arbustiva verga o padrão inteiro. Deflexão estilizada, não é CFD.',
 });
 
 /* boot, last: a page opened in Portuguese renders its first screen with
