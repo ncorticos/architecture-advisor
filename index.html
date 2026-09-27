@@ -609,7 +609,7 @@ footer{border-top:1px solid var(--line); margin-top:26px; background:var(--wash)
 /* ------------------------------------------------------------ 0. IDENTITY -- */
 const APP = {
   name:        'Architecture Advisor',
-  version:     '1.64.0',
+  version:     '1.65.0',
   author:      'Nuno Dinis Cortiços',
   institution: 'Lisbon School of Architecture, Universidade de Lisboa',
   builtWith:   'Claude Opus 5 (Anthropic)',
@@ -3604,6 +3604,7 @@ function buildVentilation(host) {
   /* ---- terrain, wind + planting state (world x east / y north, metres) ---- */
   let terrainKey = 'flat', windKey = 'moderate';
   let showShadow = true, showAir = true;
+  let airAnim = !(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
   const VEGETATION = [];          // {type, height, density, x, y}
   const WALLS = [];               // {x, y, along:'x'|'y', height, length}
   /* Monthly wind, direction FROM in degrees plus speed at 10 m: the pattern
@@ -4066,7 +4067,10 @@ function buildVentilation(host) {
     'Open (flat) ground slows the wind least; broken and mountainous ground shelters more (power-law exponent 0.14–0.28). Exposure multiplies it again: sheltered 0.6, moderate 1.0, exposed 1.4 (Olgyay, pp.37–40; DeKay & Brown, Strategy 85). Terrain and twelve monthly prevailing winds derive from these coordinates automatically on entry (ERA5 reanalysis via Open-Meteo — like the altitude lookup, only the coordinates leave the browser); the button re-runs it. Exposure stays manual: it reads the immediate surroundings, which no gridded product sees. Exposure stays manual: it reads the immediate surroundings, which no gridded product sees.'));
   const cShadow = checkCtl('Show sun shadows', true, v => { showShadow = v; refresh(); });
   const cAir = checkCtl('Show cross-ventilation paths', true, v => { showAir = v; refresh(); });
-  host.appendChild(controls([cShadow, cAir]));
+  const cAnim = checkCtl('Animate wind', airAnim, v => { airAnim = v; airKick(); });
+  host.appendChild(controls([cShadow, cAir, cAnim]));
+  host.appendChild(hint('vent-air',
+    'The blue layer rides at about half the eave height and follows the month wind: dots travel at true metres per second, darker where the house squeezes them faster at its shoulders, paler where the wind stalls against the windward wall and in the lazy wake behind. Stylised deflection — potential-flow-like around the footprint plus a wake deficit — not CFD; planting and detached walls throttle the scores, not these lines.'));
 
   /* ---- turn the model: same facade-picking camera as Windows & Shading ---- */
   host.appendChild(section('Turn the model',
@@ -4302,9 +4306,89 @@ function buildVentilation(host) {
   let ventPanel = null, FR = null;
 
   const draw = () => { if (ventPanel) ventPanel.draw(); };
+
+  /* ---- airflow field: stylised teaching deflection, not CFD ----
+     Uniform eave wind plus potential-flow-like deflection around the
+     footprint (normalised so length and depth both matter), with a slow
+     wake behind. Stagnation upwind, faster at the shoulders, lazy wake:
+     the three things a student should see a house do to the wind. Speeds
+     are true m/s at the layer height; vegetation and detached walls
+     throttle the scores, not these lines. Rebuilt every redraw (cheap),
+     stored in world metres so any camera flip just re-projects. */
+  let ventAir = null;
+  const buildAirField = () => {
+    const wm = tunedWind();
+    const toA = (wm.dir + 180) % 360, tr = toA * RAD;
+    const tx = Math.sin(tr), ty = Math.cos(tr);
+    const V0 = Math.max(0, eaveWind());
+    const midH = clamp(h0live() * 0.55, 1.0, 2.6);
+    const cs = [[-G.L / 2, -G.D / 2], [G.L / 2, -G.D / 2], [G.L / 2, G.D / 2], [-G.L / 2, G.D / 2]];
+    const au = Math.max(...cs.map(q => Math.abs(q[0] * tx + q[1] * ty)), 0.5);
+    const bw = Math.max(...cs.map(q => Math.abs(-q[0] * ty + q[1] * tx)), 0.5);
+    const R = 1.45;
+    const field = (x, y) => {
+      const u = (x * tx + y * ty) / au, w = (-x * ty + y * tx) / bw;
+      let r = Math.hypot(u, w), uu = u, ww = w;
+      if (r < R) { uu = u / r * R; ww = w / r * R; r = R; }
+      const c = uu / r, e = ww / r, q = R * R / (r * r);
+      const vr = (1 - q) * c, vt = -(1 + q) * e;
+      const dx = vr * c - vt * e, dy = vr * e + vt * c;
+      let sf = Math.hypot(dx, dy);
+      if (uu > R) sf *= 1 - 0.7 * Math.exp(-(((uu - R) / 1.3) ** 2)) * Math.exp(-((ww / 1.2) ** 2));
+      const qu = au * dx, qw = bw * dy;
+      const wx = qu * tx - qw * ty, wy = qu * ty + qw * tx;
+      const il = 1 / (Math.hypot(wx, wy) || 1);
+      return { ux: wx * il, uy: wy * il, sf: Math.min(1.5, sf) };
+    };
+    const lead = Math.max(7, 1.6 * au), trail = Math.max(9, 2.2 * au);
+    const across = bw + Math.max(4, bw);
+    const lines = [];
+    for (let i = 0; i < 13; i++) {
+      const w0 = -across + 2 * across * (i / 12);
+      let px = -tx * (au + lead) - ty * w0, py = -ty * (au + lead) + tx * w0;
+      const pts = [];
+      for (let k = 0; k < 420; k++) {
+        const f = field(px, py);
+        pts.push({ x: px, y: py, sf: f.sf });
+        px += f.ux * 0.4; py += f.uy * 0.4;
+        let uu2 = (px * tx + py * ty) / au, ww2 = (-px * ty + py * tx) / bw;
+        const rr2 = Math.hypot(uu2, ww2);
+        if (rr2 < R && rr2 > 1e-9) { uu2 *= R / rr2; ww2 *= R / rr2; px = uu2 * au * tx - ww2 * bw * ty; py = uu2 * au * ty + ww2 * bw * tx; }
+        if (px * tx + py * ty > au + trail) break;
+        if (Math.abs(-px * ty + py * tx) > across + 6) break;
+      }
+      if (pts.length < 8) continue;
+      const thin = [], cum = [0];
+      pts.forEach((q, k) => { if (k % 3 === 0 || k === pts.length - 1) thin.push(q); });
+      for (let k = 1; k < thin.length; k++) cum.push(cum[k - 1] + Math.hypot(thin[k].x - thin[k - 1].x, thin[k].y - thin[k - 1].y));
+      lines.push({ pts: thin, cum, len: cum[cum.length - 1] });
+    }
+    const sig = [Math.round(toA), G.L, G.D, lines.length].join('|');
+    if (!ventAir || ventAir.sig !== sig) {
+      const parts = [];
+      lines.forEach((L, li) => {
+        const n = Math.max(3, Math.min(14, Math.floor(L.len / 2.6)));
+        for (let j = 0; j < n; j++) parts.push({ li, s: (j / n) * L.len + ((li * 0.37) % 1) });
+      });
+      ventAir = { lines, parts, V0, toA, midH, sig, au, bw };
+    } else {
+      ventAir.lines = lines; ventAir.V0 = V0; ventAir.toA = toA; ventAir.midH = midH;
+    }
+    return ventAir;
+  };
+  const airPointAt = (L, s) => {
+    const ss = ((s % L.len) + L.len) % L.len;
+    let lo = 0, hi = L.cum.length - 1;
+    while (lo < hi - 1) { const m = (lo + hi) >> 1; if (L.cum[m] <= ss) lo = m; else hi = m; }
+    const sp = L.cum[hi] - L.cum[lo] || 1, f = (ss - L.cum[lo]) / sp;
+    const a = L.pts[lo], b = L.pts[hi];
+    return { x: a.x + (b.x - a.x) * f, y: a.y + (b.y - a.y) * f,
+      sf: a.sf + (b.sf - a.sf) * f, dx: (b.x - a.x) / sp, dy: (b.y - a.y) / sp };
+  };
   const renderVent = (ctx, W, H) => {
     FR = frame(W, H);
     const { cx, cy, s, H0, ridge, roofSpan, roofTh } = FR;
+    buildAirField();
     ctx.fillStyle = '#fafbf9';
     ctx.fillRect(0, 0, W, H);
 
@@ -4675,26 +4759,31 @@ function buildVentilation(host) {
 
     /* ---- summer cross-ventilation paths through opposite pairs ---- */
     if (showAir) {
-      const arrow = (x1, y1, z1, x2, y2, z2, color, width) => {
-        const a = proj(x1,y1,z1), b = proj(x2,y2,z2);
-        stroke(ctx, color, width || 2); seg(ctx, a[0], a[1], b[0], b[1]);
-        const an = Math.atan2(b[1]-a[1], b[0]-a[0]), hl = 8;
-        seg(ctx, b[0], b[1], b[0]-hl*Math.cos(an-0.45), b[1]-hl*Math.sin(an-0.45));
-        seg(ctx, b[0], b[1], b[0]-hl*Math.cos(an+0.45), b[1]-hl*Math.sin(an+0.45));
-      };
-      /* One month, one pattern: three blue streamlines along the month's
-         wind, the middle one strongest. Width follows the eave wind. */
+      /* Wind as it meets the house: the field built above, drawn
+         speed-colored — dark fast over the shoulders, pale in the upwind
+         stall and the lazy wake — with arrowheads so the exported PNG still
+         reads direction. Dots ride the same lines live, on the overlay. */
       const wm = tunedWind();
+      const midH = ventAir.midH;
       const toA = (wm.dir + 180) % 360;
       const vx = Math.sin(toA * RAD), vy = Math.cos(toA * RAD);
-      const midH = clamp(h0live() * 0.55, 1.0, 2.6);
       const R = G.L / 2 + G.D / 2 + gm;
-      const off = Math.min(G.L, G.D) / 4 + 1.2;
-      const wBase = 1 + 2.5 * clamp(eaveWind() / 5, 0, 1);
-      [-off, 0, off].forEach((o, i) => {
-        const px = -vy * o, py = vx * o;
-        arrow(px - vx * R, py - vy * R, midH, px + vx * R, py + vy * R, midH,
-          i === 1 ? 'rgba(29,78,216,.9)' : 'rgba(37,99,235,.55)', (i === 1 ? wBase + 1 : wBase));
+      ventAir.lines.forEach(L => {
+        for (let k = 1; k < L.pts.length; k++) {
+          const a = L.pts[k - 1], b = L.pts[k];
+          const al = 0.2 + 0.55 * Math.min(1, (a.sf + b.sf) / 2 / 1.2);
+          const A = proj(a.x, a.y, midH), B = proj(b.x, b.y, midH);
+          stroke(ctx, 'rgba(29,78,216,' + al.toFixed(2) + ')', 1.6);
+          seg(ctx, A[0], A[1], B[0], B[1]);
+        }
+        [0.33, 0.66].forEach(f => {
+          const q0 = airPointAt(L, f * L.len), q1 = airPointAt(L, f * L.len + 0.6);
+          const A = proj(q0.x, q0.y, midH), B = proj(q1.x, q1.y, midH);
+          const an = Math.atan2(B[1] - A[1], B[0] - A[0]), hl = 8;
+          stroke(ctx, 'rgba(29,78,216,.75)', 1.6);
+          seg(ctx, B[0], B[1], B[0] - hl * Math.cos(an - 0.45), B[1] - hl * Math.sin(an - 0.45));
+          seg(ctx, B[0], B[1], B[0] - hl * Math.cos(an + 0.45), B[1] - hl * Math.sin(an + 0.45));
+        });
       });
       const lp = proj(vx * (R + 1.4), vy * (R + 1.4), midH);
       label(ctx, monthSetName() + ' ' + dirName() + ' ' + fmt(wm.spd, 1) + ' m/s' + (tuneTxt() ? ' *' : ''), lp[0], lp[1], '#1D4ED8', FM(10), 'center', 'middle');
@@ -4746,6 +4835,7 @@ function buildVentilation(host) {
     if (derivedRelief !== null) rows.push(['Relief 2 km window (m)', +derivedRelief.toFixed(0)]);
     rows.push(['Wind speed source', derivedWindSrc ? derivedWindSrc + ' monthly prevailing at 10 m' : 'entered by hand, per month']);
     rows.push(['Eave wind (' + monthSetName(MON3_EN) + ', m/s)', +eaveWind().toFixed(2)]);
+    rows.push(['Airflow layer height (m)', +clamp(h0live() * 0.55, 1.0, 2.6).toFixed(2)], ['Airflow streamlines', ventAir ? ventAir.lines.length : 0]);
     rows.push(['Eave height H0 (m)', +h0live().toFixed(2)], ['Stack Δp ΔT=5K (Pa)', +stackPa(5).toFixed(2)]);
     rows.push(['Plan L×D (m)', G.L.toFixed(1) + '×' + G.D.toFixed(1)], ['Roof slopes', RF.n], ['Roof pitch (°)', +RF.th.toFixed(0)]);
     ['S','N','E','W'].forEach(f => {
@@ -4781,6 +4871,54 @@ function buildVentilation(host) {
   });
   const cv = ventPanel.canvas;
   cv.style.cursor = 'crosshair';
+
+  /* ---- living air: particles ride the streamlines at true m/s ----
+     One overlay canvas above the chart (pointer-transparent, so placing
+     and dragging never notice it), one frame loop that only runs while
+     its tab is visible and the toggle is on, and dies with a rebuilt page.
+     window.__arcaAir is the debug handle the headless tests read. */
+  const airCv = document.createElement('canvas');
+  airCv.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;pointer-events:none;';
+  cv.parentElement.appendChild(airCv);
+  window.__arcaAir = null;
+  let airRAF = 0, airLast = 0, airBeat = 0, airErr = '';
+  const airFrame = ts => {
+    airRAF = 0;
+    if (!ventPanel || !document.contains(ventPanel.canvas)) return;
+    if (!airCv.offsetParent || !airAnim) return;
+    if (ventAir && FR && ventAir.V0 > 0.03) {
+     try {
+      if (!airLast) airLast = ts;
+      const dt = Math.min(0.05, Math.max(0, (ts - airLast) / 1000));
+      airLast = ts;
+      if (airCv.width !== ventPanel.canvas.width || airCv.height !== ventPanel.canvas.height) {
+        airCv.width = ventPanel.canvas.width; airCv.height = ventPanel.canvas.height;
+      }
+      const r = ventPanel.canvas.getBoundingClientRect();
+      const dpr = ventPanel.canvas.width / Math.max(1, r.width);
+      const g = airCv.getContext('2d');
+      g.setTransform(dpr, 0, 0, dpr, 0, 0);
+      g.clearRect(0, 0, r.width, r.height);
+      const camS = camSign();
+      ventAir.parts.forEach(p => {
+        const L = ventAir.lines[p.li];
+        if (!L) return;
+        const q0 = airPointAt(L, p.s);
+        p.s = (p.s + ventAir.V0 * q0.sf * dt) % L.len;
+        const q = airPointAt(L, p.s);
+        const sp = projF(FR, camS * q.x, camS * q.y, ventAir.midH);
+        const rr = 1.5 + 1.4 * Math.min(1, q.sf);
+        g.fillStyle = 'rgba(29,78,216,' + (0.5 + 0.4 * Math.min(1, q.sf)).toFixed(2) + ')';
+        g.beginPath(); g.arc(sp[0], sp[1], rr, 0, 6.284); g.fill();
+      });
+      window.__arcaAir = { lines: ventAir.lines, parts: ventAir.parts, V0: ventAir.V0, toA: ventAir.toA, midH: ventAir.midH, beat: ++airBeat, err: airErr };
+     } catch (err) { airErr = String((err && err.message) || err); }
+    }
+    airRAF = requestAnimationFrame(airFrame);
+  };
+  const airKick = () => { airLast = 0; if (!airRAF) airRAF = requestAnimationFrame(airFrame); };
+  new IntersectionObserver(es => { if (es.some(e => e.isIntersecting)) airKick(); }).observe(cv);
+  airKick();
 
   /* ---- pointer model, as on Site/Roof/Windows: click to place, drag to
      move, double-click to remove. Placement needs an armed tool; dragging
@@ -5976,6 +6114,7 @@ Object.assign(PT, {
   "Reference wind at 10 m": "Vento de referência a 10 m",
   "Show sun shadows": "Mostrar sombras do sol",
   "Show cross-ventilation paths": "Mostrar percursos de ventilação transversal",
+  "Animate wind": "Animar o vento",
   "Site exposure — coordinates and altitude": "Exposição do local — coordenadas e altitude",
   "Sun for shadows": "Sol para as sombras",
   "Derive terrain + wind from coordinates": "Derivar terreno + vento das coordenadas",
@@ -6116,7 +6255,9 @@ Object.assign(PT_HINT, {
   'open-sunspace':
     'Um espaço solar anexo recolhe como uma janela de ganho directo, mas acumula e liberta ao longo do dia — a própria casa instrumentada de Galloway manteve um solário sem sombreamento entre 33 e 54°C enquanto a sala ficava perto de 27°C atrás dele (pp.24–30). Funciona melhor virado ao equador, mas é "cerca de metade tão sensível à orientação" como outros sistemas passivos — dentro de 30° do sul verdadeiro custa menos de 10% do óptimo (DeKay &amp; Brown, p.235). É também o mais caro e menos eficiente dos sistemas passivos, e inutilizável quando demasiado quente ou frio a menos que esteja bem ventilado — as aberturas de entrada e saída combinadas devem atingir pelo menos 16% da área envidraçada (Lechner, pp.183–187). Arraste o canto envidraçado exterior para definir tanto a distância a que fica do edifício como a largura que ocupa na parede.',
   'open-accuracy':
-    'Este separador dimensiona vidro e sombreamento como um primeiro esboço de projecto — regras geométricas de bolso, não uma simulação. Não modela luz difusa ou reflectida, encandeamento, ganhos internos ou solares, nem um céu real, e o valor de sombreamento abaixo é a média de um conjunto fixo de horas do dia em 21 de Junho e 21 de Dezembro apenas, não do ano inteiro nem de um ficheiro climático real. O próprio Olgyay chamou aos seus coeficientes de sombreamento "valores aproximados" (p.67); Lechner recomenda verificar qualquer desenho de sombreamento com um modelo físico (p.251); Ching &amp; Shapiro notam que o dimensionamento óptimo do vidro "deveria ser calculado por simulação computacional" (p.101). Um valor fora do intervalo colorido não está proibido — alguns programas precisam disso — mas trate-o como um sinal a justificar, não uma opção por defeito.'
+    'Este separador dimensiona vidro e sombreamento como um primeiro esboço de projecto — regras geométricas de bolso, não uma simulação. Não modela luz difusa ou reflectida, encandeamento, ganhos internos ou solares, nem um céu real, e o valor de sombreamento abaixo é a média de um conjunto fixo de horas do dia em 21 de Junho e 21 de Dezembro apenas, não do ano inteiro nem de um ficheiro climático real. O próprio Olgyay chamou aos seus coeficientes de sombreamento "valores aproximados" (p.67); Lechner recomenda verificar qualquer desenho de sombreamento com um modelo físico (p.251); Ching &amp; Shapiro notam que o dimensionamento óptimo do vidro "deveria ser calculado por simulação computacional" (p.101). Um valor fora do intervalo colorido não está proibido — alguns programas precisam disso — mas trate-o como um sinal a justificar, não uma opção por defeito.',
+  'vent-air':
+    'A camada azul anda a cerca de meia altura do beirado e segue o vento do mês: os pontos viajam a metros por segundo verdadeiros, mais escuros onde a casa os aperta mais depressa nos ombros, mais pálidos onde o vento estagna contra a parede de barlavento e na esteira preguiçosa atrás. Deflexão estilizada — quase-potencial em torno da planta mais défice de esteira — não é CFD; a vegetação e os muros travam as notas, não estas linhas.',
 });
 </script>
 </body>
