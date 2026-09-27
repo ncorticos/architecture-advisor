@@ -658,7 +658,7 @@ details.more[open] > summary{color:var(--ink)}
 /* ------------------------------------------------------------ 0. IDENTITY -- */
 const APP = {
   name:        'Architecture Advisor',
-  version:     '1.90.0',
+  version:     '1.90.1',
   author:      'Nuno Dinis Cortiços',
   institution: 'Lisbon School of Architecture, Universidade de Lisboa',
   builtWith:   'Claude Opus 5 (Anthropic)',
@@ -7873,10 +7873,11 @@ function buildVentilation(host) {
     const NL = Math.max(13, Math.min(40, Math.ceil(2 * (across + 6) / 2.5)));
     /* Three depths of the one layer pattern fill the volume like the CFD
        reference: low (ground friction zone), the half-eave layer itself,
-       and high (near the ridge, clearing most of the proposal). Same plan
-       paths stacked — the relief pass below gives each its own height. */
+       and high — a clear metre over the ridge, so it sails nearly level and
+       shows the displacement dying out with height. Same plan paths
+       stacked — the relief pass below gives each its own height. */
     const ridgeH = (typeof FR !== 'undefined' && FR && FR.M && FR.M.ridge) ? FR.M.ridge : midH + 4;
-    const LAYERS = [clamp(midH * 0.5, 0.5, 1.2), midH, clamp(ridgeH - 0.5, midH + 1.5, 12)];
+    const LAYERS = [clamp(midH * 0.5, 0.5, 1.2), midH, clamp(ridgeH + 1.0, midH + 2.5, 14)];
     const lines = [];
     for (let li = 0; li < NL * LAYERS.length; li++) {
       const i = li % NL, z0 = LAYERS[(li / NL) | 0];
@@ -8240,7 +8241,7 @@ function buildVentilation(host) {
       }
       return top;
     };
-    const tgtAt = (x, y, base) => Math.max(base, topAt(x, y) + 1.0, topAt(x + ftx * 4, y + fty * 4) + 1.0, topAt(x + ftx * 8, y + fty * 8) + 1.0);
+     const tgtAt = (x, y, base) => Math.max(base, topAt(x, y) + 1.0, topAt(x + ftx * 6, y + fty * 6) + 1.0, topAt(x + ftx * 12, y + fty * 12) + 1.0);
     let airMaxZ = layH;
     ventAir.lines.forEach(L => {
       const base = L.z0 == null ? layH : L.z0;
@@ -8248,10 +8249,23 @@ function buildVentilation(host) {
       L.pts.forEach(p => {
         const tgt = tgtAt(p.x, p.y, base);
         if (px !== null) {
-          const ds = Math.hypot(p.x - px, p.y - py), Lc = tgt > z ? 1.0 : 5.0;
+          const ds = Math.hypot(p.x - px, p.y - py), Lc = tgt > z ? 2.5 : 5.0;
           z += (tgt - z) * (1 - Math.exp(-ds / Math.max(0.2, Lc)));
-        } else z = Math.min(layH, tgt);
-        p.z = z; if (z > airMaxZ) airMaxZ = z; px = p.x; py = p.y;
+          /* never clip into the windward slope while chasing from below */
+          const here = topAt(p.x, p.y);
+          if (here > -1e8 && z < here + 0.35) z = here + 0.35;
+        } else z = Math.min(base, tgt);
+        p.z = z; px = p.x; py = p.y;
+      });
+      /* two light smoothing passes round the kinks where the chase meets
+         an edge; the no-clip floor is re-applied after */
+      for (let pass = 0; pass < 2; pass++)
+        for (let k = 1; k < L.pts.length - 1; k++)
+          L.pts[k].z = (L.pts[k - 1].z + 2 * L.pts[k].z + L.pts[k + 1].z) / 4;
+      L.pts.forEach(p => {
+        const here = topAt(p.x, p.y);
+        if (here > -1e8 && p.z < here + 0.35) p.z = here + 0.35;
+        if (p.z > airMaxZ) airMaxZ = p.z;
       });
     });
     /* Lazy recirculation loops in the lee of the solids — porous crowns let
@@ -8347,7 +8361,7 @@ function buildVentilation(host) {
           seg(ctx, B[0], B[1], B[0] - hl * Math.cos(an + 0.45), B[1] - hl * Math.sin(an + 0.45));
         });
       });
-      window.__arcaAir3d = { maxZ: +airMaxZ.toFixed(2), dash: airDash, solid: airSolid, lines: ventAir.lines.length, eddies: eddyCount };
+      window.__arcaAir3d = { maxZ: +airMaxZ.toFixed(2), dash: airDash, solid: airSolid, lines: ventAir.lines.length, eddies: eddyCount, ridge: +ridge.toFixed(2), midH: +layH.toFixed(2) };
       const lp = proj(vx * (R + 1.4), vy * (R + 1.4), midH), wtxt = monthSetName() + ' ' + dirName() + ' ' + fmt(wm.spd, 1) + ' m/s' + (tuneTxt() ? ' *' : '');
       const lx = clamp(lp[0], 70, W - 170), ly = clamp(lp[1], 60, H - 44);
       ctx.fillStyle = 'rgba(250,251,249,.9)'; ctx.font = FM(10); const lw = ctx.measureText(wtxt).width;
