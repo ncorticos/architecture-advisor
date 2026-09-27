@@ -658,7 +658,7 @@ details.more[open] > summary{color:var(--ink)}
 /* ------------------------------------------------------------ 0. IDENTITY -- */
 const APP = {
   name:        'Architecture Advisor',
-  version:     '1.89.0',
+  version:     '1.90.0',
   author:      'Nuno Dinis Cortiços',
   institution: 'Lisbon School of Architecture, Universidade de Lisboa',
   builtWith:   'Claude Opus 5 (Anthropic)',
@@ -2452,8 +2452,17 @@ function formFactor(G, RF) {
   const m = roofModel(G, RF), A = m.wallArea + m.roofArea + m.pl.area, V = m.pl.area * m.H0 + m.roofVol;
   return { H:m.ridge, V, A, ff:A / V };
 }
+/** CFD-style speed ramp for the ventilation streamlines: slow wake blue,
+   freestream yellow-green, fast shoulders orange-red. sf is the layer's
+   normalised speed (freestream 1, wakes ~0.3, shoulders to 1.5). */
+function speedRGB(sf) {
+  const stops = [[43, 55, 180], [28, 150, 215], [30, 185, 120], [225, 200, 50], [228, 110, 40], [210, 55, 45]];
+  const t = clamp((sf == null || !isFinite(sf) ? 1 : sf) / 1.5, 0, 1) * (stops.length - 1);
+  const i = Math.min(stops.length - 2, Math.floor(t)), f = t - i, a = stops[i], b = stops[i + 1];
+  return [Math.round(a[0] + (b[0] - a[0]) * f), Math.round(a[1] + (b[1] - a[1]) * f), Math.round(a[2] + (b[2] - a[2]) * f)];
+}
 /** A translucent fill as the opaque colour it shows over white, for views
-    drawn back to front where nothing should show through. */
+   drawn back to front where nothing should show through. */
 const opaque = c => {
   const m = /rgba\((\d+),(\d+),(\d+),([\d.]+)\)/.exec(String(c).replace(/\s/g, ''));
   if (!m) return c;
@@ -7455,7 +7464,7 @@ function buildVentilation(host) {
   const cAnim = checkCtl('Animate wind', airAnim, v => { airAnim = v; airKick(); });
   viewBox.appendChild(cAnim);
   viewBox.appendChild(hint('vent-air',
-    'The blue layer rides at about half the eave height, climbs over the house, walls and crowns, and runs dashed where it passes behind the house, following the month wind around every volume, wall and plant of the proposal: dots travel at true metres per second, darker where squeezed faster, paler in stalls and wakes. Walls block like buildings; crowns bleed air through, slowed by density, size and height — trunk, canopy and all — so a high crown on a clear stem barely stirs this layer while a bushy windbreak bends the whole pattern. Stylised deflection, not CFD.'));
+    'The layer rides at about half the eave height, drawn at three depths, climbs over the house, walls and crowns, and runs dashed where it passes behind the house, following the month wind around every volume, wall and plant of the proposal: slow air runs blue, fast air red, dots travel at true metres per second, and the house and each garden wall trail a lazy recirculation loop. Walls block like buildings; crowns bleed air through, slowed by density, size and height — trunk, canopy and all — so a high crown on a clear stem barely stirs this layer while a bushy windbreak bends the whole pattern. Stylised deflection, not CFD.'));
 
   /* ---- turn the model: same facade-picking camera as Windows & Shading ---- */
   host.appendChild(section('Turn the model',
@@ -7862,8 +7871,15 @@ function buildVentilation(host) {
        keep ~2.5 m lateral spacing. The reseed signature already keys on the
        count, so geometry changes still restart the tracers. */
     const NL = Math.max(13, Math.min(40, Math.ceil(2 * (across + 6) / 2.5)));
+    /* Three depths of the one layer pattern fill the volume like the CFD
+       reference: low (ground friction zone), the half-eave layer itself,
+       and high (near the ridge, clearing most of the proposal). Same plan
+       paths stacked — the relief pass below gives each its own height. */
+    const ridgeH = (typeof FR !== 'undefined' && FR && FR.M && FR.M.ridge) ? FR.M.ridge : midH + 4;
+    const LAYERS = [clamp(midH * 0.5, 0.5, 1.2), midH, clamp(ridgeH - 0.5, midH + 1.5, 12)];
     const lines = [];
-    for (let i = 0; i < NL; i++) {
+    for (let li = 0; li < NL * LAYERS.length; li++) {
+      const i = li % NL, z0 = LAYERS[(li / NL) | 0];
       const w0 = NL < 2 ? 0 : -across + 2 * across * (i / (NL - 1));
       let px = -tx * (maxAu + lead) - ty * w0, py = -ty * (maxAu + lead) + tx * w0;
       [px, py] = clampBox(px, py);
@@ -7880,7 +7896,7 @@ function buildVentilation(host) {
       const thin = [], cum = [0];
       pts.forEach((q, k) => { if (k % 3 === 0 || k === pts.length - 1) thin.push(q); });
       for (let k = 1; k < thin.length; k++) cum.push(cum[k - 1] + Math.hypot(thin[k].x - thin[k - 1].x, thin[k].y - thin[k - 1].y));
-      lines.push({ pts: thin, cum, len: cum[cum.length - 1] });
+      lines.push({ pts: thin, cum, len: cum[cum.length - 1], z0 });
     }
     const sig = [Math.round(toA), G.L, G.D, G.form || 'rect', VEGETATION.length, WALLS.length, lines.length].join('|');
     if (!ventAir || ventAir.sig !== sig) {
@@ -8224,18 +8240,58 @@ function buildVentilation(host) {
       }
       return top;
     };
-    const tgtAt = (x, y) => Math.max(layH, topAt(x, y) + 1.0, topAt(x + ftx * 4, y + fty * 4) + 1.0, topAt(x + ftx * 8, y + fty * 8) + 1.0);
+    const tgtAt = (x, y, base) => Math.max(base, topAt(x, y) + 1.0, topAt(x + ftx * 4, y + fty * 4) + 1.0, topAt(x + ftx * 8, y + fty * 8) + 1.0);
     let airMaxZ = layH;
     ventAir.lines.forEach(L => {
-      let z = layH, px = null, py = null;
+      const base = L.z0 == null ? layH : L.z0;
+      let z = base, px = null, py = null;
       L.pts.forEach(p => {
-        const tgt = tgtAt(p.x, p.y);
+        const tgt = tgtAt(p.x, p.y, base);
         if (px !== null) {
           const ds = Math.hypot(p.x - px, p.y - py), Lc = tgt > z ? 1.0 : 5.0;
           z += (tgt - z) * (1 - Math.exp(-ds / Math.max(0.2, Lc)));
         } else z = Math.min(layH, tgt);
         p.z = z; if (z > airMaxZ) airMaxZ = z; px = p.x; py = p.y;
       });
+    });
+    /* Lazy recirculation loops in the lee of the solids — porous crowns let
+       the air bleed through, so only the house and the garden walls trail
+       eddies. Riders are re-seeded every redraw (old ones filtered first),
+       so the dots visibly turn with the loop. */
+    ventAir.parts = ventAir.parts.filter(p => !p.eddy);
+    let eddyCount = 0;
+    const addEddy = (cx2, cy2, a, b) => {
+      const pts = [], N = 40;
+      for (let i = 0; i <= N; i++) {
+        const t = i / N * Math.PI * 2;
+        pts.push({ x: cx2 + Math.cos(t) * a, y: cy2 + Math.sin(t) * b, sf: 0.3, z: layH });
+      }
+      const cum = [0];
+      for (let k = 1; k < pts.length; k++) cum.push(cum[k - 1] + Math.hypot(pts[k].x - pts[k - 1].x, pts[k].y - pts[k - 1].y));
+      const len = cum[cum.length - 1];
+      if (len < 1) return;
+      ventAir.lines.push({ pts, cum, len, eddy: true });
+      const li = ventAir.lines.length - 1;
+      for (let j = 0; j < 6; j++) ventAir.parts.push({ li, s: (j / 6) * len, eddy: true });
+      eddyCount++;
+    };
+    const hcx = (hx0 + hx1) / 2, hcy = (hy0 + hy1) / 2;
+    const hu = (Math.abs(hx1 - hx0) * Math.abs(ftx) + Math.abs(hy1 - hy0) * Math.abs(fty)) / 2;
+    const hwC = (Math.abs(hx1 - hx0) * Math.abs(fty) + Math.abs(hy1 - hy0) * Math.abs(ftx)) / 2;
+    if (hu > 0.5) {
+      if (hwC > 4.5) {
+        const a2 = clamp(hu * 0.6, 1.2, 3), b2 = clamp(hwC * 0.28, 0.9, 2), off = hwC * 0.25, dd = hu + a2 * 0.8;
+        addEddy(hcx + ftx * dd - fty * off, hcy + fty * dd + ftx * off, a2, b2);
+        addEddy(hcx + ftx * dd + fty * off, hcy + fty * dd - ftx * off, a2, b2);
+      } else {
+        const a2 = clamp(hu * 0.7, 1.5, 4), b2 = clamp(hwC * 0.5, 1.2, 3), dd = hu + a2 * 0.8;
+        addEddy(hcx + ftx * dd, hcy + fty * dd, a2, b2);
+      }
+    }
+    WALLS.forEach(w => {
+      if (w.height < layH) return;
+      const a2 = clamp(w.length * 0.3, 0.8, 2);
+      addEddy(w.x + ftx * (0.3 + a2), w.y + fty * (0.3 + a2), a2, 0.8);
     });
     /* Behind the house the lines run dashed, so they read as passing at the
        back instead of across the front: inside the solid, or anywhere the
@@ -8271,12 +8327,13 @@ function buildVentilation(host) {
       ventAir.lines.forEach(L => {
         for (let k = 1; k < L.pts.length; k++) {
           const a = L.pts[k - 1], b = L.pts[k];
-          const al = 0.2 + 0.55 * Math.min(1, (a.sf + b.sf) / 2 / 1.2);
+          const sm = (a.sf + b.sf) / 2, cc = speedRGB(sm);
+          const al = 0.45 + 0.4 * Math.min(1, sm / 1.2);
           const az = a.z == null ? midH : a.z, bz = b.z == null ? midH : b.z;
           const A = proj(a.x, a.y, az), B = proj(b.x, b.y, bz);
           const hid = behindHouse(a.x, a.y, az) || behindHouse(b.x, b.y, bz);
           if (hid) airDash++; else airSolid++;
-          stroke(ctx, 'rgba(29,78,216,' + al.toFixed(2) + ')', 1.6, hid ? [6, 4] : null);
+          stroke(ctx, 'rgba(' + cc[0] + ',' + cc[1] + ',' + cc[2] + ',' + al.toFixed(2) + ')', 1.6, hid ? [6, 4] : null);
           seg(ctx, A[0], A[1], B[0], B[1]);
         }
         [0.33, 0.66].forEach(f => {
@@ -8284,13 +8341,13 @@ function buildVentilation(host) {
           const z0 = q0.z == null ? midH : q0.z, z1 = q1.z == null ? midH : q1.z;
           const A = proj(q0.x, q0.y, z0), B = proj(q1.x, q1.y, z1);
           const an = Math.atan2(B[1] - A[1], B[0] - A[0]), hl = 8;
-          const hid = behindHouse(q1.x, q1.y, z1);
-          stroke(ctx, 'rgba(29,78,216,.75)', 1.6, hid ? [6, 4] : null);
+          const hid = behindHouse(q1.x, q1.y, z1), ac = speedRGB(q1.sf);
+          stroke(ctx, 'rgba(' + ac[0] + ',' + ac[1] + ',' + ac[2] + ',.8)', 1.6, hid ? [6, 4] : null);
           seg(ctx, B[0], B[1], B[0] - hl * Math.cos(an - 0.45), B[1] - hl * Math.sin(an - 0.45));
           seg(ctx, B[0], B[1], B[0] - hl * Math.cos(an + 0.45), B[1] - hl * Math.sin(an + 0.45));
         });
       });
-      window.__arcaAir3d = { maxZ: +airMaxZ.toFixed(2), dash: airDash, solid: airSolid };
+      window.__arcaAir3d = { maxZ: +airMaxZ.toFixed(2), dash: airDash, solid: airSolid, lines: ventAir.lines.length, eddies: eddyCount };
       const lp = proj(vx * (R + 1.4), vy * (R + 1.4), midH), wtxt = monthSetName() + ' ' + dirName() + ' ' + fmt(wm.spd, 1) + ' m/s' + (tuneTxt() ? ' *' : '');
       const lx = clamp(lp[0], 70, W - 170), ly = clamp(lp[1], 60, H - 44);
       ctx.fillStyle = 'rgba(250,251,249,.9)'; ctx.font = FM(10); const lw = ctx.measureText(wtxt).width;
@@ -8491,7 +8548,8 @@ function buildVentilation(host) {
         if (ventAir.behind && ventAir.behind(q.x, q.y, qz)) return;
         const sp = projF(FR, camS * q.x, camS * q.y, qz);
         const rr = 1.5 + 1.4 * Math.min(1, q.sf);
-        g.fillStyle = 'rgba(29,78,216,' + (0.5 + 0.4 * Math.min(1, q.sf)).toFixed(2) + ')';
+        const dc = speedRGB(q.sf);
+        g.fillStyle = 'rgba(' + dc[0] + ',' + dc[1] + ',' + dc[2] + ',' + (0.5 + 0.4 * Math.min(1, q.sf)).toFixed(2) + ')';
         g.beginPath(); g.arc(sp[0], sp[1], rr, 0, 6.284); g.fill();
       });
       window.__arcaAir = { lines: ventAir.lines, parts: ventAir.parts, V0: ventAir.V0,
@@ -10813,7 +10871,7 @@ Object.assign(PT_HINT, {
   'open-accuracy':
     'Este separador dimensiona vidro e sombreamento como um primeiro esboço de projecto — regras geométricas de bolso, não uma simulação. Não modela luz difusa ou reflectida, encandeamento, ganhos internos ou solares, nem um céu real, e o valor de sombreamento abaixo é a média de um conjunto fixo de horas do dia em 21 de Junho e 21 de Dezembro apenas, não do ano inteiro nem de um ficheiro climático real. O próprio Olgyay chamou aos seus coeficientes de sombreamento "valores aproximados" (p.67); Lechner recomenda verificar qualquer desenho de sombreamento com um modelo físico (p.251); Ching &amp; Shapiro notam que o dimensionamento óptimo do vidro "deveria ser calculado por simulação computacional" (p.101). Um valor fora do intervalo colorido não está proibido — alguns programas precisam disso — mas trate-o como um sinal a justificar, não uma opção por defeito.',
   'vent-air':
-    'A camada azul anda a cerca de meia altura do beirado, galga a casa, os muros e as copas, e passa a tracejado onde corre por trás da casa, seguindo o vento do mês em torno de todos os volumes, muros e plantas da proposta: os pontos viajam a metros por segundo verdadeiros, mais escuros onde passam mais depressa, mais pálidos nas estagnações e esteiras. Os muros bloqueiam como edifícios; as copas deixam passar o ar, travado pela densidade, tamanho e altura — tronco, copa e tudo — por isso uma copa alta em fuste limpo mal mexe nesta camada enquanto uma sebe arbustiva verga o padrão inteiro. Deflexão estilizada, não é CFD.',
+    'A camada anda a cerca de meia altura do beirado, desenhada em três profundidades, galga a casa, os muros e as copas, e passa a tracejado onde corre por trás da casa, seguindo o vento do mês em torno de todos os volumes, muros e plantas da proposta: o ar lento corre azul, o rápido vermelho, os pontos viajam a metros por segundo verdadeiros, e a casa e cada muro trazem um redemoinho preguiçoso na esteira. Os muros bloqueiam como edifícios; as copas deixam passar o ar, travado pela densidade, tamanho e altura — tronco, copa e tudo — por isso uma copa alta em fuste limpo mal mexe nesta camada enquanto uma sebe arbustiva verga o padrão inteiro. Deflexão estilizada, não é CFD.',
 });
 
 /* boot, last: a page opened in Portuguese renders its first screen with
