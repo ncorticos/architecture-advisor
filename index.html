@@ -658,7 +658,7 @@ details.more[open] > summary{color:var(--ink)}
 /* ------------------------------------------------------------ 0. IDENTITY -- */
 const APP = {
   name:        'Architecture Advisor',
-  version:     '1.85.0',
+  version:     '1.85.1',
   author:      'Nuno Dinis Cortiços',
   institution: 'Lisbon School of Architecture, Universidade de Lisboa',
   builtWith:   'Claude Opus 5 (Anthropic)',
@@ -2294,7 +2294,8 @@ function subtractConvex(P, hs) {
 /**
  * The roof over any plan the Site tab draws. Every maximal rectangle of the
  * plan carries the Roof tab's roof along its own long side — flat, a shed
- * rising away from the main facade, a gable, or a hip — and the building's
+ * rising away from the main facade, a gable (hipped at any end another
+ * rectangle runs across), or a hip — and the building's
  * roof is the highest of them wherever they overlap: hips round a plain bar,
  * valleys where two wings meet, a courtyard's roof falling into its patio
  * (for a hip roof this is exactly the straight skeleton of the outline).
@@ -2307,12 +2308,24 @@ function roofModel(G, RF) {
   const pl = planModel(G), H0 = G.fl * G.fh, n = RF.n, th = n === 0 ? 0 : RF.th, t = Math.tan(th * RAD);
   const key = pl.key + '|' + n + '|' + th + '|' + H0;
   if (ROOF_CACHE.key === key) return ROOF_CACHE.val;
+  /* Does another rectangle of the plan run across this one's end — the
+     corner a wing shares with the bar, or a courtyard's corner? */
+  const endCovered = (r, side) => pl.boxes.some(q => {
+    if (q === r) return false;
+    const e = 1e-6, ox = Math.min(r[2], q[2]) - Math.max(r[0], q[0]) > e, oy = Math.min(r[3], q[3]) - Math.max(r[1], q[1]) > e;
+    if (!ox || !oy) return false;
+    return side === 'x0' ? q[0] <= r[0] + e : side === 'x1' ? q[2] >= r[2] - e : side === 'y0' ? q[1] <= r[1] + e : q[3] >= r[3] - e;
+  });
   const facesOf = r => {
     const [x0, y0, x1, y1] = r, F = (a, b, c, k) => ({ a, b, c, key:k });
     if (n === 0) return [F(0, 0, 0, 'flat')];
     if (n === 1) return [F(0, 1, -pl.bbox[1], 'shed')];   // one plane over the whole plan, rising from its front
     const sd = { x0:F(1, 0, -x0, 'x+' + x0), x1:F(-1, 0, x1, 'x-' + x1), y0:F(0, 1, -y0, 'y+' + y0), y1:F(0, -1, y1, 'y-' + y1) };
-    if (n === 2) return (x1 - x0) >= (y1 - y0) ? [sd.y0, sd.y1] : [sd.x0, sd.x1];
+    /* a gable stands only at a free end; an end another wing runs across
+       is hipped, so wings meet in hips and valleys — a courtyard's roof
+       runs round it unbroken — and no gable end pokes up at a corner */
+    if (n === 2) return (x1 - x0) >= (y1 - y0) ? [sd.y0, sd.y1].concat(['x0', 'x1'].filter(k => endCovered(r, k)).map(k => sd[k]))
+                                             : [sd.x0, sd.x1].concat(['y0', 'y1'].filter(k => endCovered(r, k)).map(k => sd[k]));
     return [sd.y0, sd.y1, sd.x0, sd.x1];
   };
   const boxes = pl.boxes, BF = boxes.map(facesOf);
@@ -4259,8 +4272,7 @@ function buildSite(host) {
         ctx.closePath();
         desk.path(qs, true);
       });
-      ctx.fillStyle = 'rgba(20,23,26,.13)'; ctx.fill('nonzero');
-      stroke(ctx, pl.boxes.length > 1 ? 'rgba(20,23,26,.2)' : 'rgba(20,23,26,.35)', 1); ctx.stroke();
+      ctx.fillStyle = 'rgba(20,23,26,.13)'; ctx.fill('nonzero');   // filled only: the pieces' own outlines would hatch it
       ctx.restore();
       let far = scs[0], ox = 0, oy = 0, best = -1e9;   // the roof corner whose shadow falls farthest, and that shadow
       roofPts.forEach(([w, sh]) => { const d = sh[0] * sxz + sh[1] * syz; if (d > best) { best = d; far = w; ox = sh[0] - w[0]; oy = sh[1] - w[1]; } });
