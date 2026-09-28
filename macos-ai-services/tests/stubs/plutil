@@ -1,0 +1,48 @@
+#!/usr/bin/env python3
+"""Stand-in for macOS plutil: the -lint and -extract forms the installer uses."""
+import json
+import plistlib
+import sys
+
+args = sys.argv[1:]
+
+
+def load(path):
+    with open(path, "rb") as f:
+        return plistlib.load(f)
+
+
+if args[0] == "-lint":
+    ok = True
+    for path in (a for a in args[1:] if a != "-s"):
+        try:
+            load(path)
+        except Exception as error:  # report every broken file, as plutil does
+            print("%s: %s" % (path, error), file=sys.stderr)
+            ok = False
+    sys.exit(0 if ok else 1)
+
+if args[0] == "-extract":
+    keypath, fmt, out, path = args[1], args[2], args[args.index("-o") + 1], args[-1]
+    value = load(path)
+    try:
+        for part in keypath.split("."):
+            value = value[int(part)] if isinstance(value, list) else value[part]
+    except (KeyError, IndexError, ValueError):
+        print("Could not extract value, error: No value at that key path", file=sys.stderr)
+        sys.exit(1)
+    if fmt == "json":
+        data = json.dumps(value).encode()
+    elif fmt == "raw":
+        data = ("true" if value is True else "false" if value is False else str(value)).encode()
+    else:
+        data = plistlib.dumps(value)
+    if out == "-":
+        sys.stdout.buffer.write(data)
+    elif out != "/dev/null":
+        with open(out, "wb") as f:
+            f.write(data)
+    sys.exit(0)
+
+print("plutil stub: unsupported arguments %r" % args, file=sys.stderr)
+sys.exit(2)

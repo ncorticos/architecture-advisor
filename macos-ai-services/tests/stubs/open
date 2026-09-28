@@ -1,0 +1,3 @@
+#!/bin/zsh
+print -r -- "$*" >> $STUB_LOG/open.log
+[[ -f $1 ]] && cp $1 $STUB_LOG/opened.ics

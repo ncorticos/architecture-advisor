@@ -1,0 +1,794 @@
+#!/bin/zsh
+# ai-service — the engine behind the "AI: …" entries in the macOS Services menu.
+#
+# Reads the selected text on stdin, performs ACTION on it and asks the AI
+# providers in turn until one answers:
+#
+#   online   Claude  →  Muse Spark 1.3 Free (OpenCode Zen)  →  Qwen (Bionic, local)
+#   offline  Qwen (Bionic, local)
+#
+# Usage
+#   ai-service ACTION [--output MODE] [--only PROVIDER]  < text
+#   ai-service --doctor
+#
+#   ACTION    improve | reply | reply-selection | resume | calendar
+#   MODE      replace    print the result; the Service replaces the selection
+#             clipboard  copy the result and post a notification
+#             dialog     copy the result and show it in a dialog
+#             calendar   turn the result into a Calendar event
+#             stdout     print the result (for trying it in Terminal)
+#   PROVIDER  claude | muse | qwen — use only that one (for testing)
+#
+# Settings: config.zsh next to this file. Log (no text content): ~/Library/Logs/AI Services.log
+
+emulate -R zsh
+setopt pipe_fail extended_glob no_nomatch
+zmodload zsh/datetime
+
+export LC_ALL=${AI_LOCALE:-en_US.UTF-8}   # Services start scripts without a locale; jq and pbcopy need UTF-8
+
+VERSION=1.0.0
+SELFTEST_MARKER=__AI_SERVICES_SELFTEST__
+AI_HOME=${AI_SERVICES_HOME:-${0:A:h}}
+STATE_DIR=$AI_HOME/state
+LOG_FILE=${AI_SERVICES_LOG:-$HOME/Library/Logs/AI Services.log}
+
+# Services run with a minimal PATH: add the places where claude, lms and opencode are installed.
+path=($HOME/.local/bin $HOME/.claude/local $HOME/.lmstudio/bin $HOME/.opencode/bin
+      /opt/homebrew/bin /usr/local/bin $path /usr/bin /bin /usr/sbin /sbin)
+typeset -U path
+
+# ---------- settings (override them in config.zsh) ----------
+AI_CHAIN=(claude muse qwen)
+CLAUDE_METHOD=auto                 # auto: Claude Code first, then an API key if one is stored | cli | api
+CLAUDE_CLI_BIN=                    # empty: find `claude` on PATH
+CLAUDE_CLI_MODEL=                  # empty: Claude Code's default model
+CLAUDE_API_MODEL=claude-opus-5
+CLAUDE_API_EFFORT=medium
+CLAUDE_API_URL=https://api.anthropic.com/v1/messages
+CLAUDE_KEYCHAIN_SERVICE='AI Services: Anthropic API key'
+CLAUDE_TIMEOUT=120
+MUSE_MODEL=muse-spark-1.3-contributor-free
+MUSE_URL=https://opencode.ai/zen/v1/responses
+MUSE_CONSENT=ask                   # ask | always | never
+MUSE_TIMEOUT=120
+OPENCODE_BIN=
+QWEN_MODEL=                        # empty: the first downloaded model whose name contains "qwen"
+QWEN_TEMPERATURE=0.5
+QWEN_TIMEOUT=300
+LMSTUDIO_URL=http://127.0.0.1:1234
+LMSTUDIO_API_TOKEN=
+LMS_BIN=
+NOTIFY=1
+ONLINE_CHECK_URL=http://captive.apple.com/hotspot-detect.html
+
+[[ -r $AI_HOME/config.zsh ]] && source $AI_HOME/config.zsh
+
+# ---------- helpers ----------
+
+log() {
+  mkdir -p ${LOG_FILE:h} 2>/dev/null
+  print -r -- "$(strftime '%Y-%m-%d %H:%M:%S' $EPOCHSECONDS) ${ACTION:--} $*" >> $LOG_FILE 2>/dev/null
+}
+
+fail() { FAIL_KIND=$1; FAIL_MSG=$2; return 1 }
+
+find_bin() {  # find_bin NAME [OVERRIDE]
+  if [[ -n $2 ]]; then
+    [[ -x $2 ]] && { print -r -- $2; return 0 }
+    return 1
+  fi
+  local p
+  p=$(whence -p $1) && { print -r -- $p; return 0 }
+  return 1
+}
+
+new_id() {
+  local u
+  u=$(uuidgen 2>/dev/null) || { [[ -r /proc/sys/kernel/random/uuid ]] && u=$(</proc/sys/kernel/random/uuid) } || u=$EPOCHSECONDS$RANDOM$RANDOM
+  print -r -- ${(L)u}
+}
+
+local_tz() {
+  if [[ -n ${TZ:-} ]]; then print -r -- ${TZ#:}; return; fi
+  local l=$(readlink /etc/localtime 2>/dev/null)
+  if [[ $l == *zoneinfo/* ]]; then print -r -- ${l#*zoneinfo/}; else print UTC; fi
+}
+
+notify() {  # notify TITLE MESSAGE
+  [[ $NOTIFY == 0 ]] && return 0
+  osascript - "$1" "$2" >/dev/null 2>&1 <<'APPLESCRIPT'
+on run argv
+	display notification (item 2 of argv) with title (item 1 of argv)
+end run
+APPLESCRIPT
+}
+
+# dialog TITLE TEXT DEFAULT BUTTON... — prints the button pressed; the first button (and Esc) print ""
+dialog() {
+  local title=$1 text=$2 def=$3
+  shift 3
+  osascript - "$title" "$text" "$def" "$@" 2>/dev/null <<'APPLESCRIPT'
+on run argv
+	set theButtons to items 4 thru -1 of argv
+	tell current application
+		activate
+		try
+			set r to display dialog (item 2 of argv) with title (item 1 of argv) buttons theButtons default button (item 3 of argv) cancel button (item 1 of theButtons) with icon note
+		on error number -128
+			return ""
+		end try
+	end tell
+	return button returned of r
+end run
+APPLESCRIPT
+}
+
+# run_with_timeout SECONDS INFILE OUTFILE ERRFILE COMMAND... — returns 124 when it had to stop COMMAND.
+# The watcher's output goes to /dev/null: a leftover process holding stdout would keep the Service waiting.
+run_with_timeout() {
+  local secs=$1 in=$2 out=$3 err=$4
+  shift 4
+  local marker=$TMPD/timeout.$RANDOM
+  "$@" < $in > $out 2> $err &
+  local pid=$!
+  {
+    local nap=
+    trap '[[ -n $nap ]] && kill $nap 2>/dev/null; exit 0' TERM
+    sleep $secs & nap=$!
+    wait $nap
+    if kill -0 $pid 2>/dev/null; then
+      : > $marker
+      kill -TERM $pid 2>/dev/null
+      sleep 3 & nap=$!
+      wait $nap
+      kill -KILL $pid 2>/dev/null
+    fi
+  } < /dev/null > /dev/null 2>&1 &
+  local watcher=$!
+  wait $pid
+  local rc=$?
+  kill -TERM $watcher 2>/dev/null
+  wait $watcher 2>/dev/null
+  [[ -e $marker ]] && return 124
+  return $rc
+}
+
+# http_post URL HEADERFILE BODYFILE OUTFILE TIMEOUT — prints the HTTP status ("000": no answer).
+# Headers travel in a file so that keys never appear in the process list.
+http_post() {
+  curl -sS -N -m $5 -o $4 -w '%{http_code}' -H @$2 --data-binary @$3 $1 2>> $TMPD/curl.err
+}
+
+json_error() {  # json_error FILE — the error message of an API error body
+  jq -r '(.error.message? // .error? // .message? // empty) | if type == "string" then . else tostring end' $1 2>/dev/null | head -c 300
+}
+
+is_online() {
+  case ${AI_ASSUME_ONLINE:-} in 1) return 0 ;; 0) return 1 ;; esac
+  local body
+  body=$(curl -sS -m 4 $ONLINE_CHECK_URL 2>/dev/null) && [[ $body == *Success* ]] && return 0
+  # Some networks block captive.apple.com; any HTTP answer from Anthropic also proves the connection.
+  curl -sS -m 4 -o /dev/null ${CLAUDE_API_URL%%/v1/*}/ 2>/dev/null
+}
+
+short_reason() {
+  case $1 in
+    quota) print "no tokens left (usage limit)" ;;
+    network) print "no connection" ;;
+    auth) print "not signed in" ;;
+    unavailable) print "not set up" ;;
+    timeout) print "no answer in time" ;;
+    declined) print "not sent" ;;
+    refusal) print "declined the request" ;;
+    *) print "error" ;;
+  esac
+}
+
+provider_name() {
+  case $1 in
+    claude) print Claude ;;
+    muse) print "Muse Spark" ;;
+    qwen) print Qwen ;;
+  esac
+}
+
+# The answer without <think> blocks, without a Markdown fence around it, trimmed.
+clean_output() {
+  local t=$1 head rest
+  while [[ $t == *'<think>'*'</think>'* ]]; do
+    head=${t%%'<think>'*}
+    rest=${t#*'<think>'}
+    rest=${rest#*'</think>'}
+    t=$head$rest
+  done
+  t=${t##[[:space:]]##}
+  if [[ $INPUT != *'```'* && $t == '```'* ]]; then
+    t=${t#*$'\n'}
+    t=${t%'```'*}
+  fi
+  t=${t##[[:space:]]##}
+  t=${t%%[[:space:]]##}
+  print -rn -- $t
+}
+
+# ---------- Claude ----------
+
+claude_has_flag() {  # claude_has_flag BIN FLAG — true if `BIN --help` lists FLAG (cached per version)
+  local real=${1:A} cache=$STATE_DIR/claude-help.txt
+  if [[ ! -r $cache || "$(head -n 1 $cache)" != $real ]]; then
+    { print -r -- $real; $1 --help < /dev/null 2>&1 } > $cache.$$ && mv -f $cache.$$ $cache
+  fi
+  grep -qE -- "^[[:space:]]+(-[[:alpha:]], )?$2([[:space:]]|,|\$)" $cache
+}
+
+claude_error() {  # claude_error STATUS MESSAGE — sets FAIL_KIND/FAIL_MSG
+  local st=$1 msg=$2
+  case $st in
+    402|429) fail quota "$msg" ;;
+    401|403) fail auth "$msg" ;;
+    <500-599>) fail error "$msg" ;;
+    *)
+      if [[ $msg == (#i)*(usage limit|limit reached|hit your limit|out of (extra )#usage|credit balance|quota|rate limit)* ]]; then
+        fail quota "$msg"
+      elif [[ $msg == (#i)*(ECONNREFUSED|ENOTFOUND|ETIMEDOUT|EAI_AGAIN|network|connection)* ]]; then
+        fail network "$msg"
+      else
+        fail error "$msg"
+      fi ;;
+  esac
+}
+
+provider_claude_cli() {  # [minimal] — Claude Code in print mode, on your Claude subscription
+  local minimal=${1:-0} bin flag
+  bin=$(find_bin claude "$CLAUDE_CLI_BIN") || { fail unavailable "Claude Code (claude) is not installed"; return 1 }
+  local -a args=(-p --output-format json)
+  if (( ! minimal )); then
+    # No tools, no plugins or MCP servers, no transcript on disk: faster, and the text is not kept.
+    for flag in --no-session-persistence --safe-mode --strict-mcp-config; do
+      claude_has_flag $bin $flag && args+=($flag)
+    done
+    claude_has_flag $bin --tools && args+=(--tools '')
+  fi
+  [[ -n $CLAUDE_CLI_MODEL ]] && args+=(--model $CLAUDE_CLI_MODEL)
+  args+=(--system-prompt $SYSTEM)
+
+  local json=$TMPD/claude.json rc
+  run_with_timeout $CLAUDE_TIMEOUT $TMPD/user.txt $json $TMPD/claude.err $bin "${args[@]}"   # quoted: keeps --tools ''
+  rc=$?
+  if ! jq -e 'type == "object" and .type == "result"' $json > /dev/null 2>&1; then
+    (( rc == 124 )) && { fail timeout "Claude did not answer within $CLAUDE_TIMEOUT s"; return 1 }
+    if (( ! minimal )) && grep -qiE 'unknown option|unknown argument|invalid option|cannot be used' $TMPD/claude.err; then
+      provider_claude_cli 1
+      return
+    fi
+    fail error "Claude Code: $(head -c 200 $TMPD/claude.err)"
+    return 1
+  fi
+  local text api_status   # not "status": that is zsh's read-only alias of $?
+  text=$(jq -r '.result // ""' $json)
+  api_status=$(jq -r '.api_error_status // ""' $json)
+  if [[ $(jq -r '.is_error // false' $json) == true ]]; then
+    claude_error "$api_status" "$text"
+    return 1
+  fi
+  # Older versions of Claude Code reported the usage limit as an ordinary answer.
+  if (( ${#text} < 300 )) && [[ $text == (#i)*(usage limit|limit reached|hit your limit|out of extra usage)* ]]; then
+    claude_error 429 "$text"
+    return 1
+  fi
+  [[ -n ${text//[[:space:]]/} ]] || { fail error "Claude returned an empty answer"; return 1 }
+  RESULT=$text
+  PROVIDER_LABEL=Claude
+}
+
+anthropic_key() {
+  if [[ -n ${ANTHROPIC_API_KEY:-} ]]; then print -r -- $ANTHROPIC_API_KEY; return 0; fi
+  security find-generic-password -s $CLAUDE_KEYCHAIN_SERVICE -w 2>/dev/null
+}
+
+provider_claude_api() {  # [with_fallback] — the Claude API with a key from the Keychain
+  local with_fallback=${1:-1} key
+  key=$(anthropic_key)
+  [[ -n $key ]] || { fail unavailable "no Anthropic API key stored"; return 1 }
+  jq -n --arg model $CLAUDE_API_MODEL --arg system $SYSTEM --rawfile user $TMPD/user.txt \
+        --arg effort $CLAUDE_API_EFFORT --argjson fallback $with_fallback '
+    {model: $model, max_tokens: 16000, system: $system,
+     messages: [{role: "user", content: $user}]}
+    + (if $effort != "" then {output_config: {effort: $effort}} else {} end)
+    + (if $fallback == 1 then {fallbacks: "default"} else {} end)' > $TMPD/claude-req.json
+  local -a headers=("x-api-key: $key" "anthropic-version: 2023-06-01" "content-type: application/json")
+  (( with_fallback )) && headers+=("anthropic-beta: server-side-fallback-2026-07-01")
+  print -rl -- $headers > $TMPD/claude.headers
+
+  local resp=$TMPD/claude-resp.json code msg
+  code=$(http_post $CLAUDE_API_URL $TMPD/claude.headers $TMPD/claude-req.json $resp $CLAUDE_TIMEOUT)
+  if [[ $code == 200 ]]; then
+    [[ $(jq -r '.stop_reason // ""' $resp) == refusal ]] && { fail refusal "Claude declined this request"; return 1 }
+    RESULT=$(jq -j '[.content[]? | select(.type == "text") | .text] | join("")' $resp)
+    [[ -n ${RESULT//[[:space:]]/} ]] || { fail error "Claude returned an empty answer"; return 1 }
+    PROVIDER_LABEL="Claude (API)"
+    return 0
+  fi
+  msg=$(json_error $resp)
+  if [[ $code == 400 ]] && (( with_fallback )) && [[ $msg == *(anthropic-beta|fallbacks)* ]]; then
+    provider_claude_api 0
+    return
+  fi
+  case $code in
+    000) fail network "no connection to the Claude API" ;;
+    402|429) fail quota "${msg:-HTTP $code}" ;;
+    400) if [[ $msg == (#i)*credit* ]]; then fail quota "$msg"; else fail error "$msg"; fi ;;
+    401|403) fail auth "${msg:-HTTP $code}" ;;
+    *) fail error "${msg:-HTTP $code}" ;;
+  esac
+  return 1
+}
+
+provider_claude() {
+  case $CLAUDE_METHOD in
+    cli) provider_claude_cli; return ;;
+    api) provider_claude_api; return ;;
+  esac
+  provider_claude_cli && return 0
+  local kind=$FAIL_KIND msg=$FAIL_MSG
+  if [[ -n $(anthropic_key) ]]; then
+    provider_claude_api && return 0
+    [[ $kind == unavailable ]] && return 1   # no Claude Code: report the API's reason
+  fi
+  FAIL_KIND=$kind FAIL_MSG=$msg
+  return 1
+}
+
+# ---------- Muse Spark 1.3 Free on OpenCode Zen ----------
+
+opencode_key() {
+  if [[ -n ${OPENCODE_API_KEY:-} ]]; then print -r -- $OPENCODE_API_KEY; return; fi
+  local f=${XDG_DATA_HOME:-$HOME/.local/share}/opencode/auth.json k
+  [[ -r $f ]] && k=$(jq -r '.opencode | select(.type == "api") | .key // empty' $f 2>/dev/null)
+  print -r -- ${k:-public}   # OpenCode itself calls the free models with "public" when no key is set
+}
+
+muse_consent() {
+  local mode=$MUSE_CONSENT answer
+  [[ $mode == ask && "$(cat $STATE_DIR/muse-consent 2>/dev/null)" == always ]] && mode=always
+  case $mode in
+    always) return 0 ;;
+    never) fail declined "turned off in config.zsh (MUSE_CONSENT=never)"; return 1 ;;
+  esac
+  local why=
+  [[ -n $CLAUDE_KIND ]] && why="Claude cannot answer now: $(short_reason $CLAUDE_KIND)."$'\n\n'
+  answer=$(dialog "AI: $TITLE" "${why}Send the selected text to Muse Spark 1.3 Free on OpenCode?
+
+On this free tier Meta may use the text and the answer to train its models. Do not send personal or confidential information.
+
+\"Use local Qwen\" keeps the text on this Mac." "Send once" "Use local Qwen" "Send once" "Always send")
+  case $answer in
+    "Always send") mkdir -p $STATE_DIR; print always > $STATE_DIR/muse-consent; return 0 ;;
+    "Send once") return 0 ;;
+  esac
+  fail declined "you chose to keep the text on this Mac"
+}
+
+responses_text() {  # responses_text FILE — answer text of an OpenAI Responses stream or body
+  local f=$1 t
+  if grep -q '^data:' $f; then
+    t=$(sed -n 's/^data: *//p' $f | jq -R -j 'fromjson? | select(.type == "response.output_text.delta") | .delta // empty')
+    [[ -n $t ]] || t=$(sed -n 's/^data: *//p' $f | jq -R -j 'fromjson? | select(.type == "response.completed") | .response.output[]? | select(.type == "message") | .content[]? | select(.type == "output_text") | .text // empty')
+  else
+    t=$(jq -j 'if (.output_text | type) == "string" then .output_text
+               else [.output[]? | select(.type == "message") | .content[]? | select(.type == "output_text") | .text] | join("") end' $f 2>/dev/null)
+  fi
+  print -rn -- $t
+}
+
+stream_error() {  # stream_error FILE — the first error event of a Responses stream
+  sed -n 's/^data: *//p' $1 | jq -R -r 'fromjson? | select(.type == "error" or .type == "response.failed")
+    | (.error.message? // .response.error.message? // .message? // "error")' 2>/dev/null | head -n 1
+}
+
+provider_muse_cli() {  # provider_muse_cli OPENCODE_BIN — the same model through the OpenCode CLI
+  local bin=$1 msg
+  msg="$SYSTEM"$'\n\n'"$(<$TMPD/user.txt)"
+  run_with_timeout $MUSE_TIMEOUT /dev/null $TMPD/opencode.jsonl $TMPD/opencode.err \
+    env OPENCODE_CONFIG_DIR=$AI_HOME/opencode $bin run --format json --agent ai-services -m opencode/$MUSE_MODEL $msg
+  (( $? == 124 )) && { fail timeout "OpenCode did not answer within $MUSE_TIMEOUT s"; return 1 }
+  RESULT=$(jq -R -s -j '[split("\n")[] | fromjson? | select(.type == "text") | .part.text // empty] | join("\n")' $TMPD/opencode.jsonl)
+  if [[ -n ${RESULT//[[:space:]]/} ]]; then
+    PROVIDER_LABEL="Muse Spark 1.3 (OpenCode)"
+    return 0
+  fi
+  local err
+  err=$(jq -R -r 'fromjson? | select(.type == "error") | (.error.data.message? // .error.message? // .error.name? // "error")' $TMPD/opencode.jsonl 2>/dev/null | head -n 1)
+  fail error "OpenCode: ${err:-$(head -c 200 $TMPD/opencode.err)}"
+}
+
+provider_muse() {
+  muse_consent || return 1
+  local key resp=$TMPD/muse-resp.txt code msg bin
+  key=$(opencode_key)
+  jq -n --arg model $MUSE_MODEL --arg system $SYSTEM --rawfile user $TMPD/user.txt '
+    {model: $model, stream: true, store: false,
+     input: [{role: "system", content: $system},
+             {role: "user", content: [{type: "input_text", text: $user}]}]}' > $TMPD/muse-req.json
+  print -rl -- "Authorization: Bearer $key" "Content-Type: application/json" "Accept: text/event-stream" \
+    "User-Agent: ai-services/$VERSION" "x-opencode-client: ai-services" \
+    "x-opencode-session: $(new_id)" "x-opencode-request: $(new_id)" > $TMPD/muse.headers
+  code=$(http_post $MUSE_URL $TMPD/muse.headers $TMPD/muse-req.json $resp $MUSE_TIMEOUT)
+  if [[ $code == 200 ]]; then
+    RESULT=$(responses_text $resp)
+    if [[ -n ${RESULT//[[:space:]]/} ]]; then
+      PROVIDER_LABEL="Muse Spark 1.3 (OpenCode)"
+      return 0
+    fi
+    msg=$(stream_error $resp)
+    fail error "Muse Spark: ${msg:-empty answer}"
+  else
+    msg=$(json_error $resp)
+    [[ -n $msg ]] || msg=$(head -c 200 $resp 2>/dev/null)
+    case $code in
+      000) fail network "no connection to OpenCode Zen" ;;
+      402|429) fail quota "Muse Spark: ${msg:-rate limited}" ;;
+      *) fail error "Muse Spark: HTTP $code ${msg}" ;;
+    esac
+  fi
+  # A change on the gateway's side: let OpenCode itself try, when it is installed.
+  if [[ $FAIL_KIND == error ]] && bin=$(find_bin opencode "$OPENCODE_BIN"); then
+    provider_muse_cli $bin && return 0
+  fi
+  return 1
+}
+
+# ---------- Qwen in Bionic (LM Studio runtime, local) ----------
+
+lms_get() {  # lms_get PATH OUTFILE — prints the HTTP status
+  curl -sS -m 5 -o $2 -w '%{http_code}' -H @$TMPD/lms.headers $LMSTUDIO_URL$1 2>/dev/null
+}
+
+lms_server_up() {
+  local code
+  code=$(lms_get /api/v1/models $TMPD/models.json)
+  [[ $code == 200 || $code == 401 ]] && { LMS_STATUS=$code; return 0 }
+  code=$(lms_get /v1/models $TMPD/models.json)   # a runtime without the native REST API
+  [[ $code == 200 || $code == 401 ]] && { LMS_STATUS=$code; return 0 }
+  return 1
+}
+
+lms_ensure_server() {
+  print -rl -- "Content-Type: application/json" ${LMSTUDIO_API_TOKEN:+"Authorization: Bearer $LMSTUDIO_API_TOKEN"} > $TMPD/lms.headers
+  lms_server_up && return 0
+  local lms i
+  lms=$(find_bin lms "$LMS_BIN") || {
+    fail unavailable "LM Studio's local server is not running and the lms command was not found (open Bionic)"
+    return 1
+  }
+  # Output to /dev/null: a daemon that inherited stdout would keep the Service waiting.
+  $lms daemon up < /dev/null > /dev/null 2>&1
+  $lms server start < /dev/null > /dev/null 2>&1
+  for i in {1..20}; do
+    lms_server_up && return 0
+    sleep 1
+  done
+  fail unavailable "LM Studio's local server did not start (open Bionic and try again)"
+}
+
+qwen_pick() {  # sets QWEN_KEY, QWEN_LOADED, QWEN_NO_THINK
+  local m=$TMPD/models.json
+  QWEN_KEY=$QWEN_MODEL
+  if [[ -z $QWEN_KEY ]]; then
+    QWEN_KEY=$(jq -r '[.models[]? | select(.type == "llm")
+        | select(((.key // "") + " " + (.display_name // "")) | ascii_downcase | contains("qwen"))]
+      | (map(select((.loaded_instances // []) | length > 0)) + map(select((.loaded_instances // []) | length == 0)))
+      | .[0].key // empty' $m 2>/dev/null)
+    [[ -n $QWEN_KEY ]] || QWEN_KEY=$(jq -r '[.data[]? | .id | select(ascii_downcase | contains("qwen"))] | .[0] // empty' $m 2>/dev/null)
+  fi
+  [[ -n $QWEN_KEY ]] || { fail unavailable "no Qwen model is downloaded in Bionic"; return 1 }
+  QWEN_LOADED=$(jq -r --arg k $QWEN_KEY '[.models[]? | select(.key == $k) | (.loaded_instances // []) | length] | add // 0' $m 2>/dev/null)
+  QWEN_NO_THINK=$(jq -r --arg k $QWEN_KEY '[.models[]? | select(.key == $k) | any(.capabilities.reasoning.allowed_options[]?; . == "off")] | any' $m 2>/dev/null)
+  [[ $QWEN_NO_THINK == true ]] || QWEN_NO_THINK=false
+  return 0
+}
+
+provider_qwen() {
+  lms_ensure_server || return 1
+  [[ $LMS_STATUS == 401 ]] && { fail auth "LM Studio asks for an API token: set LMSTUDIO_API_TOKEN in config.zsh"; return 1 }
+  qwen_pick || return 1
+  local resp=$TMPD/qwen-resp.json code ctx=0 chars=${#$(<$TMPD/user.txt)}
+  if (( ${QWEN_LOADED:-0} == 0 )); then   # loaded on demand: give it room for a long email thread
+    ctx=$(( chars / 3 + 4096 ))
+    (( ctx < 8192 )) && ctx=8192
+    (( ctx > 32768 )) && ctx=32768
+  fi
+  jq -n --arg model $QWEN_KEY --arg system $SYSTEM --rawfile user $TMPD/user.txt \
+        --argjson temp $QWEN_TEMPERATURE --argjson nothink $QWEN_NO_THINK --argjson ctx $ctx '
+    {model: $model, system_prompt: $system, input: $user, store: false, temperature: $temp}
+    + (if $nothink then {reasoning: "off"} else {} end)
+    + (if $ctx > 0 then {context_length: $ctx} else {} end)' > $TMPD/qwen-req.json
+  code=$(http_post $LMSTUDIO_URL/api/v1/chat $TMPD/lms.headers $TMPD/qwen-req.json $resp $QWEN_TIMEOUT)
+  if [[ $code == 200 ]]; then
+    RESULT=$(jq -j '[.output[]? | select(.type == "message") | .content] | join("\n")' $resp)
+  elif [[ $code == 404 || $code == 405 ]]; then   # older runtime: the OpenAI-compatible endpoint
+    jq -n --arg model $QWEN_KEY --arg system $SYSTEM --rawfile user $TMPD/user.txt --argjson temp $QWEN_TEMPERATURE '
+      {model: $model, temperature: $temp, stream: false,
+       messages: [{role: "system", content: $system}, {role: "user", content: $user}]}' > $TMPD/qwen-req.json
+    code=$(http_post $LMSTUDIO_URL/v1/chat/completions $TMPD/lms.headers $TMPD/qwen-req.json $resp $QWEN_TIMEOUT)
+    [[ $code == 200 ]] && RESULT=$(jq -j '.choices[0].message.content // ""' $resp)
+  fi
+  if [[ $code != 200 ]]; then
+    [[ $code == 000 ]] && { fail timeout "Qwen did not answer within $QWEN_TIMEOUT s"; return 1 }
+    fail error "Qwen: HTTP $code $(json_error $resp)"
+    return 1
+  fi
+  [[ -n ${RESULT//[[:space:]]/} ]] || { fail error "Qwen returned an empty answer"; return 1 }
+  PROVIDER_LABEL="Qwen · $QWEN_KEY (Bionic, local)"
+}
+
+# ---------- Add to Calendar ----------
+
+to_epoch() {  # to_epoch TZ FORMAT VALUE
+  TZ=$1 zsh -fc 'zmodload zsh/datetime; strftime -r -s e "$1" "$2" && print -r -- $e' _ $2 $3 2>/dev/null
+}
+
+utc_format() {  # utc_format EPOCH FORMAT
+  TZ=UTC zsh -fc 'zmodload zsh/datetime; strftime "$2" "$1"' _ $1 $2
+}
+
+ics_escape() {
+  local t=$1
+  t=${t//\\/\\\\}
+  t=${t//;/\\;}
+  t=${t//,/\\,}
+  t=${t//$'\r'/}
+  t=${t//$'\n'/\\n}
+  print -rn -- $t
+}
+
+ics_line() {  # ics_line "NAME:value" — folded at 60 characters, CRLF
+  local line=$1 out=
+  while (( ${#line} > 60 )); do
+    out+=${line[1,60]}$'\r\n '
+    line=${line[61,-1]}
+  done
+  print -rn -- "$out$line"$'\r\n'
+}
+
+make_event() {  # make_event ANSWER — writes an .ics file and opens it in Calendar
+  local json=$1 s e lb='{' rb='}'
+  s=${json[(i)$lb]} e=${json[(I)$rb]}   # the outermost JSON object, even inside a code fence
+  (( e >= s && e > 0 )) && json=${json[s,e]}
+  print -rn -- $json | jq -e 'type == "object"' > /dev/null 2>&1 || { fail error "the answer was not an event"; return 1 }
+  if print -rn -- $json | jq -e 'has("error")' > /dev/null 2>&1; then
+    notify "AI: $TITLE" "No event with a date was found in the selection."
+    return 0
+  fi
+  local title start finish allday tz loc notes url
+  title=$(print -rn -- $json | jq -r '.title // "Event"')
+  start=$(print -rn -- $json | jq -r '.start // ""')
+  finish=$(print -rn -- $json | jq -r '.end // ""')
+  allday=$(print -rn -- $json | jq -r '.all_day // false')
+  tz=$(print -rn -- $json | jq -r '.timezone // ""')
+  loc=$(print -rn -- $json | jq -r '.location // ""')
+  notes=$(print -rn -- $json | jq -r '.notes // ""')
+  url=$(print -rn -- $json | jq -r '.url // ""')
+  [[ -n $tz && $tz != *..* && -e /usr/share/zoneinfo/$tz ]] || tz=$(local_tz)
+
+  local dtstart dtend when
+  if [[ $allday == true ]]; then
+    [[ $start == [0-9](#c4)-[0-9](#c2)-[0-9](#c2)* ]] || { fail error "the event has no valid date ($start)"; return 1 }
+    s=$(to_epoch UTC '%Y-%m-%d' ${start[1,10]}) || { fail error "invalid date $start"; return 1 }
+    if [[ $finish == [0-9](#c4)-[0-9](#c2)-[0-9](#c2)* ]] && e=$(to_epoch UTC '%Y-%m-%d' ${finish[1,10]}); then
+      e=$(( e + 86400 ))   # the last day is inclusive in the answer, exclusive in iCalendar
+    else
+      e=$(( s + 86400 ))
+    fi
+    (( e > s )) || e=$(( s + 86400 ))
+    dtstart="DTSTART;VALUE=DATE:$(utc_format $s %Y%m%d)"
+    dtend="DTEND;VALUE=DATE:$(utc_format $e %Y%m%d)"
+    when=${start[1,10]}
+  else
+    [[ $start == [0-9](#c4)-[0-9](#c2)-[0-9](#c2)T[0-9](#c2):[0-9](#c2)* ]] || { fail error "the event has no valid time ($start)"; return 1 }
+    s=$(to_epoch $tz '%Y-%m-%dT%H:%M' ${start[1,16]}) || { fail error "invalid time $start"; return 1 }
+    if [[ $finish == [0-9](#c4)-[0-9](#c2)-[0-9](#c2)T[0-9](#c2):[0-9](#c2)* ]] && e=$(to_epoch $tz '%Y-%m-%dT%H:%M' ${finish[1,16]}); then
+      (( e > s )) || e=$(( s + 3600 ))
+    else
+      e=$(( s + 3600 ))   # no end given: one hour
+    fi
+    dtstart="DTSTART:$(utc_format $s %Y%m%dT%H%M%SZ)"
+    dtend="DTEND:$(utc_format $e %Y%m%dT%H%M%SZ)"
+    when="${start[1,10]} ${start[12,16]} ($tz)"
+  fi
+
+  mkdir -p $AI_HOME/events
+  rm -f $AI_HOME/events/*.ics(N.m+30)
+  local ics=$AI_HOME/events/$(strftime '%Y%m%d-%H%M%S' $EPOCHSECONDS)-$$.ics
+  {
+    ics_line "BEGIN:VCALENDAR"
+    ics_line "VERSION:2.0"
+    ics_line "PRODID:-//AI Services//macOS Services menu//EN"
+    ics_line "CALSCALE:GREGORIAN"
+    ics_line "BEGIN:VEVENT"
+    ics_line "UID:$(new_id)@ai-services.local"
+    ics_line "DTSTAMP:$(utc_format $EPOCHSECONDS %Y%m%dT%H%M%SZ)"
+    ics_line $dtstart
+    ics_line $dtend
+    ics_line "SUMMARY:$(ics_escape $title)"
+    [[ -n $loc ]] && ics_line "LOCATION:$(ics_escape $loc)"
+    [[ -n $notes ]] && ics_line "DESCRIPTION:$(ics_escape $notes)"
+    [[ -n $url ]] && ics_line "URL:$(ics_escape $url)"
+    ics_line "END:VEVENT"
+    ics_line "END:VCALENDAR"
+  } > $ics
+  open $ics   # Calendar asks which calendar to add it to
+  notify "AI: $TITLE" "$title — $when. Confirm in Calendar. $PROVENANCE"
+}
+
+# ---------- doctor ----------
+
+doctor() {
+  TMPD=$(mktemp -d "${TMPDIR:-/tmp}/ai-service.XXXXXX") || exit 1
+  trap 'rm -rf -- $TMPD' EXIT
+  local bin
+  print -r -- "AI Services $VERSION — $AI_HOME"
+  if is_online; then print "Internet:       connected"; else print "Internet:       offline (only local Qwen is used)"; fi
+  if bin=$(find_bin claude "$CLAUDE_CLI_BIN"); then
+    print -r -- "Claude Code:    $bin ($($bin --version < /dev/null 2>/dev/null | head -n 1))"
+  else
+    print "Claude Code:    not found"
+  fi
+  if [[ -n $(anthropic_key) ]]; then print -r -- "Claude API key: stored (model $CLAUDE_API_MODEL)"; else print "Claude API key: none (optional)"; fi
+  if [[ $(opencode_key) == public ]]; then print "OpenCode Zen:   no key, free models only"; else print "OpenCode Zen:   key found"; fi
+  local consent=$MUSE_CONSENT
+  [[ $consent == ask && "$(cat $STATE_DIR/muse-consent 2>/dev/null)" == always ]] && consent="always (chosen in the dialog)"
+  print -r -- "Muse Spark:     $MUSE_MODEL, consent: $consent"
+  if bin=$(find_bin opencode "$OPENCODE_BIN"); then print -r -- "OpenCode CLI:   $bin"; else print "OpenCode CLI:   not found (optional)"; fi
+  print -rl -- "Content-Type: application/json" ${LMSTUDIO_API_TOKEN:+"Authorization: Bearer $LMSTUDIO_API_TOKEN"} > $TMPD/lms.headers
+  if lms_server_up; then
+    print -r -- "LM Studio:      server at $LMSTUDIO_URL"
+    if qwen_pick; then
+      local state=on-demand
+      (( ${QWEN_LOADED:-0} > 0 )) && state=loaded
+      print -r -- "Qwen:           $QWEN_KEY ($state)"
+    else
+      print -r -- "Qwen:           $FAIL_MSG"
+    fi
+  elif bin=$(find_bin lms "$LMS_BIN"); then
+    print -r -- "LM Studio:      server not running; it is started when needed ($bin)"
+  else
+    print "LM Studio:      not found — install Bionic and download a Qwen model"
+  fi
+  print -r -- "jq:             $(jq --version 2>/dev/null || print missing)"
+}
+
+# ---------- main ----------
+
+usage() {
+  print -r -- "usage: ai-service improve|reply|reply-selection|resume|calendar [--output replace|clipboard|dialog|calendar|stdout] [--only claude|muse|qwen]"
+  print -r -- "       ai-service --doctor"
+}
+
+main() {
+  case ${1:-} in
+    --doctor) doctor; return ;;
+    --version) print -r -- $VERSION; return ;;
+    ''|-h|--help) usage; return ;;
+  esac
+  ACTION=$1
+  shift
+  case $ACTION in
+    improve) TITLE=Improve OUTPUT=replace ;;
+    reply) TITLE=Reply OUTPUT=clipboard ;;
+    reply-selection) TITLE="Reply to Selection" OUTPUT=clipboard ;;
+    resume) TITLE=Resume OUTPUT=dialog ;;
+    calendar) TITLE="Add to Calendar" OUTPUT=calendar ;;
+    *) usage >&2; return 2 ;;
+  esac
+  local only=
+  while (( $# )); do
+    case $1 in
+      --output) OUTPUT=$2; shift 2 ;;
+      --only) only=$2; shift 2 ;;
+      *) usage >&2; return 2 ;;
+    esac
+  done
+  [[ $ACTION == calendar && $OUTPUT != stdout ]] && OUTPUT=calendar
+
+  INPUT=$(cat; print -n x)
+  INPUT=${INPUT%x}
+  if [[ $INPUT == $SELFTEST_MARKER* ]]; then
+    print -r -- "AI-SERVICES-OK $ACTION $OUTPUT"
+    return 0
+  fi
+  if [[ -z ${INPUT//[[:space:]]/} ]]; then
+    notify "AI: $TITLE" "Select some text first."
+    [[ $OUTPUT == replace ]] && print -rn -- $INPUT
+    return 0
+  fi
+
+  TMPD=$(mktemp -d "${TMPDIR:-/tmp}/ai-service.XXXXXX") || return 1
+  trap 'rm -rf -- $TMPD' EXIT
+  mkdir -p $STATE_DIR $AI_HOME/work
+  cd $AI_HOME/work   # a neutral folder: Claude Code picks up no project files
+
+  local part f
+  SYSTEM=
+  for part in shared $ACTION; do
+    f=$AI_HOME/prompts.local/$part.md
+    [[ -r $f ]] || f=$AI_HOME/prompts/$part.md
+    [[ -r $f ]] || { dialog "AI: $TITLE" "Missing prompt file: $f" OK OK > /dev/null; [[ $OUTPUT == replace ]] && print -rn -- $INPUT; return 1 }
+    SYSTEM+=$(<$f)$'\n\n'
+  done
+  SYSTEM=${SYSTEM//'{{NOW}}'/$(strftime '%A, %Y-%m-%d %H:%M' $EPOCHSECONDS)}
+  SYSTEM=${SYSTEM//'{{TZ}}'/$(local_tz)}
+  print -rn -- "<selected_text>"$'\n'"$INPUT"$'\n'"</selected_text>" > $TMPD/user.txt
+
+  local -a chain reasons
+  local p
+  if [[ -n $only ]]; then chain=($only); else chain=($AI_CHAIN); fi
+  if [[ -z $only ]] && (( ${chain[(I)claude]} || ${chain[(I)muse]} )) && ! is_online; then
+    chain=(${chain:#(claude|muse)})   # offline: only what runs on this Mac
+    reasons+=("offline")
+  fi
+
+  CLAUDE_KIND=
+  RESULT= PROVIDER_LABEL= FAIL_KIND= FAIL_MSG=
+  local ok=0 start_time=$EPOCHREALTIME
+  for p in $chain; do
+    FAIL_KIND= FAIL_MSG=
+    if (( ! ${+functions[provider_$p]} )); then
+      reasons+=("$p: unknown provider")
+      continue
+    fi
+    if provider_$p; then
+      ok=1
+      log "answered by $PROVIDER_LABEL in $(printf '%.1f' $(( EPOCHREALTIME - start_time ))) s"
+      break
+    fi
+    [[ $p == claude ]] && CLAUDE_KIND=$FAIL_KIND
+    reasons+=("$(provider_name $p): $(short_reason $FAIL_KIND)")
+    log "$p failed ($FAIL_KIND): ${FAIL_MSG[1,200]}"
+    [[ $FAIL_KIND == refusal ]] && break
+  done
+
+  if (( ! ok )); then
+    local detail=${(j:\n:)reasons}
+    [[ -n $FAIL_MSG ]] && detail+=$'\n\n'"Last error: ${FAIL_MSG[1,300]}"
+    dialog "AI: $TITLE" "No AI could answer."$'\n\n'"$detail" OK OK > /dev/null
+    [[ $OUTPUT == replace ]] && print -rn -- $INPUT
+    return 1
+  fi
+
+  PROVENANCE=
+  if [[ $PROVIDER_LABEL != Claude* ]]; then
+    PROVENANCE="Answered by $PROVIDER_LABEL"
+    (( ${#reasons} )) && PROVENANCE+=" (${(j:; :)reasons})"
+    PROVENANCE+="."
+  fi
+
+  local out
+  out=$(clean_output $RESULT)
+  case $OUTPUT in
+    replace)
+      print -rn -- "${(M)INPUT##[[:space:]]##}$out${(M)INPUT%%[[:space:]]##}"
+      [[ -n $PROVENANCE ]] && notify "AI: $TITLE" $PROVENANCE ;;
+    clipboard)
+      print -rn -- $out | pbcopy
+      notify "AI: $TITLE" "Copied — paste it with ⌘V. $PROVENANCE" ;;
+    dialog)
+      print -rn -- $out | pbcopy
+      dialog "AI: $TITLE — ${PROVIDER_LABEL}" "$out"$'\n\n'"(Also copied to the clipboard.)" OK OK > /dev/null ;;
+    calendar)
+      make_event $RESULT || {
+        dialog "AI: $TITLE" "Could not create the event: $FAIL_MSG" OK OK > /dev/null
+        return 1
+      } ;;
+    stdout)
+      print -r -- $out
+      [[ -n $PROVENANCE ]] && print -r -- "— $PROVENANCE" >&2 ;;
+    *)
+      print -r -- "unknown output mode: $OUTPUT" >&2
+      return 2 ;;
+  esac
+  return 0
+}
+
+main "$@"

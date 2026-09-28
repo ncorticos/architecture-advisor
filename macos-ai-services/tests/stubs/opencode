@@ -1,0 +1,7 @@
+#!/bin/zsh
+# Stand-in for `opencode run --format json`: one JSON event per line.
+print -rN -- "$@" > $STUB_LOG/opencode.args
+print -r -- "${OPENCODE_CONFIG_DIR:-}" > $STUB_LOG/opencode.configdir
+print -r -- '{"type":"step_start","timestamp":1,"sessionID":"ses_1","part":{"type":"step-start"}}'
+jq -nc --arg t "${OPENCODE_TEXT:-OpenCode answer}" '{type: "text", timestamp: 2, sessionID: "ses_1", part: {type: "text", text: $t}}'
+print -r -- '{"type":"step_finish","timestamp":3,"sessionID":"ses_1","part":{"type":"step-finish"}}'
