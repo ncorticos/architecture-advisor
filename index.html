@@ -746,7 +746,7 @@ details.more[open] > summary{color:var(--ink)}
 /* ------------------------------------------------------------ 0. IDENTITY -- */
 const APP = {
   name:        'Architecture Advisor',
-  version:     '1.95.0',
+  version:     '1.96.0',
   author:      'Nuno Dinis Cortiços',
   institution: 'Lisbon School of Architecture, Universidade de Lisboa',
   builtWith:   'Claude Opus 5 (Anthropic)',
@@ -2206,11 +2206,15 @@ const albedoFitFor = (key, w) => {
 /* --- the plan: one bar, broken, carved or opened on a patio ------------------
    Local metres: x along the main facade, y toward the back, the main facade on
    y = −D/2, the bar centred on the origin. A break works the bar's long sides:
-   an L at one end, a T at the middle, an H at both ends. The wing's reach e is
-   signed — out past the chosen face when positive, carved into the bar when
-   negative — so one drag runs from a wing, through the plain bar, to a notch
-   in it. face picks the long side worked (+1 behind, −1 the main facade), side
-   the L's end. A patio is a hole opened in the bar. The plan is the solid
+   an L at one end, a T at the middle, a U at both ends of one side, an H at
+   both ends of both. The wing's reach e is signed — out past the chosen face
+   when positive, carved into the bar when negative — so one drag runs from a
+   wing, through the plain bar, to a notch in it. Carved, the L's leg sinks
+   into the bar (its own footprint is the notch, at its corner); the U's court
+   between its legs is cut in; the T and the H keep their letter by cutting
+   what lies beside the wing. face picks the long side worked (+1 behind, −1
+   the main facade), side the L's end; the U's legs are w (west) and w2
+   (east). A patio is a hole opened in the bar. The plan is the solid
    rectangles minus the carved ones. */
 function planParts(G) {
   const L = G.L, D = G.D, f = G.form || 'rect', wg = G.wing, pos = [[-L / 2, -D / 2, L / 2, D / 2]], neg = [];
@@ -2218,9 +2222,13 @@ function planParts(G) {
     const w = wg.w, e = wg.e, fc = wg.face < 0 ? -1 : 1, a = Math.abs(e);
     const band = e > 0 ? (fc > 0 ? [D / 2, D / 2 + a] : [-D / 2 - a, -D / 2])   // out past the face
                        : (fc > 0 ? [D / 2 - a, D / 2] : [-D / 2, -D / 2 + a]);  // carved in from it
-    if (f === 'L') {
-      const leg = wg.side < 0 ? [-L / 2, -L / 2 + w] : [L / 2 - w, L / 2], rest = wg.side < 0 ? [-L / 2 + w, L / 2] : [-L / 2, L / 2 - w];
-      if (e > 0) pos.push([leg[0], band[0], leg[1], band[1]]); else neg.push([rest[0], band[0], rest[1], band[1]]);
+    if (f === 'L') {   // out, the leg; in, the leg's own footprint as a notch at its corner
+      const leg = wg.side < 0 ? [-L / 2, -L / 2 + w] : [L / 2 - w, L / 2];
+      (e > 0 ? pos : neg).push([leg[0], band[0], leg[1], band[1]]);
+    } else if (f === 'U') {   // out, two legs at the ends; in, the court between them
+      const w2 = wg.w2 || w;
+      if (e > 0) pos.push([-L / 2, band[0], -L / 2 + w, band[1]], [L / 2 - w2, band[0], L / 2, band[1]]);
+      else neg.push([-L / 2 + w, band[0], L / 2 - w2, band[1]]);
     } else if (f === 'T') {
       if (e > 0) pos.push([-w / 2, band[0], w / 2, band[1]]);
       else neg.push([-L / 2, band[0], -w / 2, band[1]], [w / 2, band[0], L / 2, band[1]]);
@@ -2252,8 +2260,9 @@ function rayHitsBox(p, d, r, h) {
 function fixWing(G) {
   if (!G.form || G.form === 'rect') return;
   const wg = G.wing || (G.wing = { w:4, e:5, side:1, face:1 });
-  const maxW = G.form === 'H' ? (G.L - 2) / 2 : G.L - 2;
+  const maxW = G.form === 'H' ? (G.L - 2) / 2 : G.form === 'U' ? G.L - 2 - (wg.w2 || 2) : G.L - 2;
   wg.w = Math.round(clamp(wg.w, 2, Math.max(2, maxW)) * 2) / 2;
+  if (G.form === 'U') wg.w2 = Math.round(clamp(wg.w2 || wg.w, 2, Math.max(2, G.L - 2 - wg.w)) * 2) / 2;   // 2 m of court at least between the legs
   const maxIn = G.form === 'H' ? (G.D - 2) / 2 : G.D - 2;
   wg.e = Math.round(clamp(wg.e, -Math.max(0, maxIn), 16) * 2) / 2;
   wg.side = wg.side < 0 ? -1 : 1;
@@ -2349,7 +2358,7 @@ const PLAN_CACHE = { key:null, val:null };
 function planModel(G) {
   fixWing(G); fixPatio(G);
   const wg = G.wing || {}, pt = G.patio || {};
-  const key = [G.L, G.D, G.form, wg.w, wg.e, wg.side, wg.face, pt.on, pt.ok, pt.w, pt.d].join('|');
+  const key = [G.L, G.D, G.form, wg.w, wg.w2, wg.e, wg.side, wg.face, pt.on, pt.ok, pt.w, pt.d].join('|');
   if (PLAN_CACHE.key !== key) {
     const pp = planParts(G);
     PLAN_CACHE.val = Object.assign(planOutline(pp.pos, pp.neg), { key, parts:pp });
@@ -4250,7 +4259,12 @@ function buildSite(host) {
     [[1, 1], [-1, 1], [-1, -1], [1, -1]].forEach(([sx, sy]) => {
       if (isVertex(sx * G.L / 2, sy * G.D / 2)) out.push({ id:'bar', x:sx * G.L / 2, y:sy * G.D / 2 });
     });
-    if (G.form && G.form !== 'rect' && G.wing) {
+    if (G.form === 'U' && G.wing) {
+      /* a U has three points: each leg's inner corner sizes that leg and the
+         reach, the middle of the court moves the reach alone */
+      const wg = G.wing, y = wg.face * (G.D / 2 + wg.e), w2 = wg.w2 || wg.w;
+      out.push({ id:'wing', x:-G.L / 2 + wg.w, y }, { id:'wing2', x:G.L / 2 - w2, y }, { id:'wingM', x:(wg.w - w2) / 2, y });
+    } else if (G.form && G.form !== 'rect' && G.wing) {
       const wg = G.wing, fc = G.form === 'H' ? 1 : wg.face;
       const x = G.form === 'L' ? wg.side * (G.L / 2 - wg.w) : G.form === 'T' ? wg.w / 2 : G.L / 2 - wg.w;
       out.push({ id:'wing', x, y:fc * (G.D / 2 + wg.e) });
@@ -4834,8 +4848,11 @@ function buildSite(host) {
         [q[0] - 12, q[1] + 10, 'right'], [q[0], q[1] - 18, 'center'], [q[0], q[1] + 18, 'center']];
       if (G.form && G.form !== 'rect' && G.wing && Math.abs(G.wing.e) >= 0.5) {
         const h = hvs.find(o => o.id === 'wing'), wg = G.wing, a = Math.abs(wg.e);
-        const txt = wg.e > 0 ? (G.form === 'H' ? '4 ' + t('wings') + ' ' : t('wing') + ' ') + fmt(wg.w, 1) + ' × ' + fmt(a, 1) + ' m'
-          : G.form === 'L' ? t('recess') + ' ' + fmt(G.L - wg.w, 1) + ' × ' + fmt(a, 1) + ' m'
+        const w2 = wg.w2 || wg.w;
+        const txt = G.form === 'U' ? (wg.e > 0 ? '2 ' + t('wings') + ' ' + fmt(wg.w, 1) + ' + ' + fmt(w2, 1) + ' × ' + fmt(a, 1) + ' m'
+                                                : t('recess') + ' ' + fmt(G.L - wg.w - w2, 1) + ' × ' + fmt(a, 1) + ' m')
+          : wg.e > 0 ? (G.form === 'H' ? '4 ' + t('wings') + ' ' : t('wing') + ' ') + fmt(wg.w, 1) + ' × ' + fmt(a, 1) + ' m'
+          : G.form === 'L' ? t('recess') + ' ' + fmt(wg.w, 1) + ' × ' + fmt(a, 1) + ' m'
           : '2 ' + t('recesses') + ' ' + fmt(G.form === 'T' ? (G.L - wg.w) / 2 : G.L - 2 * wg.w, 1) + ' × ' + fmt(a, 1) + ' m';
         if (h) desk.place(txt, aroundPt(h.q), CH.ink, FM(10, '600'));
       }
@@ -4899,7 +4916,7 @@ function buildSite(host) {
       .concat(WIN_KEYS.map(f => ['Glass ' + f + ' asked by its WWR (m²)', +glassOf(f).toFixed(2)]))
       .concat([['Window fit (0–100)', winAim() ? winAim().fit : ''],
       ['Plan form', G.form || 'rect'],
-      ['Break', G.wing && G.form !== 'rect' && Math.abs(G.wing.e) >= 0.5 ? (G.wing.e > 0 ? 'extended' : 'carved') + ' ' + G.wing.w + ' × ' + Math.abs(G.wing.e)
+      ['Break', G.wing && G.form !== 'rect' && Math.abs(G.wing.e) >= 0.5 ? (G.wing.e > 0 ? 'extended' : 'carved') + ' ' + G.wing.w + (G.form === 'U' ? ' + ' + (G.wing.w2 || G.wing.w) : '') + ' × ' + Math.abs(G.wing.e)
         + (G.form === 'L' ? (G.wing.side > 0 ? ', east end' : ', west end') : '') + (G.form !== 'H' ? (G.wing.face > 0 ? ', back' : ', main facade') : '') : ''],
       ['Patio w × d (m)', G.patio && G.patio.on && G.patio.ok !== false ? G.patio.ew + ' × ' + G.patio.ed : ''],
       ['Plan area (m²)', +planOf().area.toFixed(1)],
@@ -4929,6 +4946,7 @@ function buildSite(host) {
   const formDefaults = {
     L:k => ({ w:clamp(Math.round(G.L * 0.35), 3, 6), e:Math.round(G.D * (k > 0 ? 0.75 : 0.5)) * k, side:1, face:1 }),
     T:k => ({ w:clamp(Math.round(G.L * 0.3), 3, 5), e:Math.round(G.D * (k > 0 ? 0.75 : 0.4)) * k, side:1, face:1 }),
+    U:k => ({ w:clamp(Math.round(G.L * 0.25), 2, 4), w2:clamp(Math.round(G.L * 0.25), 2, 4), e:Math.round(G.D * (k > 0 ? 0.6 : 0.45)) * k, side:1, face:1 }),
     H:k => ({ w:clamp(Math.round(G.L * 0.25), 3, 4), e:Math.round(G.D * (k > 0 ? 0.5 : 0.3)) * k, side:1, face:1 })
   };
   let modeSign = G.wing && G.wing.e < 0 ? -1 : 1;
@@ -4949,9 +4967,9 @@ function buildSite(host) {
     const f = G.form || 'rect';
     cMode.style.display = f === 'rect' ? 'none' : '';
     mirrorX.hidden = f !== 'L';
-    mirrorY.hidden = f !== 'L' && f !== 'T';
+    mirrorY.hidden = f !== 'L' && f !== 'T' && f !== 'U';
   };
-  const cForm = segCtl(null, [{ value:'rect', label:'▭', title:t('The plain bar') }, { value:'L', label:'L' }, { value:'T', label:'T' }, { value:'H', label:'H' }],
+  const cForm = segCtl(null, [{ value:'rect', label:'▭', title:t('The plain bar') }, { value:'L', label:'L' }, { value:'T', label:'T' }, { value:'U', label:'U' }, { value:'H', label:'H' }],
     G.form || 'rect', v => {
       G.form = v;
       G.wing = v === 'rect' ? null : formDefaults[v](modeSign);
@@ -4976,7 +4994,7 @@ function buildSite(host) {
   optGrp.appendChild(el('div', { class:'hint', html:(OI.pt ? '<b>' + t('Olgyay adapted to Portugal') + '</b> · ' + t(PT_TYPE[OI.type]) : '<b>' + t('Olgyay (1963)') + '</b> · ' + K.code)
     + ' — 1 : ' + fmt(OI.r, 2) + (OI.fl ? ' · ' + t(OI.fl === 1 ? 'one storey' : 'two storeys') : '') + ' · ' + fmt(Math.abs(180 - OI.az), 0) + '° ' + t('east of south')
     + (OI.pt ? '<br>' + t('annual range') + ' ' + fmt(OI.A, 1) + ' K · ' + t('coldest month') + ' ' + fmt(OI.Tc, 1) + ' °C' : '') }));
-  rail.appendChild(el('div', { class:'keys', text:t('Drag the black points on the model: a corner stretches the bar, the break’s point sizes a wing or carves a recess, the patio’s point opens it wider or deeper.') }));
+  rail.appendChild(el('div', { class:'keys', text:t('Drag the black points on the model: a corner stretches the bar, the break’s point sizes a wing or carves a recess (a U has one on each leg and one in the middle of its court), the patio’s point opens it wider or deeper.') }));
   syncFormTools();
   /* the readings, under the model: what each decision does, in words */
   const pillShade = el('span', { class:'pill empty' });
@@ -4994,7 +5012,7 @@ function buildSite(host) {
   };
   refreshShade();
   host.appendChild(hint('site-form',
-    'Break the volume with the tools left of the model. <b>L</b> works one end of the bar, <b>T</b> its middle, <b>H</b> both ends on both long sides. <b>Extend</b> adds the wing out past the bar; <b>Carve</b> cuts the same shape into it as a recess, so the bar itself becomes the L, T or H. The break’s black point is one continuous reach: drag it outward and the wing grows, back to the facade and the plain bar returns, further in and the recess deepens — it never jumps to the other side. <b>⇆ Other end</b> and <b>⇅ Other side</b> mirror the break to the opposite end of the bar or to its opposite long side. <b>Open a central patio</b> cuts a courtyard out of the middle; its corner point opens it wider or deeper, always leaving 2 m of building round it and 2 m clear of any recess. Every wall of the outline — a wing’s, a recess’s, a patio’s — takes the window its orientation has on Windows &amp; Shading, so a break redistributes the glass instead of hiding it. A worked plan changes what the badges read. <b>Own shade · winter %</b> is the share of the 21 December sun on the walls that the building takes off itself — every wall sampled every 0.75 m at three heights, the sun every half hour, each sample weighed by how squarely the sun meets it, and counted lost when the ray back to the sun meets any part of the plan (eaves height; pitched roofs shade a little more). The same test on 21 June gives the summer shade in the reading under the model: a break or a patio that shades east and west walls in summer earns it, one that shades the main facade in winter costs it. <b>Form factor</b> is taken from the whole volume — every wall up to the roof’s own profile along it, every roof plane at the pitch set on Roof, the ground floor — so a break or a patio almost always raises it: more envelope for the same volume. The Olgyay fit still reads the bar’s length, depth and turn. Roof, Windows &amp; Shading and Ventilation all work on this volume as drawn, and the CAD export writes it; Ventilation also reads the form for air — how much of the floor it can cross-ventilate, how much of its glass it turns to the winter wind.'));
+    'Break the volume with the tools left of the model. <b>L</b> works one end of the bar, <b>T</b> its middle, <b>U</b> both ends of one long side, <b>H</b> both ends on both long sides. <b>Extend</b> adds the wing out past the bar; <b>Carve</b> cuts into it, so the bar itself becomes the letter: the L’s leg sinks into the bar as a notch at its corner, the U’s court is cut in between its legs, the T and the H cut what lies beside their wings. The break’s black point is one continuous reach: drag it outward and the wing grows, back to the facade and the plain bar returns, further in and the recess deepens — it never jumps to the other side. The U has three points: each leg’s inner corner sets that leg’s width and the reach, the point in the middle of the court the reach alone. <b>⇆ Other end</b> and <b>⇅ Other side</b> mirror the break to the opposite end of the bar or to its opposite long side. <b>Open a central patio</b> cuts a courtyard out of the middle; its corner point opens it wider or deeper, always leaving 2 m of building round it and 2 m clear of any recess. Every wall of the outline — a wing’s, a recess’s, a patio’s — takes the window its orientation has on Windows &amp; Shading, so a break redistributes the glass instead of hiding it. A worked plan changes what the badges read. <b>Own shade · winter %</b> is the share of the 21 December sun on the walls that the building takes off itself — every wall sampled every 0.75 m at three heights, the sun every half hour, each sample weighed by how squarely the sun meets it, and counted lost when the ray back to the sun meets any part of the plan (eaves height; pitched roofs shade a little more). The same test on 21 June gives the summer shade in the reading under the model: a break or a patio that shades east and west walls in summer earns it, one that shades the main facade in winter costs it. <b>Form factor</b> is taken from the whole volume — every wall up to the roof’s own profile along it, every roof plane at the pitch set on Roof, the ground floor — so a break or a patio almost always raises it: more envelope for the same volume. The Olgyay fit still reads the bar’s length, depth and turn. Roof, Windows &amp; Shading and Ventilation all work on this volume as drawn, and the CAD export writes it; Ventilation also reads the form for air — how much of the floor it can cross-ventilate, how much of its glass it turns to the winter wind.'));
   host.appendChild(hint('ori-score',
     'The badge is a didactic index, not an energy prediction: 60 % orientation — full marks on the green normal, zero at 90° off — plus 40 % form — closeness to the 1:X elongation, discounted for square, diagonal and north–south plans. Where the climate asks for a number of storeys (Csa: one; Csb: two) the weights become 50 % orientation, 30 % form and 20 % storeys — full marks on the number asked, 60 above it, none below — so the wrong number cannot reach 100. Two plans can share a score and behave differently; read it with the pills.'));
   host.appendChild(hint('ori-height',
@@ -5117,7 +5135,11 @@ function buildSite(host) {
            wing, inside it a recess, on it the plain bar — it never jumps to
            the other side (⇅ does that) */
         const wg = G.wing;
-        if (G.form === 'L') wg.w = G.L / 2 - wg.side * l.u;
+        if (G.form === 'U') {   // west leg, east leg, or the court's middle (the reach alone)
+          if (drag.id === 'wing') wg.w = l.u + G.L / 2;
+          else if (drag.id === 'wing2') wg.w2 = G.L / 2 - l.u;
+        }
+        else if (G.form === 'L') wg.w = G.L / 2 - wg.side * l.u;
         else if (G.form === 'T') wg.w = 2 * Math.abs(l.u);
         else wg.w = G.L / 2 - Math.abs(l.u);
         wg.e = G.form === 'H' ? Math.abs(l.v) - G.D / 2 : wg.face * l.v - G.D / 2;
@@ -11193,7 +11215,7 @@ Object.assign(PT, {
   "of the winter sun off its own walls, gives": "do sol de inverno às próprias paredes, dá",
   "A plain bar casts no shade on itself — break the volume or open a patio": "Uma barra simples não se sombreia a si própria — quebre o volume ou abra um pátio",
   "No room for a patio: it needs 2 m of building round it and 2 m clear of any recess — widen or deepen the bar": "Sem espaço para um pátio: precisa de 2 m de edifício à volta e 2 m livres de qualquer recuo — alargue ou aprofunde a barra",
-  "Drag the black points on the model: a corner stretches the bar, the break’s point sizes a wing or carves a recess, the patio’s point opens it wider or deeper.": "Arraste os pontos pretos no modelo: um canto estica a barra, o ponto da quebra dimensiona uma ala ou escava um recuo, o ponto do pátio abre-o mais largo ou mais fundo.",
+  "Drag the black points on the model: a corner stretches the bar, the break’s point sizes a wing or carves a recess (a U has one on each leg and one in the middle of its court), the patio’s point opens it wider or deeper.": "Arraste os pontos pretos no modelo: um canto estica a barra, o ponto da quebra dimensiona uma ala ou escava um recuo (um U tem um em cada perna e um no meio do seu pátio), o ponto do pátio abre-o mais largo ou mais fundo.",
   "Isometric view, tilted from the south-west. Drag the plan to stretch it, the black knob to turn it, the black points to break it; drive the sun from the Sun controls. The windows are the ones sized on Windows & Shading, spread over every wall and every floor, and the roof is the one set on Roof.": "Vista isométrica, inclinada a partir de sudoeste. Arraste a planta para a esticar, o botão preto para a rodar, os pontos pretos para a quebrar; conduza o sol pelos comandos do Sol. As janelas são as dimensionadas em Janelas e Sombreamento, distribuídas por todas as paredes e todos os pisos, e a cobertura é a definida em Telhado.",
   "Most glass faces": "Mais vidro virado a",
   "least faces": "menos virado a",
@@ -11353,7 +11375,7 @@ Object.assign(PT_HINT, {
   'vent-scores':
     'O compromisso de Olgyay (1963): manter fora o vento de inverno, deixar passar a brisa de verão — duas classificações em metros por segundo. <b>Inverno</b> lê o vento de Dezembro a Fevereiro (média vectorial dos meses, com o ajuste local), levado à altura do beirado sobre este terreno e exposição, e segue-o até cada parede voltada para ele: em cada ponto dessas paredes é cortado pelo melhor abrigo a montante — uma árvore, uma sebe ou um muro cuja copa ou comprimento atravesse a linha de volta ao vento corta-o mais dentro de 5 das suas alturas e cada vez menos até 20 alturas (12 para um muro cheio, de sotavento mais fundo mas mais curto), segundo os estudos de quebra-ventos de Heisler &amp; DeWalle (1988); folhagem densa corta mais do que folhagem aberta, um muro cheio até 80 %; o sotavento do próprio edifício corta 70 %. A caixa é o vento que resta nas paredes a barlavento: construa obstáculos a montante e ele desce, e o ar contorna a casa. <b>Verão</b> lê o vento de Junho a Agosto impelido através de cada par de lados opostos: Q = C<sub>d</sub> · A · U · √ΔC<sub>p</sub>, com C<sub>d</sub> 0,61, A as áreas que abrem dos dois lados em série (metade de cada área envidraçada), U o vento ao beirado e ΔC<sub>p</sub> 0,9 com o vento ao longo do par, menos à medida que roda para o atravessar. Plantação ou um muro <i>à frente</i> das janelas de entrada bloqueia o escoamento; <i>ao lado</i> do percurso, a menos de 3 m dele, afunila o ar para as aberturas, até +40 % — plante e construa dos lados e mantenha o percurso livre. A caixa é a velocidade do ar que entra pelas janelas de entrada — o caudal sobre a sua área que abre: sobe quando o jardim afunila, e é máxima quando a entrada é menor do que a saída (Givoni); a leitura acrescenta as renovações de ar por hora que o caudal dá à casa. As faixas — um corte de 50 % ou mais lê-se abrigado, 25 % ou menos exposto; 1,0 m/s ou mais nas entradas lê-se como brisa através da casa, abaixo de 0,5 m/s como ar parado — são cortes didácticos desta aplicação. Uma primeira passagem de projecto, não um estudo de vento.',
   'site-form':
-    'Quebre o volume com as ferramentas à esquerda do modelo. O <b>L</b> trabalha uma ponta da barra, o <b>T</b> o meio, o <b>H</b> as duas pontas dos dois lados compridos. <b>Estender</b> acrescenta a ala para fora da barra; <b>Escavar</b> recorta a mesma forma dentro dela como um recuo, pelo que é a própria barra que se torna o L, o T ou o H. O ponto preto da quebra é um alcance contínuo: arrastado para fora a ala cresce, de volta à fachada regressa a barra simples, mais para dentro o recuo aprofunda-se — nunca salta para o outro lado. <b>⇆ Outra ponta</b> e <b>⇅ Outro lado</b> espelham a quebra para a ponta oposta da barra ou para o seu lado comprido oposto. <b>Abrir um pátio central</b> recorta um pátio no meio; o ponto do seu canto abre-o mais largo ou mais fundo, deixando sempre 2 m de edifício à volta e 2 m livres de qualquer recuo. Todas as paredes do contorno — de uma ala, de um recuo, de um pátio — recebem a janela que a sua orientação tem em Janelas e Sombreamento, pelo que uma quebra redistribui o vidro em vez de o esconder. Uma planta trabalhada muda o que as caixas lêem. <b>Sombra própria · inverno %</b> é a parte do sol de 21 de Dezembro nas paredes que o edifício retira a si próprio — cada parede amostrada a cada 0,75 m em três alturas, o sol a cada meia hora, cada amostra pesada por quão de frente o sol a atinge, e contada como perdida quando o raio de volta ao sol encontra alguma parte da planta (altura do beirado; coberturas inclinadas sombreiam um pouco mais). O mesmo teste a 21 de Junho dá a sombra de verão na leitura por baixo do modelo: uma quebra ou um pátio que sombreia paredes a nascente e a poente no verão ganha com isso, um que sombreia a fachada principal no inverno paga por isso. O <b>fator de forma</b> é tirado de todo o volume — cada parede até ao perfil da própria cobertura, cada plano de cobertura com a inclinação definida em Cobertura, o piso térreo — pelo que uma quebra ou um pátio quase sempre o aumenta: mais envolvente para o mesmo volume. O ajuste a Olgyay continua a ler o comprimento, a profundidade e a rotação da barra. Cobertura, Janelas e Sombreamento e Ventilação trabalham todos sobre este volume tal como está desenhado, e a exportação CAD escreve-o; a Ventilação lê também a forma para o ar — quanto do piso consegue ventilar em cruzado, quanto do seu vidro volta ao vento de inverno.',
+    'Quebre o volume com as ferramentas à esquerda do modelo. O <b>L</b> trabalha uma ponta da barra, o <b>T</b> o meio, o <b>U</b> as duas pontas de um lado comprido, o <b>H</b> as duas pontas dos dois lados compridos. <b>Estender</b> acrescenta a ala para fora da barra; <b>Escavar</b> recorta dentro dela, pelo que é a própria barra que se torna a letra: a perna do L afunda-se na barra como um recorte no seu canto, o pátio do U abre-se entre as suas pernas, o T e o H recortam o que fica ao lado das alas. O ponto preto da quebra é um alcance contínuo: arrastado para fora a ala cresce, de volta à fachada regressa a barra simples, mais para dentro o recuo aprofunda-se — nunca salta para o outro lado. O U tem três pontos: o canto interior de cada perna dá a largura dessa perna e o alcance, o ponto no meio do pátio só o alcance. <b>⇆ Outra ponta</b> e <b>⇅ Outro lado</b> espelham a quebra para a ponta oposta da barra ou para o seu lado comprido oposto. <b>Abrir um pátio central</b> recorta um pátio no meio; o ponto do seu canto abre-o mais largo ou mais fundo, deixando sempre 2 m de edifício à volta e 2 m livres de qualquer recuo. Todas as paredes do contorno — de uma ala, de um recuo, de um pátio — recebem a janela que a sua orientação tem em Janelas e Sombreamento, pelo que uma quebra redistribui o vidro em vez de o esconder. Uma planta trabalhada muda o que as caixas lêem. <b>Sombra própria · inverno %</b> é a parte do sol de 21 de Dezembro nas paredes que o edifício retira a si próprio — cada parede amostrada a cada 0,75 m em três alturas, o sol a cada meia hora, cada amostra pesada por quão de frente o sol a atinge, e contada como perdida quando o raio de volta ao sol encontra alguma parte da planta (altura do beirado; coberturas inclinadas sombreiam um pouco mais). O mesmo teste a 21 de Junho dá a sombra de verão na leitura por baixo do modelo: uma quebra ou um pátio que sombreia paredes a nascente e a poente no verão ganha com isso, um que sombreia a fachada principal no inverno paga por isso. O <b>fator de forma</b> é tirado de todo o volume — cada parede até ao perfil da própria cobertura, cada plano de cobertura com a inclinação definida em Cobertura, o piso térreo — pelo que uma quebra ou um pátio quase sempre o aumenta: mais envolvente para o mesmo volume. O ajuste a Olgyay continua a ler o comprimento, a profundidade e a rotação da barra. Cobertura, Janelas e Sombreamento e Ventilação trabalham todos sobre este volume tal como está desenhado, e a exportação CAD escreve-o; a Ventilação lê também a forma para o ar — quanto do piso consegue ventilar em cruzado, quanto do seu vidro volta ao vento de inverno.',
   'roof-albedo':
     'A cor da cobertura decide quanto do sol a cobertura absorve. Segue as mesmas três classes de cor das paredes no separador Local — clara α 0,4, média 0,5, escura 0,8 (RCCTE, Quadro V.5, retomado no REH pelo Despacho n.º 15793-K/2013) — e o albedo indicado é a parte reflectida, 1 − α. De toda a envolvente, a cobertura é a que recebe mais de frente o sol alto de Verão, pelo que a sua cor pesa na estação de arrefecimento pelo menos tanto como a das paredes; superfícies claras são o conselho corrente para climas quentes (Lechner; Gonçalves &amp; Graça). O <b>Ajuste albedo</b> lê-a exactamente como as paredes, contra o verão deste local — de Junho a Setembro a média é <b>%1 °C</b>, um verão <b>%2</b> — sem peso a 17 °C ou menos e com peso total a 23 °C ou mais; a caixa de baixo dá o próprio albedo. Esta aplicação lê uma telha cerâmica pelo seu tom: uma telha pálida ou envelhecida como vermelho-claro, uma telha carregada como vermelho-escuro. A cobertura toma a cor em todas as vertentes, em todas as vistas 3D.',
   'site-windows':
