@@ -658,7 +658,7 @@ details.more[open] > summary{color:var(--ink)}
 /* ------------------------------------------------------------ 0. IDENTITY -- */
 const APP = {
   name:        'Architecture Advisor',
-  version:     '1.90.1',
+  version:     '1.91.0',
   author:      'Nuno Dinis Cortiços',
   institution: 'Lisbon School of Architecture, Universidade de Lisboa',
   builtWith:   'Claude Opus 5 (Anthropic)',
@@ -7464,7 +7464,7 @@ function buildVentilation(host) {
   const cAnim = checkCtl('Animate wind', airAnim, v => { airAnim = v; airKick(); });
   viewBox.appendChild(cAnim);
   viewBox.appendChild(hint('vent-air',
-    'The layer rides at about half the eave height, drawn at three depths, climbs over the house, walls and crowns, and runs dashed where it passes behind the house, following the month wind around every volume, wall and plant of the proposal: slow air runs blue, fast air red, dots travel at true metres per second, and the house and each garden wall trail a lazy recirculation loop. Walls block like buildings; crowns bleed air through, slowed by density, size and height — trunk, canopy and all — so a high crown on a clear stem barely stirs this layer while a bushy windbreak bends the whole pattern. Stylised deflection, not CFD.'));
+    'The layer rides at about half the eave height, drawn at five depths through a 10 m wind box, climbs over the house, walls and crowns, and runs dashed where it passes behind the house, following the month wind around every volume, wall and plant of the proposal: slow air runs blue, fast air red, dots travel at true metres per second, and the house and each garden wall trail a lazy recirculation loop. Walls block like buildings; crowns bleed air through, slowed by density, size and height — trunk, canopy and all — so a high crown on a clear stem barely stirs this layer while a bushy windbreak bends the whole pattern. Stylised deflection, not CFD.'));
 
   /* ---- turn the model: same facade-picking camera as Windows & Shading ---- */
   host.appendChild(section('Turn the model',
@@ -7871,13 +7871,13 @@ function buildVentilation(host) {
        keep ~2.5 m lateral spacing. The reseed signature already keys on the
        count, so geometry changes still restart the tracers. */
     const NL = Math.max(13, Math.min(40, Math.ceil(2 * (across + 6) / 2.5)));
-    /* Three depths of the one layer pattern fill the volume like the CFD
-       reference: low (ground friction zone), the half-eave layer itself,
-       and high — a clear metre over the ridge, so it sails nearly level and
-       shows the displacement dying out with height. Same plan paths
-       stacked — the relief pass below gives each its own height. */
+    /* A 10 m wind box, the way building wind is studied: low (ground
+       friction zone), the half-eave layer itself, then 5 m, 7.5 m and the
+       box top — so on a house lower than 10 m some lines always clear the
+       ridge instead of all contouring round. Same plan paths stacked; the
+       relief pass below gives each its own height. */
     const ridgeH = (typeof FR !== 'undefined' && FR && FR.M && FR.M.ridge) ? FR.M.ridge : midH + 4;
-    const LAYERS = [clamp(midH * 0.5, 0.5, 1.2), midH, clamp(ridgeH + 1.0, midH + 2.5, 14)];
+    const LAYERS = [clamp(midH * 0.5, 0.5, 1.2), midH, 5, 7.5, Math.max(10, ridgeH + 1)];
     const lines = [];
     for (let li = 0; li < NL * LAYERS.length; li++) {
       const i = li % NL, z0 = LAYERS[(li / NL) | 0];
@@ -10885,7 +10885,7 @@ Object.assign(PT_HINT, {
   'open-accuracy':
     'Este separador dimensiona vidro e sombreamento como um primeiro esboço de projecto — regras geométricas de bolso, não uma simulação. Não modela luz difusa ou reflectida, encandeamento, ganhos internos ou solares, nem um céu real, e o valor de sombreamento abaixo é a média de um conjunto fixo de horas do dia em 21 de Junho e 21 de Dezembro apenas, não do ano inteiro nem de um ficheiro climático real. O próprio Olgyay chamou aos seus coeficientes de sombreamento "valores aproximados" (p.67); Lechner recomenda verificar qualquer desenho de sombreamento com um modelo físico (p.251); Ching &amp; Shapiro notam que o dimensionamento óptimo do vidro "deveria ser calculado por simulação computacional" (p.101). Um valor fora do intervalo colorido não está proibido — alguns programas precisam disso — mas trate-o como um sinal a justificar, não uma opção por defeito.',
   'vent-air':
-    'A camada anda a cerca de meia altura do beirado, desenhada em três profundidades, galga a casa, os muros e as copas, e passa a tracejado onde corre por trás da casa, seguindo o vento do mês em torno de todos os volumes, muros e plantas da proposta: o ar lento corre azul, o rápido vermelho, os pontos viajam a metros por segundo verdadeiros, e a casa e cada muro trazem um redemoinho preguiçoso na esteira. Os muros bloqueiam como edifícios; as copas deixam passar o ar, travado pela densidade, tamanho e altura — tronco, copa e tudo — por isso uma copa alta em fuste limpo mal mexe nesta camada enquanto uma sebe arbustiva verga o padrão inteiro. Deflexão estilizada, não é CFD.',
+    'A camada anda a cerca de meia altura do beirado, desenhada em cinco profundidades numa caixa de vento de 10 m, galga a casa, os muros e as copas, e passa a tracejado onde corre por trás da casa, seguindo o vento do mês em torno de todos os volumes, muros e plantas da proposta: o ar lento corre azul, o rápido vermelho, os pontos viajam a metros por segundo verdadeiros, e a casa e cada muro trazem um redemoinho preguiçoso na esteira. Os muros bloqueiam como edifícios; as copas deixam passar o ar, travado pela densidade, tamanho e altura — tronco, copa e tudo — por isso uma copa alta em fuste limpo mal mexe nesta camada enquanto uma sebe arbustiva verga o padrão inteiro. Deflexão estilizada, não é CFD.',
 });
 
 /* boot, last: a page opened in Portuguese renders its first screen with
