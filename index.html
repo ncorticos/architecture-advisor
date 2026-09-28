@@ -393,6 +393,14 @@ footer{border-top:1px solid var(--line); margin-top:26px; background:var(--wash)
 .bench .readings{margin:8px 0 0; gap:6px}
 .bench .readings .pill{white-space:normal; line-height:1.5}
 .bench.env{grid-template-columns:270px minmax(0,1fr) 290px}
+.bench.vent{grid-template-columns:200px minmax(0,1fr) 290px}
+.bench.vent .stage{position:sticky; top:100px}
+.bench .viewbar{display:flex; flex-wrap:wrap; gap:4px; align-items:center; margin:0 0 6px}
+.bench .viewbar .btn{min-width:34px}
+.bench .viewbar .hint{margin-left:6px; font-size:11.5px}
+.bench .rgroup.palette{display:grid; grid-template-columns:1fr 1fr; gap:4px}
+.bench .rgroup.palette .gh{grid-column:1/-1}
+.bench .rgroup.palette .btn{font-size:11.5px; padding:4px 6px; white-space:normal; line-height:1.2; text-align:left}
 .bench.env .stage{position:sticky; top:100px}
 .bench.site{grid-template-columns:320px minmax(0,1fr)}
 .bench.site .stage{position:sticky; top:100px}
@@ -413,7 +421,7 @@ details.more[open] > summary{color:var(--ink)}
 .findplot{display:flex; gap:6px; margin-top:6px}
 .findplot input{flex:1; min-width:0; font:inherit; font-size:12px; color:var(--ink); background:#fff; border:1px solid var(--line); border-radius:5px; padding:5px 7px}
 .canvas-wrap canvas.wx{position:absolute; left:0; top:0; width:100%; display:block; pointer-events:none}
-@media(max-width:1100px){.bench.site{grid-template-columns:1fr}.bench.site .stage{position:static; order:-1}.bench.env{grid-template-columns:1fr}.bench.env .stage{position:static; order:-1}.bench.env .props{order:2}}
+@media(max-width:1100px){.bench.site{grid-template-columns:1fr}.bench.site .stage{position:static; order:-1}.bench.env{grid-template-columns:1fr}.bench.env .stage{position:static; order:-1}.bench.env .props{order:2}.bench.vent{grid-template-columns:1fr}.bench.vent .stage{position:static; order:-1}}
 @media(max-width:1100px){.bench{grid-template-columns:1fr}.bench .rgroup{flex-direction:row; flex-wrap:wrap}.bench .rgroup .btn{width:auto}
   .bench .props .controls{flex-direction:row; flex-wrap:wrap}}
 </style>
@@ -658,7 +666,7 @@ details.more[open] > summary{color:var(--ink)}
 /* ------------------------------------------------------------ 0. IDENTITY -- */
 const APP = {
   name:        'Architecture Advisor',
-  version:     '1.91.0',
+  version:     '1.92.0',
   author:      'Nuno Dinis Cortiços',
   institution: 'Lisbon School of Architecture, Universidade de Lisboa',
   builtWith:   'Claude Opus 5 (Anthropic)',
@@ -6099,21 +6107,28 @@ function buildVentilation(host) {
   const lat = S.lat, lon = S.lon;
   pageHead(host, 'Ventilation',
     'One model from Site, Roof and Windows & Shading — volume, slopes, true openings and sunspace — with sun shadows and opposite-pair airflow. Altitude thins the air, the eave height drives the stack, terrain and exposure shape the wind.');
-  /* ---- the workbench: tools on the left, the model in the middle, the
-     selection and the view on the right — every planting decision is made
-     around the model, as in a CAD program, never scrolled away from it.
-     The settings that change rarely (exposure, monthly winds, the local
-     tune) follow below it. ---- */
-  const bench = host.appendChild(el('div', { class:'bench' }));
+  /* ---- the workbench: tools on the left, the model in the middle with
+     the view bar over it, and on the right the selection, the view, the
+     wind, the site and the local tune — every control beside the model, as
+     in a CAD program, never scrolled away from it. The explanations follow
+     below. ---- */
+  const bench = host.appendChild(el('div', { class:'bench vent' }));
   const rail = bench.appendChild(el('div', { class:'rail' }));
   const stage = bench.appendChild(el('div', { class:'stage' }));
   const props = bench.appendChild(el('div', { class:'props' }));
+  const stickV = () => { const hd = document.querySelector('header'); stage.style.top = ((hd ? hd.offsetHeight : 0) + 8) + 'px'; };
   const benchNote = host.appendChild(el('p', { class:'hint' }));
   props.appendChild(el('div', { class:'gh', text:'Selection' }));
   const effLine = props.appendChild(el('div', { class:'effect' }));
   const selSlot = props.appendChild(el('div'));
   props.appendChild(el('div', { class:'gh', text:'View' }));
   const viewBox = props.appendChild(el('div', { class:'controls' }));
+  props.appendChild(el('div', { class:'gh', text:'Wind' }));
+  const windBox = props.appendChild(el('div', { class:'controls' }));
+  props.appendChild(el('div', { class:'gh', text:'Site exposure' }));
+  const siteBox = props.appendChild(el('div', { class:'controls' }));
+  props.appendChild(el('div', { class:'gh', text:'Local tune' }));
+  const tuneBox = props.appendChild(el('div', { class:'controls' }));
 
   const G = MASS, RF = ROOF;
   if (!G) { host.appendChild(el('p', { text:t('Define the site first — go to the Site tab.') })); return; }
@@ -6633,7 +6648,7 @@ function buildVentilation(host) {
     const q = specOf(v.type), rnd = rngOf(seedOf(v));
     const hb = habitOf(v, rnd), form = hb.form;
     const P = (x, y, z) => proj(v.x + x, v.y + y, z);
-    const depth = (x, y, z) => 0.61 * camS * (x + y) - 0.5 * z;
+    const depth = typeof camS === 'function' ? camS : (x, y, z) => 0.61 * camS * (x + y) - 0.5 * z;   // a depth function, or the old corner sign
     const col = q.c, bark = q.bark || '#6B4A32';
     const alpha = 0.7 + 0.3 * hb.dens;
     const box = { x0:Infinity, y0:Infinity, x1:-Infinity, y1:-Infinity };
@@ -7264,39 +7279,49 @@ function buildVentilation(host) {
     : s === 'ok' ? 'Breathing summer, draughty winter — shelter the windward side'
     : 'Exposed in winter, still in summer — rework both seasons';
 
-  /* ---- isometric projection (same as Site tab) ---- */
-  const ISO_C = Math.cos(30 * RAD), ISO_S = Math.sin(30 * RAD);
-  const projF = (FR, x, y, z) => [FR.cx + (x - y) * ISO_C * FR.s, FR.cy - (x + y) * ISO_S * FR.s - (z || 0) * FR.s];
+  /* ---- the camera: orthographic, orbiting the model in the plan's own
+     frame. az is where the camera stands, counter-clockwise from the plan's
+     east (225 = the south-west corner every other tab uses), el how high it
+     looks down (35.26° = the isometric of the other tabs, so the default
+     view is theirs exactly). Drag the ground to turn and tilt it. ---- */
+  const ISO_EL = Math.atan(Math.SQRT1_2) / RAD, CAM_K = Math.sqrt(1.5);
+  const CAM = { az:K0 && K0.cam ? K0.cam.az : 225, el:K0 && K0.cam ? K0.cam.el : ISO_EL };
+  /** The camera's axes: c toward the camera (plan), r screen right, d into
+      the screen (plan), and the sine and cosine of the elevation. */
+  const camAx = () => {
+    const a = CAM.az * RAD, e = clamp(CAM.el, 8, 89.5) * RAD, c = [Math.cos(a), Math.sin(a)];
+    return { c, r:[-c[1], c[0]], d:[-c[0], -c[1]], se:Math.sin(e), ce:Math.cos(e), te:Math.tan(e) };
+  };
+  const projF = (FR, x, y, z) => {
+    const A = FR.ax, k = CAM_K * FR.s;
+    return [FR.cx + k * (x * A.r[0] + y * A.r[1]), FR.cy - k * ((x * A.d[0] + y * A.d[1]) * A.se + (z || 0) * A.ce)];
+  };
+  /** How far from the camera: larger is farther, for back-to-front painting. */
+  const depthF = (A, x, y, z) => (x * A.d[0] + y * A.d[1]) * A.ce - (z || 0) * A.se;
 
-  /* ---- frame fits building + garden + shadow + sunspace ---- */
+  /* ---- frame fits building + garden + shadow + sunspace, whichever way
+     the camera turns: the garden's corners bound it in plan ---- */
   const frame = (W, H) => {
-    const cx = W / 2, M = roofModel(G, RF), H0 = M.H0, ridge = M.ridge;
+    const cx = W / 2, M = roofModel(G, RF), H0 = M.H0, ridge = M.ridge, ax = camAx();
     const vegH = VEGETATION.length ? Math.max(...VEGETATION.map(v => v.height)) : 0;
     const wallH = WALLS.length ? Math.max(...WALLS.map(w => w.height)) : 0;
-    const maxH = Math.max(ridge, H0, vegH, wallH) + 2;
+    const airTop = showAir ? Math.max(10, ridge + 1) + 0.45 * ridge : 0;   // the top wind layer and its rise over the roof
+    const maxH = Math.max(ridge + 2, H0 + 2, vegH + 2, wallH + 2, airTop);
     const garden = 8;
     const sunDepth = SUNSP && SUNSP.on ? SUNSP.depth : 0;
     const [hxV, hyV] = reachXY();
-    const half = hxV + hyV + garden + sunDepth;
+    const gx = hxV + garden + sunDepth, gy = hyV + garden + sunDepth;
+    const cs = [[-gx, -gy], [gx, -gy], [gx, gy], [-gx, gy]];
+    const uMax = Math.max(...cs.map(q => Math.abs(q[0] * ax.r[0] + q[1] * ax.r[1])));
+    const vs = cs.map(q => (q[0] * ax.d[0] + q[1] * ax.d[1]) * ax.se), vMin = Math.min(...vs), vMax = Math.max(...vs);
     const top = W < 600 ? 88 : 40, bottom = H - 34;   // room for the readout (and, on a phone, the badges) above
     const availV = Math.max(40, bottom - top);
-    const sByW = (W / 2 - 16) / ((half + sunDepth) * ISO_C);
-    const sByH = availV / (half * ISO_S * 2 + maxH);
+    const sByW = (W / 2 - 16) / (CAM_K * uMax);
+    const sByH = availV / (CAM_K * ((vMax - vMin) + maxH * ax.ce));
     const s = Math.max(3, Math.min(sByW, sByH));
-    const cy = bottom - half * ISO_S * s;
-    return { cx, cy, s, H0, ridge, garden, M };
+    const cy = bottom + CAM_K * s * vMin;
+    return { cx, cy, s, H0, ridge, garden, M, ax };
   };
-
-  /** Turn the model to face a facade — the same camera trick as Windows &
-      Shading: south or west keeps the default south-west corner view
-      (camS=1), north or east flips both world axes (camS=-1) to the
-      opposite corner instead. Only two states are ever needed, since each
-      one already shows two adjacent walls at once. */
-  let curFace = 'S';
-  const camSign = () => (curFace === 'S' || curFace === 'W') ? 1 : -1;
-  const faceVisible = () => camSign() === 1
-    ? { S:true, W:true, N:false, E:false }
-    : { N:true, E:true, S:false, W:false };
 
   const hullV = pts => {
     const p = pts.slice().sort((a, b) => a[0] - b[0] || a[1] - b[1]);
@@ -7347,15 +7372,15 @@ function buildVentilation(host) {
       expoPill.textContent = t('Exposure judged') + ': ' + t({ sheltered:'Sheltered', moderate:'Moderate', exposed:'Exposed' }[windKey]);
     }
   }
-  host.appendChild(controls([cTerrain, cWind]));
+  siteBox.appendChild(cTerrain); siteBox.appendChild(cWind);
   const TERRAIN_NAME = { flat:'Flat', rolling:'Rolling', hilly:'Hilly', mountainous:'Mountainous' };
   const deriveBtn = el('button', { class:'btn', text:'Derive terrain + wind from coordinates' });
   const deriveStatus = el('span', { class:'fieldstatus', text:'' });
-  host.appendChild(controls([deriveBtn, deriveStatus]));
-  host.appendChild(el('div', { class:'limitrow' }, [expoPill]));
+  siteBox.appendChild(el('div', { class:'rgroup' }, [deriveBtn, deriveStatus]));
+  siteBox.appendChild(expoPill);
   if (exposureState !== 'idle') setExposure(exposureState);   // as judged before the pages were rebuilt
   let derivedRelief = K0 ? K0.derivedRelief : null, derivedWindSrc = K0 ? K0.derivedWindSrc : '';
-  KEEPERS.push(() => { KEEP.vent = { lat, lon, terrainKey, windKey, showShadow, showAir, airAnim, windMonths:windMonths.slice(), windTouched,
+  KEEPERS.push(() => { KEEP.vent = { lat, lon, cam:{ az:CAM.az, el:CAM.el }, terrainKey, windKey, showShadow, showAir, airAnim, windMonths:windMonths.slice(), windTouched,
     WIND_M:WIND_M.map(w => Object.assign({}, w)), tuneDir, tuneSpd, derivedRelief, derivedWindSrc, exposureState }; });
   /** Terrain class from the relief around the site (same two public elevation
       services as the altitude lookup, one batched request each over a ~2 km
@@ -7463,17 +7488,37 @@ function buildVentilation(host) {
   viewBox.appendChild(cShadow); viewBox.appendChild(cAir);
   const cAnim = checkCtl('Animate wind', airAnim, v => { airAnim = v; airKick(); });
   viewBox.appendChild(cAnim);
-  viewBox.appendChild(hint('vent-air',
-    'The layer rides at about half the eave height, drawn at five depths through a 10 m wind box, climbs over the house, walls and crowns, and runs dashed where it passes behind the house, following the month wind around every volume, wall and plant of the proposal: slow air runs blue, fast air red, dots travel at true metres per second, and the house and each garden wall trail a lazy recirculation loop. Walls block like buildings; crowns bleed air through, slowed by density, size and height — trunk, canopy and all — so a high crown on a clear stem barely stirs this layer while a bushy windbreak bends the whole pattern. Stylised deflection, not CFD.'));
+  host.appendChild(hint('vent-air',
+    'The wind is drawn in five layers through a 10 m wind box — near the ground, at about half the eave height, at 5 m, at 7.5 m and over the ridge. A solid turns a layer aside only as far as the layer lies below its top: under about a third of its height the air goes round it, nearer its top part goes round and part over, and above it the air passes straight over, rising as it crosses the roof and settling again in the lee — so on a low house the upper layers cross the roof, as in a wind tunnel, while the air at head height is turned round the walls. Walls and plants act the same way at their own heights: a bush or a low wall bends the air near the ground, a high crown the air at its own height, and a crown bleeds air through by its density where a wall blocks it. Slow air runs blue, fast air red; the dots travel at true metres per second; a line runs dashed where it passes behind the house; the house and each garden wall trail a lazy recirculation loop. Stylised deflection, not CFD: it shows the pattern a proposal gives the wind, not measured speeds.'));
 
-  /* ---- turn the model: same facade-picking camera as Windows & Shading ---- */
+  /* ---- turn the model: drag the ground, or one press on the bar right
+     over the model — turn, tilt, look down, stand upwind or across the
+     wind, back to the corner view ---- */
+  const viewBar = stage.appendChild(el('div', { class:'viewbar' }));
+  const camLine = el('span', { class:'hint' });
+  /** Where the camera stands, in the compass of the real site. */
+  const camText = () => {
+    const pv = [Math.cos(CAM.az * RAD), Math.sin(CAM.az * RAD)];
+    let best = 0, bd = -2;
+    for (let a = 0; a < 360; a += 45) { const q = localDir(a), d = q[0] * pv[0] + q[1] * pv[1]; if (d > bd) { bd = d; best = a; } }
+    return CAM.el > 85 ? t('from above') : t('from the') + ' ' + COMPASS8[best / 45] + ' · ' + fmt(CAM.el, 0) + '°';
+  };
+  const setCam = (az, el) => { CAM.az = ((az % 360) + 360) % 360; CAM.el = clamp(el, 8, 89.5); camLine.textContent = camText(); draw(); };
+  /** The camera stood on the side the wind comes from, turned by off degrees. */
+  const windCam = (off, el) => { const q = localDir(tunedWind().dir); setCam(Math.atan2(q[1], q[0]) / RAD + off, el); };
+  [['↺', 'Turn left', () => setCam(CAM.az - 45, CAM.el)], ['↻', 'Turn right', () => setCam(CAM.az + 45, CAM.el)],
+   ['▲', 'Look from higher', () => setCam(CAM.az, CAM.el + 15)], ['▼', 'Look from lower', () => setCam(CAM.az, CAM.el - 15)],
+   ['Top', 'Straight down, as a plan', () => setCam(CAM.az, 89.5)],
+   ['Upwind', 'Stand where the wind comes from', () => windCam(0, 22)],
+   ['Across the wind', 'Side on to the wind: see it rise over the roof', () => windCam(90, 10)],
+   ['Reset', 'Back to the south-west corner', () => setCam(225, ISO_EL)]]
+    .forEach(([txt, tip, fn]) => viewBar.appendChild(el('button', { class:'btn small', text:txt, title:t(tip), 'aria-label':t(tip), onclick:fn })));
+  viewBar.appendChild(camLine);
+  camLine.textContent = camText();
   host.appendChild(section('Turn the model',
-    'Click a facade to turn the view and face it — the compass marks whichever two are out of view.'));
-  const cFace = segCtl('Facade', FACES.map(f => ({ value:f, label:FACE_NAME[f] })), curFace,
-    v => { curFace = v; refresh(); });
-  viewBox.insertBefore(cFace, viewBox.firstChild);
+    'Drag open ground to turn the model — sideways to go round it, up and down to look from higher or lower — or press the bar over the model.'));
   host.appendChild(hint('vent-face',
-    'The camera only ever shows two adjacent walls at once, from whichever corner puts the chosen facade in view — south-west for South or West, north-east for North or East — exactly as on Windows &amp; Shading. Trees, walls and the airflow arrows are unaffected: they read from world position, not from whatever the camera currently shows.'));
+    'The camera orbits the model: ↺ and ↻ turn it by 45°, ▲ and ▼ tilt it by 15°, Top looks straight down as a plan, Upwind stands where the wind comes from, and Across the wind turns side on to it, low, so the layers can be seen rising over the roof and dropping into the lee. Reset returns to the south-west corner the other tabs use. Trees, walls and the airflow read from their place on the site, not from the view: turning the camera changes nothing but what you see.'));
 
   /* ---- sun controls: day + solar hour drive shadows and sunlit facades ---- */
   host.appendChild(section('Sun for shadows',
@@ -7526,11 +7571,10 @@ function buildVentilation(host) {
     presetSeg.appendChild(el('button', { text:label, title:label, 'aria-pressed':'false', onclick:() => setSeason(ms) }));
   });
   presetRow.appendChild(presetSeg);
-  viewBox.insertBefore(presetRow, cShadow); viewBox.insertBefore(monthCtl, presetRow);
+  windBox.appendChild(monthCtl); windBox.appendChild(presetRow);
   /* What the set actually holds, month by month — the mirror the grey
      prevailing row below is summarising. */
   const windSetLine = el('div', { class:'hint', text:'' });
-  host.appendChild(windSetLine);
   /* The prevailing editors follow the month selection: with one month they
      edit that month's own wind; with a set they lock on the mean and only
      the local tune below stays live. */
@@ -7538,7 +7582,7 @@ function buildVentilation(host) {
     v => { if (windMonths.length === 1) { WIND_M[windMonths[0]].dir = v; windTouched = true; refresh(); } });
   const cWSpd = rangeCtl('Wind speed at 10 m', 0, 8, 0.5, setWind().spd, v => { if (windMonths.length === 1) { WIND_M[windMonths[0]].spd = v; windTouched = true; refresh(); } }, v => fmt(v, 1) + ' m/s');
   const windEditNote = el('span', { class:'hint', text:'' });
-  host.appendChild(controls([cWDir, cWSpd, windEditNote]));
+  [cWDir, cWSpd, windEditNote, windSetLine].forEach(n => windBox.appendChild(n));
   function syncWindCtls() {
     const parts = windMonths.slice().sort((a, b) => a - b)
       .map(m => MON3[m] + ' ' + COMPASS8[Math.round(WIND_M[m].dir / 45) % 8] + ' ' + fmt(WIND_M[m].spd, 1));
@@ -7567,7 +7611,7 @@ function buildVentilation(host) {
     cTuneSpd.range.value = 1; cTuneSpd.out.textContent = '\u00d71.00';
     refresh(); toast('Back to the months untouched');
   } });
-  host.appendChild(controls([cTuneDir, cTuneSpd, tuneReset]));
+  [cTuneDir, cTuneSpd, tuneReset].forEach(n => tuneBox.appendChild(n));
   host.appendChild(hint('vent-wind',
     'Direction is where the wind comes from, in eighths like a site rose. A north wind drives the south–north pair and only brushes the east–west one — toggle months and watch the blue pattern and both scores move together. Opposing months in one set cancel in the mean, exactly as alternating weather would.'));
 
@@ -7590,7 +7634,7 @@ function buildVentilation(host) {
   rail.appendChild(el('div', { class:'gh', text:'Tools' }));
   const selectBtn = el('button', { class:'btn small solid', text:'↖ ' + t('Select / move'), title:t('Click to tune · drag to move · double-click to remove') });
   rail.appendChild(el('div', { class:'rgroup' }, [selectBtn]));
-  const vegPalette = rail.appendChild(el('div', { class:'rgroup' }));
+  const vegPalette = rail.appendChild(el('div', { class:'rgroup palette' }));   // two to a row: the whole flora in view
   const vegBtns = [];
   const addSpeciesBtn = sp => {
     const q = specOf(sp);
@@ -7757,60 +7801,90 @@ function buildVentilation(host) {
     const midH = clamp(h0live() * 0.55, 1.0, 2.6);
     const pp = planParts(G);
     const R = 1.45;
+    /* Every solid steers a layer in plan only as far as the layer lies below
+       its top: wholly round it under about a third of its height, partly
+       round and partly over higher up, straight over it above its top —
+       where the relief pass below lifts the line over the roof.
+       So on a low house the upper layers cross the roof, as they do in a
+       wind tunnel, instead of every layer splitting round the walls. */
+    const houseTop = roofModel(G, RF).ridge;
+    const gOf = (z, h) => clamp(1 - (z / Math.max(0.3, h) - 0.35) / 0.65, 0, 1);
     const boxes = pp.pos.map(r => {
       const cs = [[r[0], r[1]], [r[2], r[1]], [r[2], r[3]], [r[0], r[3]]];
-      return { r,
+      return { r, h:houseTop,
         au: Math.max(...cs.map(q => Math.abs(q[0] * tx + q[1] * ty)), 0.5),
         bw: Math.max(...cs.map(q => Math.abs(-q[0] * ty + q[1] * tx)), 0.5) };
     });
     const holes = pp.neg.slice();
     const inNeg = (x, y) => holes.some(h => x > h[0] + 1e-6 && x < h[2] - 1e-6 && y > h[1] + 1e-6 && y < h[3] - 1e-6);
     WALLS.forEach(w => {
-      if (w.height < midH) return;
+      if (w.height < 0.3) return;
       const hw = w.length / 2, t = 0.2;
       const r = w.along === 'y' ? [w.x - t, w.y - hw, w.x + t, w.y + hw]
         : [w.x - hw, w.y - t, w.x + hw, w.y + t];
       /* Extents are wall-relative: absolute plan coords would centre a
          giant phantom ellipse on the origin and evacuate half the site. */
       const cs = [[-hw, -t], [hw, -t], [hw, t], [-hw, t]];
-      boxes.push({ r, cx: w.x, cy: w.y,
+      boxes.push({ r, cx: w.x, cy: w.y, h:w.height,
         au: Math.max(...cs.map(q => Math.abs(q[0] * tx + q[1] * ty)), 0.15),
         bw: Math.max(...cs.map(q => Math.abs(-q[0] * ty + q[1] * tx)), 0.15) });
     });
-    /* A crown at the layer is a porous disc (bleed, never blocked); a clear
-       stem alone is a thin one; above it all is free air. Trunk radius and
-       crown radius are nominal — trunk from height, crown from depth ×
-       spread, exactly the drawn silhouette's own numbers. */
-    const puffs = [];
-    VEGETATION.forEach(v => {
-      const sp = specOf(v.type);
-      if (!sp) return;
-      const trunk = trunkOf(v), canopy = canopyOf(v);
-      const dens = clamp(v.density != null ? v.density : 0.6, 0, 1);
-      if (midH < trunk) {
-        if (trunk > 0.2) puffs.push({ x: v.x, y: v.y, r: 0.15 + 0.015 * v.height, k: 0.55 * dens, wake: 1.6 });
-      } else if (midH <= trunk + canopy) {
-        puffs.push({ x: v.x, y: v.y, r: Math.max(0.4, canopy * (sp.spr != null ? sp.spr : 0.5)), k: dens, wake: 2.4 });
-      }
-    });
+    /* A crown at a layer's height is a porous disc (bleed, never blocked); a
+       clear stem alone is a thin one; above it all is free air — each
+       layer meets the plants at its own height, so a bush bends the low
+       air and a high crown the upper. Trunk radius and crown radius are
+       nominal — trunk from height, crown from depth × spread, exactly the
+       drawn silhouette's own numbers. */
+    const PUFFS = new Map();
+    const puffsAt = z => {
+      if (PUFFS.has(z)) return PUFFS.get(z);
+      const out = [];
+      VEGETATION.forEach(v => {
+        const sp = specOf(v.type);
+        if (!sp) return;
+        const trunk = trunkOf(v), canopy = canopyOf(v);
+        const dens = clamp(v.density != null ? v.density : 0.6, 0, 1);
+        if (z < trunk) {
+          if (trunk > 0.2) out.push({ x: v.x, y: v.y, r: 0.15 + 0.015 * v.height, k: 0.55 * dens, wake: 1.6 });
+        } else if (z <= trunk + canopy) {
+          out.push({ x: v.x, y: v.y, r: Math.max(0.4, canopy * (sp.spr != null ? sp.spr : 0.5)), k: dens, wake: 2.4 });
+        }
+      });
+      PUFFS.set(z, out);
+      return out;
+    };
     let maxAu = 0.5, maxBw = 0.5;
     const reach = (x, y, pad) => {
       const u = x * tx + y * ty, w = -x * ty + y * tx;
       maxAu = Math.max(maxAu, Math.abs(u) + pad); maxBw = Math.max(maxBw, Math.abs(w) + pad);
     };
     boxes.forEach(b => [[b.r[0], b.r[1]], [b.r[2], b.r[3]]].forEach(q => reach(q[0], q[1], 0)));
-    puffs.forEach(q => reach(q.x, q.y, 3 * q.r + 4));
-    const field = (x, y) => {
+    VEGETATION.forEach(v => { const sp = specOf(v.type); if (sp) reach(v.x, v.y, 3 * Math.max(0.4, canopyOf(v) * (sp.spr != null ? sp.spr : 0.5)) + 4); });
+    const field = (x, y, z) => {
+      if (z == null) z = midH;
       if (inNeg(x, y)) return { ux: tx, uy: ty, sf: 1 };
-      let bi = 0, bd = 1e18, bu = 0, bw2 = 0;
+      let bi = -1, bd = 1e18, bu = 0, bw2 = 0;
       boxes.forEach((b, i) => {
+        if (gOf(z, b.h) <= 0) return;   // this layer passes over it
         const dx = x - (b.cx || 0), dy = y - (b.cy || 0);
         const u = (dx * tx + dy * ty) / b.au, w = (-dx * ty + dy * tx) / b.bw;
         const d = Math.max(0, Math.hypot(u, w) - R);
         if (d < bd) { bd = d; bi = i; bu = u; bw2 = w; }
       });
+      if (bi < 0) {   // above every solid: only the plants at this height steer it
+        let sfs = 1, pw = 0;
+        for (const pf of puffsAt(z)) {
+          const ddx = x - pf.x, ddy = y - pf.y, u = ddx * tx + ddy * ty, w = -ddx * ty + ddy * tx;
+          const wu = u > 0 ? u / pf.wake : u, q2 = (wu * wu + w * w) / (pf.r * pf.r);
+          if (q2 > 9) continue;
+          const def = pf.k * Math.exp(-q2);
+          sfs *= (1 - def); pw += (w >= 0 ? 1 : -1) * def * 0.35;
+        }
+        const qx = tx + pw * -ty, qy = ty + pw * tx, ql = Math.hypot(qx, qy) || 1;
+        return { ux: qx / ql, uy: qy / ql, sf: Math.max(0.05, sfs) };
+      }
       const b = boxes[bi];
-      const wgt = Math.exp(-((bd / 1.5) ** 2));
+      const wgt = Math.exp(-((bd / 1.5) ** 2)) * gOf(z, b.h);
       let uu = bu, ww = bw2, r = Math.hypot(uu, ww);
       if (r < R) { uu = uu / r * R; ww = ww / r * R; r = R; }
       const c = uu / r, e = ww / r, q = R * R / (r * r);
@@ -7828,15 +7902,17 @@ function buildVentilation(host) {
          distances disagree. Each wake starts at its downstream face (ou=1)
          and decays over its cross-flow scale. */
       for (const o of boxes) {
+        const go = gOf(z, o.h);
+        if (go <= 0) continue;
         const ox = x - (o.cx || 0), oy = y - (o.cy || 0);
         const ou = (ox * tx + oy * ty) / o.au, ow = (-ox * ty + oy * tx) / o.bw;
         if (ou > 1) {
           const oW = Math.max(o.au, 1.5 * o.bw);
-          sfs *= 1 - 0.7 * Math.exp(-((((ou - 1) * o.au / oW) / 1.3) ** 2)) * Math.exp(-((ow / 1.2) ** 2));
+          sfs *= 1 - 0.7 * go * Math.exp(-((((ou - 1) * o.au / oW) / 1.3) ** 2)) * Math.exp(-((ow / 1.2) ** 2));
         }
       }
       let pw = 0;
-      for (const pf of puffs) {
+      for (const pf of puffsAt(z)) {
         const ddx = x - pf.x, ddy = y - pf.y;
         const u = ddx * tx + ddy * ty, w = -ddx * ty + ddy * tx;
         const wu = u > 0 ? u / pf.wake : u;
@@ -7850,9 +7926,11 @@ function buildVentilation(host) {
       const pl = Math.hypot(pxx, pyy) || 1;
       return { ux: pxx / pl, uy: pyy / pl, sf: Math.max(0.05, sfs) };
     };
-    const clampBox = (x, y) => {
+    /* only a solid the layer mostly goes round keeps the line out of it;
+       the rest the line may cross, to be lifted over by the relief pass */
+    const clampBox = (x, y, z) => {
       for (let pass = 0; pass < 2; pass++) boxes.forEach(b => {
-        if (inNeg(x, y)) return;
+        if (inNeg(x, y) || gOf(z == null ? midH : z, b.h) < 0.5) return;
         const cx = b.cx || 0, cy = b.cy || 0;
         let uu = ((x - cx) * tx + (y - cy) * ty) / b.au, ww = (-(x - cx) * ty + (y - cy) * tx) / b.bw;
         const r = Math.hypot(uu, ww);
@@ -7880,16 +7958,20 @@ function buildVentilation(host) {
     const LAYERS = [clamp(midH * 0.5, 0.5, 1.2), midH, 5, 7.5, Math.max(10, ridgeH + 1)];
     const lines = [];
     for (let li = 0; li < NL * LAYERS.length; li++) {
-      const i = li % NL, z0 = LAYERS[(li / NL) | 0];
+      const i = li % NL, lay = (li / NL) | 0, z0 = LAYERS[lay];
       const w0 = NL < 2 ? 0 : -across + 2 * across * (i / (NL - 1));
+      /* the two low layers span the whole box; above them every other line,
+         and only across the band the solids can still touch — the rest is
+         straight sky that would only hide the house */
+      if (lay >= 2 && (i % 2 || Math.abs(w0) > maxBw + 4)) continue;
       let px = -tx * (maxAu + lead) - ty * w0, py = -ty * (maxAu + lead) + tx * w0;
-      [px, py] = clampBox(px, py);
+      [px, py] = clampBox(px, py, z0);
       const pts = [];
       for (let k = 0; k < 420; k++) {
-        const f = field(px, py);
+        const f = field(px, py, z0);
         pts.push({ x: px, y: py, sf: f.sf });
         px += f.ux * 0.4; py += f.uy * 0.4;
-        [px, py] = clampBox(px, py);
+        [px, py] = clampBox(px, py, z0);
         if (px * tx + py * ty > maxAu + trail) break;
         if (Math.abs(-px * ty + py * tx) > across + 6) break;
       }
@@ -7932,8 +8014,8 @@ function buildVentilation(host) {
     ctx.fillStyle = '#fafbf9';
     ctx.fillRect(0, 0, W, H);
 
-    const camS = camSign();
-    const proj = (x, y, z) => projF(FR, camS * x, camS * y, z);
+    const AX = FR.ax, camDepth = (x, y, z) => depthF(AX, x, y, z);
+    const proj = (x, y, z) => projF(FR, x, y, z);
     const poly = (pts3, fill, strokeColor, width, dash) => {
       const p = pts3.map(q => proj(q[0], q[1], q[2]));
       ctx.beginPath();
@@ -8028,7 +8110,7 @@ function buildVentilation(host) {
        devices and sunspace from Windows & Shading: every face the camera
        sees, back to front; windows in the sun light up, windows on walls
        turned away draw dashed ---- */
-    const wallSeen = n => camS * (-n[0] - n[1]) > 1e-6;
+    const wallSeen = n => n[0] * AX.c[0] + n[1] * AX.c[1] > 1e-6;
     const wins = M.pl.segs.map(sg => ({ sg, w:segWindow(sg, G) })).filter(o => o.w);
     const onWallV = (sg, u, v) => [sg.a[0] + (sg.b[0] - sg.a[0]) * u / sg.len, sg.a[1] + (sg.b[1] - sg.a[1]) * u / sg.len, v];
     /* one window per storey, each with its own devices */
@@ -8063,11 +8145,11 @@ function buildVentilation(host) {
     });
     M.pieces.forEach(pc => {
       const f = pc.f;
-      if (camS * M.t * (f.a + f.b) + 1 <= 1e-6) return;
-      const kk = RF.n === 0 ? 1 : 0.87 + 0.11 * camS * f.b + 0.05 * camS * f.a;
+      if ((-M.t * f.a * AX.c[0] - M.t * f.b * AX.c[1]) * AX.ce + AX.se <= 1e-6) return;   // a slope turned away from the camera
+      const kk = RF.n === 0 ? 1 : 0.87 + 0.11 * f.b + 0.05 * f.a;   // lit from the south-west, whichever way the camera turns
       items.push({ pts:pc.poly.map(q => [q[0], q[1], M.zOf(f, q[0], q[1])]), fill:opaque(roofFill(0.2 + 0.3 * (1 - kk), kk)), pc });
     });
-    const depthV = it => it.pts.reduce((a2, q) => a2 + camS * (q[0] + q[1]) - q[2], 0) / it.pts.length - (it.dev ? 0.01 : 0);
+    const depthV = it => it.pts.reduce((a2, q) => a2 + camDepth(q[0], q[1], q[2]), 0) / it.pts.length - (it.dev ? 0.01 : 0);
     const pathV = pts3 => { ctx.beginPath(); pts3.forEach((q, i) => { const p2 = proj(q[0], q[1], q[2]); i ? ctx.lineTo(p2[0], p2[1]) : ctx.moveTo(p2[0], p2[1]); }); ctx.closePath(); };
     items.sort((p1, q1) => depthV(q1) - depthV(p1)).forEach(it => {
       if (it.dev) { poly(it.pts, it.dev.ov ? 'rgba(217,119,6,.22)' : 'rgba(220,38,38,.18)', it.dev.ov ? '#D97706' : '#DC2626', 1.2); return; }
@@ -8176,10 +8258,10 @@ function buildVentilation(host) {
        farthest first, so nearer crowns overlap the ones behind them; the
        selected one wears an amber ring ---- */
     const sel = selItem();
-    const plantDepth = v => 0.61 * camS * (v.x + v.y);
+    const plantDepth = v => camDepth(v.x, v.y, 0);
     VEGETATION.map((v, i) => ({ v, i }))
       .sort((a, b) => plantDepth(b.v) - plantDepth(a.v))
-      .forEach(({ v, i }) => paintPlant(ctx, v, proj, camS, s, !!(sel && sel.kind === 'tree' && sel.index === i)));
+      .forEach(({ v, i }) => paintPlant(ctx, v, proj, camDepth, s, !!(sel && sel.kind === 'tree' && sel.index === i)));
 
     /* ---- detached walls as true vertical quads, amber when selected ---- */
     WALLS.forEach((w, i) => {
@@ -8222,6 +8304,7 @@ function buildVentilation(host) {
       hgrid[jy * hnx + ix] = hz;
     }
     const hAt = (x, y) => {
+      if (x < hx0 || x > hx1 || y < hy0 || y > hy1) return -1e9;   // off the house: no solid (clamping here lifted the whole site to the eaves)
       const ix = Math.min(hnx - 1, Math.max(0, Math.floor((x - hx0) / hcell))), jy = Math.min(hny - 1, Math.max(0, Math.floor((y - hy0) / hcell)));
       return hgrid[jy * hnx + ix];
     };
@@ -8241,13 +8324,28 @@ function buildVentilation(host) {
       }
       return top;
     };
-     const tgtAt = (x, y, base) => Math.max(base, topAt(x, y) + 1.0, topAt(x + ftx * 6, y + fty * 6) + 1.0, topAt(x + ftx * 12, y + fty * 12) + 1.0);
+    /* over a solid a line clears its top by a metre; one already above it
+       still rises, less the higher it runs — the streamlines crowd over a
+       roof and relax again downwind */
+    const lift = (base, top) => top > -1e8 ? Math.max(top + 1.0, base + 0.45 * top * Math.exp(-Math.max(0, base - top) / Math.max(1, top))) : -1e9;
     let airMaxZ = layH;
     ventAir.lines.forEach(L => {
       const base = L.z0 == null ? layH : L.z0;
+      /* the climb starts ahead of whatever the line's own path will cross —
+         a line the house turns aside never climbs it */
+      const tops = L.pts.map(p => topAt(p.x, p.y)), ahead = [];
+      for (let k = 0; k < L.pts.length; k++) {
+        let t6 = tops[k], t12 = tops[k], d = 0;
+        for (let j = k + 1; j < L.pts.length && d <= 12; j++) {
+          d += Math.hypot(L.pts[j].x - L.pts[j - 1].x, L.pts[j].y - L.pts[j - 1].y);
+          if (d <= 6) t6 = Math.max(t6, tops[j]);
+          t12 = Math.max(t12, tops[j]);
+        }
+        ahead.push(Math.max(base, lift(base, tops[k]), lift(base, t6), lift(base, t12)));
+      }
       let z = base, px = null, py = null;
-      L.pts.forEach(p => {
-        const tgt = tgtAt(p.x, p.y, base);
+      L.pts.forEach((p, k) => {
+        const tgt = ahead[k];
         if (px !== null) {
           const ds = Math.hypot(p.x - px, p.y - py), Lc = tgt > z ? 2.5 : 5.0;
           z += (tgt - z) * (1 - Math.exp(-ds / Math.max(0.2, Lc)));
@@ -8309,19 +8407,19 @@ function buildVentilation(host) {
     });
     /* Behind the house the lines run dashed, so they read as passing at the
        back instead of across the front: inside the solid, or anywhere the
-       view ray toward the camera (plan camS/√2, rising ISO_S·√2 per metre)
-       meets the house first. */
-    const hsS = [hx0 + hy0, hx0 + hy1, hx1 + hy0, hx1 + hy1].map(v => v * camS / Math.SQRT2);
-    const hsMin = Math.min(...hsS), cpx = camS / Math.SQRT2;
+       view ray toward the camera (along the plan toward it, rising by the
+       tangent of the elevation per metre) meets the house first. */
+    const hsS = [[hx0, hy0], [hx0, hy1], [hx1, hy0], [hx1, hy1]].map(q => q[0] * AX.d[0] + q[1] * AX.d[1]);
+    const hsMin = Math.min(...hsS);
     const behindHouse = (x, y, z) => {
       const hz0 = hAt(x, y);
       if (hz0 > -1e8 && z < hz0 + 0.15) return true;
-      const sP = (x + y) * cpx;
-      if (sP <= hsMin + 0.3) return false;
+      const sP = x * AX.d[0] + y * AX.d[1];
+      if (sP <= hsMin + 0.3 || AX.te > 40) return false;
       const tMax = Math.min(30, sP - hsMin + 1);
       for (let t = 0.5; t < tMax; t += 0.5) {
-        const hz = hAt(x - t * cpx, y - t * cpx);
-        if (hz > -1e8 && z + t * 0.7071 < hz) return true;
+        const hz = hAt(x + t * AX.c[0], y + t * AX.c[1]);
+        if (hz > -1e8 && z + t * AX.te < hz) return true;
       }
       return false;
     };
@@ -8384,7 +8482,7 @@ function buildVentilation(host) {
       oc.width = ctx.canvas.width; oc.height = ctx.canvas.height;
       const g2 = oc.getContext('2d');
       g2.setTransform(ctx.getTransform());
-      paintPlant(g2, gv, proj, camS, s, false);
+      paintPlant(g2, gv, proj, camDepth, s, false);
       ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.globalAlpha = ghost.ok ? 0.45 : 0.15;
       ctx.drawImage(oc, 0, 0); ctx.restore();
     } else if (ghost && wallArmed) {
@@ -8551,7 +8649,6 @@ function buildVentilation(host) {
       const g = airCv.getContext('2d');
       g.setTransform(dpr, 0, 0, dpr, 0, 0);
       g.clearRect(0, 0, r.width, r.height);
-      const camS = camSign();
       ventAir.parts.forEach(p => {
         const L = ventAir.lines[p.li];
         if (!L) return;
@@ -8560,7 +8657,7 @@ function buildVentilation(host) {
         const q = airPointAt(L, p.s);
         const qz = q.z == null ? ventAir.midH : q.z;
         if (ventAir.behind && ventAir.behind(q.x, q.y, qz)) return;
-        const sp = projF(FR, camS * q.x, camS * q.y, qz);
+        const sp = projF(FR, q.x, q.y, qz);
         const rr = 1.5 + 1.4 * Math.min(1, q.sf);
         const dc = speedRGB(q.sf);
         g.fillStyle = 'rgba(' + dc[0] + ',' + dc[1] + ',' + dc[2] + ',' + (0.5 + 0.4 * Math.min(1, q.sf)).toFixed(2) + ')';
@@ -8591,12 +8688,10 @@ function buildVentilation(host) {
   };
   const getWorldPos = (clientX, clientY) => {
     const [sx, sy] = toBacking(clientX, clientY);
-    const camS = camSign();
-    // ground plane z=0: X=(sx-cx)/(C·s)=x−y, Y=(cy−sy)/(S·s)=x+y, in the
-    // camera's own (possibly flipped) axes — divide out camS to recover
-    // true world x/y, undoing the same flip proj() applies when drawing
-    const X = (sx - FR.cx) / (ISO_C * FR.s), Y = (FR.cy - sy) / (ISO_S * FR.s);
-    return { x: camS * (X + Y) / 2, y: camS * (Y - X) / 2 };
+    // back onto the ground plane z = 0: along the screen's right axis, and
+    // into the screen by the height on screen over the sine of the elevation
+    const A = FR.ax, k = CAM_K * FR.s, X = (sx - FR.cx) / k, Y = (FR.cy - sy) / k / A.se;
+    return { x: X * A.r[0] + Y * A.d[0], y: X * A.r[1] + Y * A.d[1] };
   };
   const onBuilding = (x, y) => planModel(G).boxes.some(r => x >= r[0] - 0.3 && x <= r[2] + 0.3 && y >= r[1] - 0.3 && y <= r[3] + 0.3);
   const distSeg = (px, py, ax, ay, bx, by) => {
@@ -8617,8 +8712,7 @@ function buildVentilation(host) {
   const pickItem = (clientX, clientY) => {
     if (!FR) return null;
     const [sx, sy] = toBacking(clientX, clientY);
-    const camS = camSign();
-    const proj = (x, y, z) => projF(FR, camS * x, camS * y, z);
+    const proj = (x, y, z) => projF(FR, x, y, z);
     let best = null;
     const selH = selItem();
     if (selH && selH.kind === 'wall') {
@@ -8686,10 +8780,17 @@ function buildVentilation(host) {
   /* ---- drag placed items across the garden; a press that barely moves is
      a click, and a click tunes the item below ---- */
   let dragV = null, downXY = null, handleDrag = null;
+  let orbit = null;   // a drag on open ground turns the camera
   cv.addEventListener('pointerdown', ev => {
     if (plantArmed || wallArmed || !FR) return;
     const hit = pickItem(ev.clientX, ev.clientY);
-    if (!hit) return;
+    if (!hit) {
+      ev.preventDefault();
+      orbit = { x0:ev.clientX, y0:ev.clientY, az:CAM.az, el:CAM.el, moved:false };
+      try { cv.setPointerCapture(ev.pointerId); } catch (err) {}
+      cv.style.cursor = 'grabbing'; hideTip();
+      return;
+    }
     if (hit.kind === 'handle') {
       ev.preventDefault();
       const w = WALLS[hit.index];
@@ -8710,6 +8811,13 @@ function buildVentilation(host) {
     hideTip();
   });
   cv.addEventListener('pointermove', ev => {
+    if (orbit) {
+      ev.preventDefault();
+      const dx = ev.clientX - orbit.x0, dy = ev.clientY - orbit.y0;
+      if (Math.hypot(dx, dy) > 4) orbit.moved = true;
+      if (orbit.moved) setCam(orbit.az - dx * 0.4, orbit.el + dy * 0.3);
+      return;
+    }
     if (handleDrag) {
       ev.preventDefault();
       const w = WALLS[handleDrag.index];
@@ -8765,9 +8873,14 @@ function buildVentilation(host) {
       cv.style.cursor = hit.kind === 'handle' ? (hit.part === 'top' ? 'ns-resize' : 'ew-resize') : 'grab';
       showTip(hit.kind === 'handle' ? t('Drag to resize the wall') : itemTip(hit), ev);
     }
-    else { cv.style.cursor = 'crosshair'; hideTip(); }
+    else { cv.style.cursor = 'grab'; hideTip(); }   // open ground: drag to turn the model
   });
   const endDragV = ev => {
+    if (orbit) {
+      const moved = orbit.moved; orbit = null; cv.style.cursor = 'default';
+      if (!moved && ev && ev.type === 'pointerup' && selected) { selected = null; refresh(); }   // a click on open ground drops the selection
+      return;
+    }
     if (handleDrag) { handleDrag = null; cv.style.cursor = 'default'; refresh(); return; }
     if (dragV) {
       const moved = (ev && downXY) ? Math.hypot(ev.clientX - downXY[0], ev.clientY - downXY[1]) : 99;
@@ -8867,7 +8980,8 @@ function buildVentilation(host) {
      afterwards, so returning from Windows & Shading (or anywhere else)
      would leave the score cards behind the current model. activate()
      re-runs this hook on every show. */
-  host._refresh = refresh;
+  host._refresh = () => { stickV(); refresh(); };
+  stickV();
   /* Monthly wind should never sit on placeholder values while the site has
      coordinates: derive on entry, once per mount — the button re-runs it. */
   deriveFromSite();
@@ -10310,6 +10424,41 @@ Object.assign(PT, {
   "Neighbourhood": "Vizinhança",
   "Back to the coordinates set up": "Voltar às coordenadas definidas no início",
   "per floor": "por piso",
+  "Wind": "Vento",
+  "Winter": "Inverno",
+  "One model from Site, Roof and Windows & Shading — volume, slopes, true openings and sunspace — with sun shadows and opposite-pair airflow. Altitude thins the air, the eave height drives the stack, terrain and exposure shape the wind.": "Um só modelo do Local, do Telhado e de Janelas e Sombreamento — volume, águas, vãos reais e estufa — com as sombras do sol e o escoamento entre pares opostos. A altitude rarefaz o ar, a altura do beirado move o efeito chaminé, o terreno e a exposição moldam o vento.",
+  "Air thins with altitude, so the same wind pushes less; the eave height from Site drives the stack effect. Terrain and exposure modify the {} m reference wind.": "O ar rarefaz-se com a altitude, pelo que o mesmo vento empurra menos; a altura do beirado definida no Local move o efeito chaminé. O terreno e a exposição modificam o vento de referência a {} m.",
+  "The same sun as Site and Windows & Shading. Summer noon shows what the shading must cut and what buoyancy can exhaust; winter shows what the sun still reaches.": "O mesmo sol do Local e de Janelas e Sombreamento. O meio-dia de Verão mostra o que o sombreamento tem de cortar e o que a impulsão pode extrair; o Inverno mostra o que o sol ainda alcança.",
+  "Wind by month — direction and speed": "Vento por mês — direcção e velocidade",
+  "Toggle any set of months: a cooling season to test ventilation, deep winter to test gust defense. Monthly winds arrive derived for the site and stay editable per month. The prevailing row below mirrors the set mean; the blue arrows draw it, and both scores average over the set.": "Active qualquer conjunto de meses: uma estação de arrefecimento para testar a ventilação, o pleno Inverno para testar a defesa contra as rajadas. Os ventos mensais chegam derivados para o local e ficam editáveis mês a mês. A linha dominante espelha a média do conjunto; as setas desenham-na, e ambas as avaliações fazem a média sobre o conjunto.",
+  "Wind speed at {} m": "Velocidade do vento a {} m",
+  "Local landscape and urban tune": "Paisagem local e ajuste urbano",
+  "The correction the plot itself demands, after the months have spoken. A valley reach can turn the prevailing wind along its axis; a street canyon does the same between facades. Shift in degrees, factor as a multiplier — reset returns to the months untouched.": "A correcção que o próprio lote exige, depois de os meses terem falado. Um troço de vale pode rodar o vento dominante ao longo do seu eixo; uma rua-canhão faz o mesmo entre fachadas. Desvio em graus, factor como multiplicador — repor volta aos meses intactos.",
+  "Reset tune": "Repor o ajuste",
+  "Arm a species, then click open ground around the building — not on it. Click a placed plant to tune its height and density, drag to move it, double-click to remove it. Tall trees shade summer glass; low native bushes shelter the wall base against the wind.": "Arme uma espécie e depois clique em terreno livre à volta do edifício — não sobre ele. Clique numa planta colocada para afinar a altura e a densidade, arraste-a para a mover, faça duplo clique para a remover. As árvores altas sombreiam o vidro de Verão; os arbustos nativos baixos abrigam do vento a base das paredes.",
+  "One model — site, roof, windows, sun and air": "Um só modelo — local, telhado, janelas, sol e ar",
+  "Volume and eave height from Site, slopes from Roof, openings and sunspace from Windows & Shading, shadows from the same sun on the garden and the house, airflow from the opposite pairs — pick a tool on the left, click the ground to place; the selection and the view are on the right": "Volume e altura do beirado do Local, águas do Telhado, vãos e estufa de Janelas e Sombreamento, sombras do mesmo sol no jardim e na casa, escoamento dos pares opostos — escolha uma ferramenta à esquerda e clique no terreno para colocar; a selecção e a vista estão à direita",
+  "’s prevailing wind": " — vento dominante",
+  "eave wind": "vento no beirado",
+  "wind": "vento",
+  "Site exposure": "Exposição do local",
+  "Local tune": "Ajuste local",
+  "Top": "Topo",
+  "Upwind": "Barlavento",
+  "Across the wind": "De lado ao vento",
+  "Reset": "Repor",
+  "Turn left": "Rodar para a esquerda",
+  "Turn right": "Rodar para a direita",
+  "Look from higher": "Ver de mais alto",
+  "Look from lower": "Ver de mais baixo",
+  "Straight down, as a plan": "Na vertical, como uma planta",
+  "Stand where the wind comes from": "Ficar de onde vem o vento",
+  "Side on to the wind: see it rise over the roof": "De perfil ao vento: vê-lo subir sobre a cobertura",
+  "Back to the south-west corner": "Voltar ao canto sudoeste",
+  "from above": "vista de cima",
+  "from the": "vista de",
+  "Turn the model": "Rodar o modelo",
+  "Drag open ground to turn the model — sideways to go round it, up and down to look from higher or lower — or press the bar over the model.": "Arraste o terreno livre para rodar o modelo — para os lados para o contornar, para cima e para baixo para o ver de mais alto ou mais baixo — ou carregue na barra sobre o modelo.",
   "Roof, as set on Roof": "Cobertura, como definida em Telhado",
   "one per floor": "uma por piso",
   "asking again shortly": "a pedir de novo dentro em pouco",
@@ -10884,8 +11033,10 @@ Object.assign(PT_HINT, {
     'Luz natural e sol de inverno por cima: o vidro na vertente virada para a fachada principal compensa onde o clima pende para o aquecimento e sobreaquece onde pende para o arrefecimento; o vidro na vertente oposta dá luz difusa e suave, com pouco ganho num sentido ou noutro. Cada vertente é o maior plano da própria cobertura virado para esse lado — a vertente virada para a fachada principal é a que o separador Cobertura usa para os colectores, pelo que cada metro quadrado envidraçado nela é menos um para colectores. Uma vertente que a cobertura não tem não recebe janelas. As filas centram-se no troço mais largo da sua vertente; arraste o ponto de uma fila para a deslizar para cima ou para baixo na vertente ou, numa cobertura plana, ao longo dela. As janelas numa vertente voltada para longe da câmara desenham-se a tracejado nos seus lugares verdadeiros.',
   'open-accuracy':
     'Este separador dimensiona vidro e sombreamento como um primeiro esboço de projecto — regras geométricas de bolso, não uma simulação. Não modela luz difusa ou reflectida, encandeamento, ganhos internos ou solares, nem um céu real, e o valor de sombreamento abaixo é a média de um conjunto fixo de horas do dia em 21 de Junho e 21 de Dezembro apenas, não do ano inteiro nem de um ficheiro climático real. O próprio Olgyay chamou aos seus coeficientes de sombreamento "valores aproximados" (p.67); Lechner recomenda verificar qualquer desenho de sombreamento com um modelo físico (p.251); Ching &amp; Shapiro notam que o dimensionamento óptimo do vidro "deveria ser calculado por simulação computacional" (p.101). Um valor fora do intervalo colorido não está proibido — alguns programas precisam disso — mas trate-o como um sinal a justificar, não uma opção por defeito.',
+  'vent-face':
+    'A câmara orbita o modelo: ↺ e ↻ rodam-no 45°, ▲ e ▼ inclinam-no 15°, Topo olha a direito para baixo como uma planta, Barlavento coloca-se de onde vem o vento, e De lado ao vento põe-se de perfil em relação a ele, baixa, para se verem as camadas a subir sobre a cobertura e a descer para o lado de sotavento. Repor volta ao canto sudoeste que os outros separadores usam. Árvores, muros e o escoamento lêem-se do seu lugar no local, não da vista: rodar a câmara só muda o que se vê.',
   'vent-air':
-    'A camada anda a cerca de meia altura do beirado, desenhada em cinco profundidades numa caixa de vento de 10 m, galga a casa, os muros e as copas, e passa a tracejado onde corre por trás da casa, seguindo o vento do mês em torno de todos os volumes, muros e plantas da proposta: o ar lento corre azul, o rápido vermelho, os pontos viajam a metros por segundo verdadeiros, e a casa e cada muro trazem um redemoinho preguiçoso na esteira. Os muros bloqueiam como edifícios; as copas deixam passar o ar, travado pela densidade, tamanho e altura — tronco, copa e tudo — por isso uma copa alta em fuste limpo mal mexe nesta camada enquanto uma sebe arbustiva verga o padrão inteiro. Deflexão estilizada, não é CFD.',
+    'O vento desenha-se em cinco camadas numa caixa de vento de 10 m — junto ao solo, a cerca de meia altura do beirado, a 5 m, a 7,5 m e acima da cumeeira. Um sólido desvia uma camada apenas na medida em que a camada fica abaixo do seu topo: abaixo de cerca de um terço da sua altura o ar contorna-o, mais perto do topo parte contorna e parte passa por cima, e acima dele o ar passa direito por cima, subindo ao atravessar a cobertura e voltando a assentar a sotavento — numa casa baixa as camadas superiores atravessam a cobertura, como num túnel de vento, enquanto o ar à altura das pessoas é desviado em torno das paredes. Muros e plantas agem da mesma maneira às suas alturas: um arbusto ou um muro baixo curvam o ar junto ao solo, uma copa alta o ar à sua altura, e uma copa deixa passar ar conforme a sua densidade onde um muro o trava. O ar lento corre a azul, o rápido a vermelho; os pontos andam a metros por segundo reais; uma linha passa a tracejado onde corre por trás da casa; a casa e cada muro do jardim arrastam um lento anel de recirculação. Deflexão estilizada, não CFD: mostra o padrão que uma proposta dá ao vento, não velocidades medidas.',
 });
 
 /* boot, last: a page opened in Portuguese renders its first screen with
