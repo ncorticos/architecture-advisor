@@ -92,11 +92,20 @@ nav.tabs{border-bottom:1px solid var(--line); background:#fff}
 
 /* ---------- Layout ---------- */
 main{max-width:1680px; margin:0 auto; padding:0 24px 44px}
-section.page{display:none; padding-top:26px}
+/* a phone: narrower margins, and the header keeps the name, the site and the language on screen */
+@media(max-width:1100px){.brand span{display:none}}
+@media(max-width:700px){main{padding:0 14px 36px}.hbar{padding:8px 14px; gap:10px}.tabs-inner{padding:0 14px}
+  .brand{flex:0 1 auto; min-width:0}.brand b{font-size:14px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+  .filechip .meta,.filechip .loc{display:none}.filechip{gap:8px}.filechip .btn{padding:5px 9px; white-space:nowrap}}
+section.page{display:none; padding-top:18px}
 section.page.on{display:block}
-.pagehead{margin-bottom:20px; max-width:760px}
+.pagehead{margin-bottom:14px; max-width:760px}
 .pagehead h2{font-size:19px; letter-spacing:-0.02em}
 .pagehead p{margin:5px 0 0; color:var(--muted); font-size:13px}
+/* on a wide screen the title and its sentence share one line, so the
+   workbench starts higher and more of it is in view */
+@media(min-width:1101px){.pagehead{display:flex; align-items:baseline; gap:22px; max-width:none}
+  .pagehead h2{flex:0 0 auto}.pagehead p{margin:0; max-width:980px; line-height:1.5}}
 
 .grid{display:grid; gap:16px}
 .g2{grid-template-columns:repeat(2,minmax(0,1fr))}
@@ -223,12 +232,11 @@ abbr.gl:focus{box-shadow:0 0 0 2px #cfd8ea}
 #tip.gloss b{display:block; margin-bottom:3px; color:#fff}
 
 /* ---------- Drop zone ---------- */
-#empty{padding:52px 24px 20px; max-width:1000px; margin:0 auto}
-.explain{display:grid; grid-template-columns:repeat(3,1fr); gap:22px; margin-top:44px}
-@media(max-width:820px){.explain{grid-template-columns:1fr}}
-.explain h4{font-size:12px; text-transform:uppercase; letter-spacing:.08em; color:var(--ink)}
-.explain p{font-size:12.5px; color:var(--muted); margin:7px 0 0; line-height:1.6}
-.note{font-size:11.5px; color:var(--faint); margin-top:26px; text-align:center}
+#empty{padding:18px 0 20px}
+.explain{display:flex; flex-direction:column; gap:16px; margin-top:14px}
+.explain h4{font-size:11px; text-transform:uppercase; letter-spacing:.08em; color:var(--ink)}
+.explain p{font-size:12px; color:var(--muted); margin:5px 0 0; line-height:1.6}
+.note{font-size:11px; color:var(--faint); margin-top:18px; line-height:1.55}
 
 /* ---------- Tooltip ---------- */
 #tip{
@@ -294,34 +302,37 @@ footer{border-top:1px solid var(--line); margin-top:26px; background:var(--wash)
   font-size:11.5px; color:var(--faint); line-height:1.65; max-width:96ch;
 }
 /* ---------------------------------------------- CONSTRUCTION ADVISOR ---- */
-/* The site card that replaces the weather-file drop zone. Everything this
-   application knows about a place is entered here: the municipality, which
-   fixes the NUTS III, and the altitude, which corrects it. */
-.setup{
-  max-width:860px; margin:0 auto; padding:34px 30px 30px;
-  border:1px solid var(--line); border-radius:14px; background:var(--panel);
-  box-shadow:0 1px 2px rgba(16,24,40,.04), 0 8px 26px rgba(16,24,40,.05);
-}
-.setup h2{font-size:21px; letter-spacing:-.3px; margin:0 0 8px}
-.setup>p{font-size:13.5px; color:var(--ink2); line-height:1.7; margin:0 0 22px; max-width:70ch}
-.setup-grid{display:grid; grid-template-columns:1fr 1fr; gap:16px 22px; margin-bottom:20px}
-@media(max-width:700px){.setup-grid{grid-template-columns:1fr}}
-.fld{display:flex; flex-direction:column; gap:6px}
+/* The setup screen, laid out as the workbench of the pages it opens: the
+   site and the building on the left, in the boxes of a page's tools; the
+   monthly normals in the middle, as a page's model; the climate they make
+   and the way in on the right. On a tablet the site and the normals share
+   the width, on a phone they follow one another, and there the classification
+   and the way in stay at the foot of the screen. */
+.setup-bench{display:grid; grid-template-columns:minmax(0,340px) minmax(0,1fr) 300px;
+  grid-template-rows:auto auto 1fr; grid-template-areas:"site norm clim" "site norm cta" "site norm about";
+  gap:4px 16px; align-items:start}
+.s-site{grid-area:site}.s-norm{grid-area:norm}.s-clim{grid-area:clim}.s-cta{grid-area:cta}.s-about{grid-area:about}
+.s-site,.s-clim{display:flex; flex-direction:column; gap:4px; min-width:0}
+.setup .gh{font-size:10.5px; font-weight:600; letter-spacing:.07em; text-transform:uppercase; color:var(--muted); margin:8px 0 1px}
+.setup .gh:first-child{margin-top:0}
+.sbox{display:flex; flex-direction:column; gap:12px; padding:10px 12px; border:1px solid var(--line); border-radius:9px; background:var(--wash); margin:0 0 6px}
+.sbox.two{display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
+.sbox.two .wide{grid-column:1/-1}
+.fld{display:flex; flex-direction:column; gap:5px; min-width:0}
 .fld>label{font-size:11px; font-weight:600; letter-spacing:.06em; text-transform:uppercase; color:var(--muted)}
 .fld input,.fld select{
-  font:inherit; font-size:13.5px; padding:9px 11px; border:1px solid var(--line2);
-  border-radius:8px; background:var(--bg); color:var(--ink); width:100%;
+  font:inherit; font-size:13.5px; padding:8px 10px; border:1px solid var(--line2);
+  border-radius:8px; background:var(--bg); color:var(--ink); width:100%; max-width:none;
 }
 .fld input:focus,.fld select:focus{outline:2px solid var(--c1); outline-offset:-1px; border-color:var(--c1)}
-.fld .sub{font-size:11.5px; color:var(--faint); line-height:1.5}
-/* Twelve months of two measured quantities, entered by hand. The grid is a
-   month per row on a narrow screen and two blocks of six on a wide one, so
-   that a year is legible without scrolling past the button that uses it. */
-.normals{border-top:1px solid var(--line); margin:22px 0 20px; padding-top:18px}
-.normals h3{font-size:12px; text-transform:uppercase; letter-spacing:.08em; color:var(--ink); margin:0 0 6px}
-.normals>.sub{font-size:12px; color:var(--muted); line-height:1.6; margin:0 0 14px; max-width:70ch}
-#normGrid{display:grid; grid-template-columns:repeat(2,minmax(260px,1fr)); gap:2px 26px}
-@media(max-width:700px){#normGrid{grid-template-columns:1fr}}
+.fld .sub{font-size:11px; color:var(--faint); line-height:1.45}
+.fld .seg{align-self:flex-start; flex-wrap:wrap}
+/* Twelve months of two measured quantities, entered by hand: two blocks of
+   six side by side where the middle is wide, one block of twelve where it is
+   not, so that a year is legible without scrolling past the button that
+   uses it. */
+.normals .panel-title p{font-size:11.5px; line-height:1.55}
+#normGrid{display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:2px 22px}
 .nrow{display:grid; grid-template-columns:3.2em 1fr 1fr; gap:8px; align-items:center; padding:2px 0}
 .nrow.head{padding-bottom:4px}
 .nrow.head span{font-size:10.5px; font-weight:600; letter-spacing:.06em; text-transform:uppercase; color:var(--faint)}
@@ -332,8 +343,41 @@ footer{border-top:1px solid var(--line); margin-top:26px; background:var(--wash)
 }
 .nrow input:focus{outline:2px solid var(--c1); outline-offset:-1px; border-color:var(--c1)}
 .nrow input.miss{border-color:#D97706; background:rgba(217,119,6,.05)}
+.srcfld{margin-top:14px}
+.srcrow{display:flex; gap:8px; flex-wrap:wrap}
+.srcrow input{flex:1 1 220px; min-width:0}
 .fieldstatus{display:block; color:var(--ink2); font-family:var(--mono); font-size:11px; margin-top:6px}
-.setup .cta{display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-top:6px}
+.fieldstatus:empty{display:none}
+.climbox{gap:6px}
+#setupClimo{display:block; width:100%; height:150px}
+.climkey{display:flex; flex-wrap:wrap; align-items:center; gap:4px 6px; font-size:10.5px; color:var(--muted)}
+.climkey i{display:inline-block; width:10px; height:8px; border-radius:2px}
+.climkey i.kp{background:#bcd2ea}
+.climkey i.kt{height:2px; background:#D97706; margin-left:6px}
+.setup .cta{display:flex; flex-direction:column; align-items:stretch; gap:8px; margin:0 0 6px}
+.setup .cta .zonechip{justify-content:center}
+.setup .cta .btn{padding:10px 14px; font-size:13.5px}
+/* a tablet: the site and the normals side by side, the climate and the notes
+   under them, the way in held at the foot of the screen */
+@media(max-width:1100px){
+  .setup-bench{display:flex; flex-wrap:wrap; gap:4px 16px}
+  .s-site,.s-norm{flex:1 1 300px; min-width:0}
+  .s-clim,.s-about{flex:1 1 300px; min-width:0; margin-top:10px}
+  .setup .s-cta{order:9; flex:1 1 100%; position:sticky; bottom:0; z-index:5; flex-direction:row; flex-wrap:nowrap;
+    align-items:center; margin:8px -24px 0; padding:10px 24px calc(10px + env(safe-area-inset-bottom));
+    background:rgba(255,255,255,.96); border-top:1px solid var(--line); box-shadow:0 -6px 14px -10px rgba(20,24,20,.35)}
+  .setup .s-cta .zonechip{flex:1 1 auto; min-width:0; justify-content:flex-start; overflow:hidden; white-space:nowrap; text-overflow:ellipsis}
+  .setup .s-cta .btn{flex:0 0 auto}
+}
+/* a phone: one column, the fields a thumb wide */
+@media(max-width:700px){
+  #empty{padding:12px 0 0}
+  .s-site,.s-norm,.s-clim,.s-about{flex:1 1 100%}
+  .setup .s-cta{margin:8px -14px 0; padding:8px 14px calc(8px + env(safe-area-inset-bottom)); gap:8px}
+  .setup .s-cta .zonechip{padding:6px 10px}
+  .setup .s-cta .btn{padding:9px 12px; font-size:13px}
+  .fld input,.fld select,.nrow input{font-size:16px}   /* 16 px: an iPhone does not zoom into the field */
+}
 /* The classification the site resolves to, shown live as it is typed. */
 .zonechip{
   display:inline-flex; align-items:baseline; gap:8px; padding:7px 13px; border-radius:999px;
@@ -373,39 +417,43 @@ footer{border-top:1px solid var(--line); margin-top:26px; background:var(--wash)
 /* A limit stated beside the value being tested against it. */
 .limitrow{display:flex; flex-wrap:wrap; gap:8px 18px; align-items:baseline; margin:10px 0 2px; font-size:12.5px; color:var(--ink2)}
 .limitrow b{font-family:var(--mono); font-size:15px; color:var(--ink)}
-/* the Ventilation workbench: tools | model | selection and view, as in CAD */
-.bench{display:grid; grid-template-columns:178px minmax(0,1fr) 268px; gap:12px; align-items:start; margin:4px 0 14px}
+/* Every page's workbench, as in CAD: the tools that build on the left, the
+   model in the middle, held in view, and on the right what reads, views and
+   finishes it — two columns of about the same length, so the controls sit
+   round the model instead of under it. */
+.bench{display:grid; grid-template-columns:244px minmax(0,1fr) 272px; gap:14px; align-items:start; margin:4px 0 14px}
 .bench .rail,.bench .props{display:flex; flex-direction:column; gap:4px; font-size:12.5px; min-width:0}
+.bench .stage{position:sticky; top:100px; min-width:0}
 .bench .rgroup{display:flex; flex-direction:column; gap:4px}
 .bench .rgroup .btn{text-align:left; width:100%}
 .bench .gh{font-size:10.5px; font-weight:600; letter-spacing:.07em; text-transform:uppercase; color:var(--muted); margin:8px 0 1px}
 .bench .gh:first-child{margin-top:0}
-.bench .props .controls{flex-direction:column; align-items:stretch; gap:8px; margin:0 0 6px; padding:8px 10px}
-.bench .props .ctl{flex-wrap:wrap}
+.bench .rail .controls,.bench .props .controls{flex-direction:column; align-items:stretch; gap:7px; margin:0 0 6px; padding:8px 10px}
+.bench .rail .ctl,.bench .props .ctl{flex-wrap:wrap; gap:3px 7px}
+.ctl .rv{display:inline-flex; align-items:center; gap:7px}
+.ctl .rv .tv{white-space:nowrap; flex:0 0 auto}
+.bench .rail .ctl .rv,.bench .props .ctl .rv{flex:1 1 120px; min-width:0}
+.bench .rail .ctl .rv input[type=range],.bench .props .ctl .rv input[type=range]{flex:1 1 auto; width:auto; min-width:60px}
 .bench .props .seg{flex-wrap:wrap}
+.bench .rail .seg button,.bench .props .seg button{padding:4px 7px}
 .bench .effect{font-size:12px; color:var(--ink2); line-height:1.55; padding:2px 2px 6px}
 .bench .effect b{font-family:var(--mono)}
 .bench .keys{font-size:11px; color:var(--muted); line-height:1.5; margin-top:8px}
 .bench .rail .ctl,.bench .rail .seg{flex-wrap:wrap}
 .bench .rail .hint{font-size:11px; line-height:1.45}
-.bench .props .controls.fpick{flex-direction:row; flex-wrap:wrap; align-items:center; gap:4px}
+.bench .rail .controls.fpick,.bench .props .controls.fpick{flex-direction:row; flex-wrap:wrap; align-items:center; gap:4px}
 .bench .fpick .hint{flex-basis:100%; margin-top:2px}
 .bench .readings{margin:8px 0 0; gap:6px}
 .bench .readings .pill{white-space:normal; line-height:1.5}
-.bench.env{grid-template-columns:270px minmax(0,1fr) 290px}
-.bench.vent{grid-template-columns:200px minmax(0,1fr) 290px}
-.bench.vent .stage{position:sticky; top:100px}
+.bench.env{grid-template-columns:262px minmax(0,1fr) 300px}
 .bench .viewbar{display:flex; flex-wrap:wrap; gap:4px; align-items:center; margin:0 0 6px}
 .bench .viewbar .btn{min-width:34px}
 .bench .viewbar .hint{margin-left:6px; font-size:11.5px}
 .bench .rgroup.palette{display:grid; grid-template-columns:1fr 1fr; gap:4px}
 .bench .rgroup.palette .gh{grid-column:1/-1}
 .bench .rgroup.palette .btn{font-size:11.5px; padding:4px 6px; white-space:normal; line-height:1.2; text-align:left}
-.bench.env .stage{position:sticky; top:100px}
-.bench.site{grid-template-columns:320px minmax(0,1fr)}
-.bench.site .stage{position:sticky; top:100px}
 .bench .sidegrp{display:flex; flex-direction:column; gap:4px}
-.bench .side .readings{flex-direction:column; align-items:stretch; margin-top:2px}
+.bench.site .readings{flex-direction:column; align-items:stretch; margin-top:2px}
 .bench .panel-head{padding:8px 10px}
 .bench .rail .panel-title h3,.bench .props .panel-title h3{font-size:12px}
 .kcode{display:flex; align-items:baseline; gap:10px; margin:2px 0 6px}
@@ -421,9 +469,14 @@ details.more[open] > summary{color:var(--ink)}
 .findplot{display:flex; gap:6px; margin-top:6px}
 .findplot input{flex:1; min-width:0; font:inherit; font-size:12px; color:var(--ink); background:#fff; border:1px solid var(--line); border-radius:5px; padding:5px 7px}
 .canvas-wrap canvas.wx{position:absolute; left:0; top:0; width:100%; display:block; pointer-events:none}
-@media(max-width:1100px){.bench.site{grid-template-columns:1fr}.bench.site .stage{position:static; order:-1}.bench.env{grid-template-columns:1fr}.bench.env .stage{position:static; order:-1}.bench.env .props{order:2}.bench.vent{grid-template-columns:1fr}.bench.vent .stage{position:static; order:-1}}
-@media(max-width:1100px){.bench{grid-template-columns:1fr}.bench .rgroup{flex-direction:row; flex-wrap:wrap}.bench .rgroup .btn{width:auto}
-  .bench .props .controls{flex-direction:row; flex-wrap:wrap}}
+.bench .stage.free{position:static}
+/* a tablet held sideways, a small laptop: slimmer columns, a wider model */
+@media(min-width:1101px) and (max-width:1300px){.bench{grid-template-columns:222px minmax(0,1fr) 250px; gap:12px}.bench.env{grid-template-columns:236px minmax(0,1fr) 262px}}
+/* a tablet held upright: the model across the page, the two columns side by side under it */
+@media(max-width:1100px){.bench,.bench.env{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}.bench .stage{grid-column:1/-1; order:-1}}
+/* a phone: one column, the model first */
+@media(max-width:700px){.bench,.bench.env{grid-template-columns:minmax(0,1fr)}.bench .rgroup{flex-direction:row; flex-wrap:wrap}.bench .rgroup .btn{width:auto}
+  .bench .rgroup.palette{grid-template-columns:repeat(auto-fill,minmax(112px,1fr))}}
 </style>
 </head>
 
@@ -449,144 +502,171 @@ details.more[open] > summary{color:var(--ink)}
 
 <main>
   <div id="empty">
+    <!-- The setup, laid out as the workbench of every page it opens: the
+         site and the building on the left, the normals in the middle, the
+         climate they make and the way in on the right. -->
     <div class="setup" id="setup">
-      <h2 data-t="setupTitle">Where are you building, and in what climate?</h2>
-      <p data-t="setupBody">This application asks nothing of a regulation. It works from the position of the
-        building and from the climate that position sits in, classified by <b>Köppen–Geiger</b>, because that
-        is the classification the design literature is written against. Name the place and give its
-        coordinates, then enter the monthly normals of the nearest station. What follows is orientation,
-        compactness, roof, glazing, shading, the organisation of the plan and the movement of air — the
-        decisions taken before any limit can be applied to them.</p>
-
-      <div class="setup-grid">
-        <div class="fld">
-          <label for="selConc" data-t="fldConc">Place</label>
-          <input list="concList" id="selConc" placeholder="Lisboa" autocomplete="off" spellcheck="false">
-          <datalist id="concList"></datalist>
-          <span class="sub" id="concSub" data-t="fldConcSub">Type a Portuguese municipality, or any name you want the exports to carry.</span>
-        </div>
-        <div class="fld">
-          <label for="selNuts" data-t="fldNuts">Region</label>
-          <select id="selNuts"></select>
-          <span class="sub" data-t="fldNutsSub">Used only to seed the coordinates — the region’s main town — and to label the site. Nothing in this application is indexed on it.</span>
-        </div>
-        <div class="fld">
-          <label for="inpLat" data-t="fldLat">Latitude</label>
-          <input type="number" id="inpLat" min="-90" max="90" step="0.01" value="38.7">
-          <span class="sub" id="latSub" data-t="fldLatSub">Degrees, north positive. Seeded from the region’s main town; replace it with the building's own.</span>
-        </div>
-        <div class="fld">
-          <label for="inpLon" data-t="fldLon">Longitude</label>
-          <input type="number" id="inpLon" min="-180" max="180" step="0.01" value="-9.14">
-          <span class="sub" data-t="fldLonSub">Degrees, east positive. Read it off a map at the site itself.</span>
-        </div>
-        <div class="fld">
-          <label for="inpAlt" data-t="fldAlt">Altitude of the site</label>
-          <div style="display:flex;gap:8px">
-            <input type="number" id="inpAlt" min="0" max="4000" step="5" value="100" style="flex:1">
-            <button type="button" class="btn" id="btnAltLookup" data-t="altLookup">Look up</button>
-          </div>
-          <span class="sub" data-t="fldAltSub">Metres above sea level, at the building, not at the town hall.</span>
-          <span class="fieldstatus" id="altStatus"></span>
-        </div>
-        <div class="fld">
-          <label for="selUse" data-t="fldUse">Building use</label>
-          <select id="selUse">
-            <option value="hab" data-t="useHab">Dwelling</option>
-            <option value="cs" data-t="useCS">Commerce and services</option>
-          </select>
-          <span class="sub" data-t="fldUseSub">Decides how the plan is read: a dwelling is zoned by hour of occupation, a workplace by internal gain.</span>
-        </div>
-        <div class="fld">
-          <label data-t="fldOp">Type of intervention</label>
-          <div class="seg" id="segOp" role="group" aria-label="Type of intervention">
-            <button type="button" data-op="new" aria-pressed="true" data-t="opNew">New construction</button>
-            <button type="button" data-op="renovation" aria-pressed="false" data-t="opRenovation">Major renovation</button>
-          </div>
-          <span class="sub" data-t="fldOpSub">A new building can still choose its orientation and its form; a renovation has to take both as found.</span>
-        </div>
+      <div class="pagehead">
+        <h2 data-t="setupTitle">Where are you building, and in what climate?</h2>
+        <p data-t="setupBody">This application asks nothing of a regulation. It works from the position of the
+          building and from the climate that position sits in, classified by <b>Köppen–Geiger</b>, because that
+          is the classification the design literature is written against. Name the place and give its
+          coordinates, then enter the monthly normals of the nearest station. What follows is orientation,
+          compactness, roof, glazing, shading, the organisation of the plan and the movement of air — the
+          decisions taken before any limit can be applied to them.</p>
       </div>
-
-      <div class="normals" id="normalsBlock">
-        <h3 data-t="normTitle">Monthly normals</h3>
-        <p class="sub" data-t="normBody">Köppen–Geiger is computed, not looked up, so it needs the twelve monthly
-          mean temperatures and the twelve monthly precipitation totals. This application ships none: normals are
-          measured data and it has no authority to invent them. Take them from the IPMA <i>normais climatológicas</i>
-          for the nearest station, from another national service, or from a gridded product such as WorldClim, and
-          name the source so the export carries it. The boxes fill themselves in this order: the embedded IPMA station within 5 km of the coordinates above; where there is none, a blend of the nearest stations, weighted by inverse distance; and, on request, web normals — reanalysis for these exact coordinates. Blend nearest and Fetch web normals open only where no station lies within 5 km. Change the coordinates and the choice is made again; type in the boxes and they stay yours.</p>
-        <div id="normGrid"></div>
-        <div class="fld" style="margin-top:12px;max-width:520px">
-          <label for="inpSource" data-t="fldSource">Where the normals come from</label>
-          <div style="display:flex;gap:8px">
-            <input type="text" id="inpSource" list="srcList" placeholder="IPMA, Lisboa/Gago Coutinho, 1981–2010" autocomplete="off" style="flex:1">
-            <button type="button" class="btn" id="btnSrcBlend" data-t="srcBlend">Blend nearest</button>
-            <button type="button" class="btn" id="btnSrcWeb" data-t="srcWeb">Fetch web normals</button>
+      <div class="setup-bench">
+        <div class="s-site">
+          <div class="gh" data-t="ghSite">The site</div>
+          <div class="sbox">
+            <div class="fld">
+              <label for="selConc" data-t="fldConc">Place</label>
+              <input list="concList" id="selConc" placeholder="Lisboa" autocomplete="off" spellcheck="false">
+              <datalist id="concList"></datalist>
+              <span class="sub" id="concSub" data-t="fldConcSub">Type a Portuguese municipality, or any name you want the exports to carry.</span>
+            </div>
+            <div class="fld">
+              <label for="selNuts" data-t="fldNuts">Region</label>
+              <select id="selNuts"></select>
+              <span class="sub" data-t="fldNutsSub">Used only to seed the coordinates — the region’s main town — and to label the site. Nothing in this application is indexed on it.</span>
+            </div>
           </div>
-          <datalist id="srcList">
-            <option value="IPMA, Lisboa/Gago Coutinho, 1981–2010"></option>
-            <option value="IPMA, Lisboa/Geofísico, 1981–2010"></option>
-            <option value="IPMA, Porto/Pedras Rubras, 1981–2010"></option>
-            <option value="IPMA, Porto/Serra do Pilar, 1981–2010"></option>
-            <option value="IPMA, Coimbra, 1981–2010"></option>
-            <option value="IPMA, Aveiro, 1981–2010"></option>
-            <option value="IPMA, Viana do Castelo, 1981–2010"></option>
-            <option value="IPMA, Vila Real, 1981–2010"></option>
-            <option value="IPMA, Bragança, 1981–2010"></option>
-            <option value="IPMA, Chaves, 1981–2010"></option>
-            <option value="IPMA, Montalegre, 1981–2010"></option>
-            <option value="IPMA, Mirandela, 1981–2010"></option>
-            <option value="IPMA, Viseu, 1981–2010"></option>
-            <option value="IPMA, Guarda, 1981–2010"></option>
-            <option value="IPMA, Penhas Douradas, 1981–2010"></option>
-            <option value="IPMA, Castelo Branco, 1981–2010"></option>
-            <option value="IPMA, Portalegre, 1981–2010"></option>
-            <option value="IPMA, Évora, 1981–2010"></option>
-            <option value="IPMA, Beja, 1981–2010"></option>
-            <option value="IPMA, Setúbal, 1981–2010"></option>
-            <option value="IPMA, Sines, 1981–2010"></option>
-            <option value="IPMA, Sagres, 1981–2010"></option>
-            <option value="IPMA, Faro, 1981–2010"></option>
-            <option value="IPMA, Cabo Carvoeiro (Peniche), 1981–2010"></option>
-            <option value="IPMA, Funchal, 1981–2010"></option>
-            <option value="IPMA, Porto Santo, 1981–2010"></option>
-            <option value="IPMA, Ponta Delgada, 1981–2010"></option>
-            <option value="IPMA, Angra do Heroísmo, 1981–2010"></option>
-            <option value="IPMA, Horta, 1981–2010"></option>
-            <option value="IPMA, Santa Cruz das Flores, 1981–2010"></option>
-            <option value="WorldClim v2.1, 1970–2000"></option>
-          </datalist>
-          <span class="sub" data-t="fldSourceSub">Written into every CSV and PNG this application exports. A station can still be picked from the list — fichas at ipma.pt/oclima/normais.clima — or your own source named. Stations, blends and web fetches name themselves.</span>
-          <span class="fieldstatus" id="srcStatus"></span>
+          <div class="gh" data-t="ghCoords">Coordinates</div>
+          <div class="sbox two">
+            <div class="fld">
+              <label for="inpLat" data-t="fldLat">Latitude</label>
+              <input type="number" id="inpLat" min="-90" max="90" step="0.01" value="38.7">
+              <span class="sub" id="latSub" data-t="fldLatSub">Degrees, north positive. Seeded from the region’s main town; replace it with the building's own.</span>
+            </div>
+            <div class="fld">
+              <label for="inpLon" data-t="fldLon">Longitude</label>
+              <input type="number" id="inpLon" min="-180" max="180" step="0.01" value="-9.14">
+              <span class="sub" data-t="fldLonSub">Degrees, east positive. Read it off a map at the site itself.</span>
+            </div>
+            <div class="fld wide">
+              <label for="inpAlt" data-t="fldAlt">Altitude of the site</label>
+              <div style="display:flex;gap:8px">
+                <input type="number" id="inpAlt" min="0" max="4000" step="5" value="100" style="flex:1">
+                <button type="button" class="btn" id="btnAltLookup" data-t="altLookup">Look up</button>
+              </div>
+              <span class="sub" data-t="fldAltSub">Metres above sea level, at the building, not at the town hall.</span>
+              <span class="fieldstatus" id="altStatus"></span>
+            </div>
+          </div>
+          <div class="gh" data-t="ghBuilding">The building</div>
+          <div class="sbox">
+            <div class="fld">
+              <label for="selUse" data-t="fldUse">Building use</label>
+              <select id="selUse">
+                <option value="hab" data-t="useHab">Dwelling</option>
+                <option value="cs" data-t="useCS">Commerce and services</option>
+              </select>
+              <span class="sub" data-t="fldUseSub">Decides how the plan is read: a dwelling is zoned by hour of occupation, a workplace by internal gain.</span>
+            </div>
+            <div class="fld">
+              <label data-t="fldOp">Type of intervention</label>
+              <div class="seg" id="segOp" role="group" aria-label="Type of intervention">
+                <button type="button" data-op="new" aria-pressed="true" data-t="opNew">New construction</button>
+                <button type="button" data-op="renovation" aria-pressed="false" data-t="opRenovation">Major renovation</button>
+              </div>
+              <span class="sub" data-t="fldOpSub">A new building can still choose its orientation and its form; a renovation has to take both as found.</span>
+            </div>
+          </div>
         </div>
-      </div>
 
-      <div class="cta">
-        <span class="zonechip" id="zonePreview">—</span>
-        <button class="btn solid" id="btnGo" data-t="btnGo">Work through the design</button>
+        <div class="s-norm panel normals" id="normalsBlock">
+          <div class="panel-head"><div class="panel-title">
+            <h3 data-t="normTitle">Monthly normals</h3>
+            <p data-t="normBody">Köppen–Geiger is computed, not looked up, so it needs the twelve monthly
+              mean temperatures and the twelve monthly precipitation totals. This application ships none: normals are
+              measured data and it has no authority to invent them. Take them from the IPMA <i>normais climatológicas</i>
+              for the nearest station, from another national service, or from a gridded product such as WorldClim, and
+              name the source so the export carries it. The boxes fill themselves in this order: the embedded IPMA station within 5 km of the coordinates above; where there is none, a blend of the nearest stations, weighted by inverse distance; and, on request, web normals — reanalysis for these exact coordinates. Blend nearest and Fetch web normals open only where no station lies within 5 km. Change the coordinates and the choice is made again; type in the boxes and they stay yours.</p>
+          </div></div>
+          <div class="panel-body">
+            <div id="normGrid"></div>
+            <div class="fld srcfld">
+              <label for="inpSource" data-t="fldSource">Where the normals come from</label>
+              <div class="srcrow">
+                <input type="text" id="inpSource" list="srcList" placeholder="IPMA, Lisboa/Gago Coutinho, 1981–2010" autocomplete="off">
+                <button type="button" class="btn" id="btnSrcBlend" data-t="srcBlend">Blend nearest</button>
+                <button type="button" class="btn" id="btnSrcWeb" data-t="srcWeb">Fetch web normals</button>
+              </div>
+              <datalist id="srcList">
+                <option value="IPMA, Lisboa/Gago Coutinho, 1981–2010"></option>
+                <option value="IPMA, Lisboa/Geofísico, 1981–2010"></option>
+                <option value="IPMA, Porto/Pedras Rubras, 1981–2010"></option>
+                <option value="IPMA, Porto/Serra do Pilar, 1981–2010"></option>
+                <option value="IPMA, Coimbra, 1981–2010"></option>
+                <option value="IPMA, Aveiro, 1981–2010"></option>
+                <option value="IPMA, Viana do Castelo, 1981–2010"></option>
+                <option value="IPMA, Vila Real, 1981–2010"></option>
+                <option value="IPMA, Bragança, 1981–2010"></option>
+                <option value="IPMA, Chaves, 1981–2010"></option>
+                <option value="IPMA, Montalegre, 1981–2010"></option>
+                <option value="IPMA, Mirandela, 1981–2010"></option>
+                <option value="IPMA, Viseu, 1981–2010"></option>
+                <option value="IPMA, Guarda, 1981–2010"></option>
+                <option value="IPMA, Penhas Douradas, 1981–2010"></option>
+                <option value="IPMA, Castelo Branco, 1981–2010"></option>
+                <option value="IPMA, Portalegre, 1981–2010"></option>
+                <option value="IPMA, Évora, 1981–2010"></option>
+                <option value="IPMA, Beja, 1981–2010"></option>
+                <option value="IPMA, Setúbal, 1981–2010"></option>
+                <option value="IPMA, Sines, 1981–2010"></option>
+                <option value="IPMA, Sagres, 1981–2010"></option>
+                <option value="IPMA, Faro, 1981–2010"></option>
+                <option value="IPMA, Cabo Carvoeiro (Peniche), 1981–2010"></option>
+                <option value="IPMA, Funchal, 1981–2010"></option>
+                <option value="IPMA, Porto Santo, 1981–2010"></option>
+                <option value="IPMA, Ponta Delgada, 1981–2010"></option>
+                <option value="IPMA, Angra do Heroísmo, 1981–2010"></option>
+                <option value="IPMA, Horta, 1981–2010"></option>
+                <option value="IPMA, Santa Cruz das Flores, 1981–2010"></option>
+                <option value="WorldClim v2.1, 1970–2000"></option>
+              </datalist>
+              <span class="sub" data-t="fldSourceSub">Written into every CSV and PNG this application exports. A station can still be picked from the list — fichas at ipma.pt/oclima/normais.clima — or your own source named. Stations, blends and web fetches name themselves.</span>
+              <span class="fieldstatus" id="srcStatus"></span>
+            </div>
+          </div>
+        </div>
+
+        <div class="s-clim">
+          <div class="gh" data-t="ghClimate">The climate they make</div>
+          <div class="sbox climbox">
+            <canvas id="setupClimo" role="img" aria-label="Climograph of the normals"></canvas>
+            <span class="climkey"><i class="kp"></i><span data-t="climoP">Precipitation, mm</span><i class="kt"></i><span data-t="climoT">Mean temperature, °C</span></span>
+          </div>
+        </div>
+        <div class="s-cta cta">
+          <span class="zonechip" id="zonePreview">—</span>
+          <button class="btn solid" id="btnGo" data-t="btnGo">Work through the design</button>
+        </div>
+        <div class="s-about">
+          <div class="explain">
+            <div>
+              <h4 data-t="ex1h">Grounded in the design literature</h4>
+              <p data-t="ex1p">Olgyay, Lechner, DeKay and Brown, Hyde, Ching and Shapiro, Brophy and Lewis. Every
+                 guideline names the book it comes from, and where the books disagree the application says so
+                 rather than averaging them into a single number.</p>
+            </div>
+            <div>
+              <h4 data-t="ex2h">The decisions that come before the limits</h4>
+              <p data-t="ex2p">Which way the building faces, how compact it is, what its roof does, how much glass
+                 each façade carries, where the rooms sit against the sun, and how air moves through the plan.
+                 None of these is settled by a maximum thermal transmittance.</p>
+            </div>
+            <div>
+              <h4 data-t="ex3h">A companion, not a replacement</h4>
+              <p data-t="ex3p">Construction Advisor answers to the SCE and reports what an envelope may not exceed.
+                 This one carries none of that regulation. Use them in that order: shape the building here, then
+                 take it there to be checked.</p>
+            </div>
+          </div>
+          <p class="note" data-t="privacyNote">Nothing is uploaded; your work stays in this browser. What leaves it, only to fill something in: the coordinates, to two elevation services when you press Look up and to Open-Meteo when you press Fetch web normals; the map area, to Esri and OpenStreetMap for the tiles; the plot’s position, to OpenStreetMap’s Overpass servers for the neighbouring buildings and, once you move the plot, to Open-Meteo for the ground’s height and to Nominatim for its municipality; an address you search for, to OpenStreetMap’s Nominatim.</p>
+        </div>
       </div>
     </div>
-
-    <div class="explain">
-      <div>
-        <h4 data-t="ex1h">Grounded in the design literature</h4>
-        <p data-t="ex1p">Olgyay, Lechner, DeKay and Brown, Hyde, Ching and Shapiro, Brophy and Lewis. Every
-           guideline names the book it comes from, and where the books disagree the application says so
-           rather than averaging them into a single number.</p>
-      </div>
-      <div>
-        <h4 data-t="ex2h">The decisions that come before the limits</h4>
-        <p data-t="ex2p">Which way the building faces, how compact it is, what its roof does, how much glass
-           each façade carries, where the rooms sit against the sun, and how air moves through the plan.
-           None of these is settled by a maximum thermal transmittance.</p>
-      </div>
-      <div>
-        <h4 data-t="ex3h">A companion, not a replacement</h4>
-        <p data-t="ex3p">Construction Advisor answers to the SCE and reports what an envelope may not exceed.
-           This one carries none of that regulation. Use them in that order: shape the building here, then
-           take it there to be checked.</p>
-      </div>
-    </div>
-    <p class="note" data-t="privacyNote">Nothing is uploaded; your work stays in this browser. What leaves it, only to fill something in: the coordinates, to two elevation services when you press Look up and to Open-Meteo when you press Fetch web normals; the map area, to Esri and OpenStreetMap for the tiles; the plot’s position, to OpenStreetMap’s Overpass servers for the neighbouring buildings and, once you move the plot, to Open-Meteo for the ground’s height and to Nominatim for its municipality; an address you search for, to OpenStreetMap’s Nominatim.</p>
   </div>
 
   <div id="app" hidden></div>
@@ -666,7 +746,7 @@ details.more[open] > summary{color:var(--ink)}
 /* ------------------------------------------------------------ 0. IDENTITY -- */
 const APP = {
   name:        'Architecture Advisor',
-  version:     '1.92.0',
+  version:     '1.93.0',
   author:      'Nuno Dinis Cortiços',
   institution: 'Lisbon School of Architecture, Universidade de Lisboa',
   builtWith:   'Claude Opus 5 (Anthropic)',
@@ -1469,7 +1549,9 @@ function rangeCtl(labelText, min, max, step, value, onchange, fmtFn) {
   out.style.fontFamily = MONO; out.style.fontSize = '11px'; out.style.minWidth = '38px';
   const r = el('input', { type:'range', min, max, step, value,
     oninput: e => { const v = +e.target.value; out.textContent = fmtFn ? fmtFn(v) : String(v); onchange(v); } });
-  const wrap = el('div', { class:'ctl' }, [ el('label', { text:labelText }), r, out ]);
+  /* the slider and its value travel together: in a narrow column they drop
+     under the label as one, never leaving the value alone on a line */
+  const wrap = el('div', { class:'ctl' }, [ el('label', { text:labelText }), el('span', { class:'rv' }, [r, out]) ]);
   wrap.range = r; wrap.out = out;        // so callers can reset the value programmatically
   return wrap;
 }
@@ -2656,6 +2738,32 @@ function csvSiteRows() {
 }
 /* ================================================= 3b. PAGE FURNITURE == */
 
+/* The model of a workbench stays in view while its columns scroll beside
+   it, just under the header, whenever it fits the window's height.
+   Otherwise — taller than the window, or stacked over the columns on a
+   tablet held upright or a phone — it scrolls with the page, the same on
+   every page, so no part of it is ever out of reach. */
+const STAGES = new Set();
+/** A model canvas takes its tall, phone proportions only on a phone — not
+    in the middle column of a tablet held sideways, which is as narrow but
+    has a short window to fit. */
+const phoneW = w => w < 600 && (window.innerWidth || 1000) <= 700;
+/** The window's height under the header: a model beside its columns is
+    kept within it, so it can stay in view as they scroll. */
+const roomH = () => (window.innerHeight || 900) - ((document.querySelector('header') || {}).offsetHeight || 95) - 16;
+function benchStage(stage) { STAGES.add(stage); stickStages(); return stage; }
+function stickStages() {
+  const hd = document.querySelector('header'), top = (hd ? hd.offsetHeight : 0) + 8;
+  const room = window.innerHeight - top - 8;
+  STAGES.forEach(st => {
+    if (!st.isConnected) { STAGES.delete(st); return; }
+    if (!st.offsetParent) return;   // a page not showing: judged when it shows
+    const over = st.parentElement.clientWidth - st.offsetWidth < 40;   // stacked over the columns
+    st.style.top = top + 'px';
+    st.classList.toggle('free', over || st.offsetHeight > room);
+  });
+}
+
 /** The heading every page opens with. */
 function pageHead(host, title, body) {
   host.appendChild(el('div', { class:'pagehead' }, [
@@ -2871,7 +2979,7 @@ function buildEnvironment(host) {
   const rail = bench.appendChild(el('div', { class:'rail' }));
   const stage = bench.appendChild(el('div', { class:'stage' }));
   const props = bench.appendChild(el('div', { class:'props' }));
-  const stick = () => { const hd = document.querySelector('header'); stage.style.top = ((hd ? hd.offsetHeight : 0) + 8) + 'px'; };
+  const stick = () => benchStage(stage);
 
   /* --- the climate, in short ----------------------------------------------- */
   const mainName = KOPPEN_MAIN[K.main] ? KOPPEN_MAIN[K.main].name : '';
@@ -3046,7 +3154,7 @@ function buildEnvironment(host) {
   const clim = makePanel(props, {   // on the right, over the day it moves
     title: 'The year, month by month',
     note: 'Drag across the months to move the day.',
-    heightFn: w => Math.min(w / 1.05, 250) + 20,
+    heightFn: w => Math.min(w / 1.2, 215) + 20,   // short enough that both charts and the readings sit beside the model
     render(ctx, W, H, PN) {
       const P = climRect(W, H);
       const T = plotRect(P.x, P.y, P.w, P.h, -0.5, 11.5, tLo, tHi);
@@ -3405,7 +3513,7 @@ function buildEnvironment(host) {
       sunGlyph(ctx, q[0], q[1], wx, ENV.wide ? 1.3 : 1);
     }
     /* the readout, the scale and the credits */
-    const narrow = W < 600;
+    const narrow = phoneW(W);
     const ridgeSh = sun.alt > 0.5 ? M.ridge / Math.tan(sun.alt * RAD) : null;
     const line1 = doyLabel(ENV.doy) + ' · ' + hm(ENV.h) + ' ' + t('solar time');
     const line2 = sun.alt > 0 ? t('sun') + ' ' + fmt(sun.alt, 0) + '° · ' + t('azimuth') + ' ' + fmt(sun.azi, 0) + '° · ' + t('ridge shadow') + ' ' + fmt(ridgeSh, 1) + ' m' : t('the sun is below the horizon');
@@ -3472,7 +3580,7 @@ function buildEnvironment(host) {
   envPanel = makePanel(stage, {
     title: 'The sun over the building, on its plot',
     note: 'The building from Site on its plot, under the sun paths of the solstices, the equinox and the day chosen. Drag the sun along its path for the hour, across the paths for the day; drag the ground to place the building. The sky follows the month’s normals: the warmer, the stronger the sun; the wetter, the more cloud and rain.',
-    heightFn: w => Math.round(clamp(Math.min(w * (w < 600 ? 1.05 : 0.74), (window.innerHeight || 900) - 190), 320, 900)),
+    heightFn: w => Math.round(clamp(Math.min(w * (phoneW(w) ? 1.05 : 0.74), (window.innerHeight || 900) - 190), 320, 900)),
     render: renderEnv,
     csv: () => {
       const rows = [['Parameter', 'Value']], sp = sunPos(ENV.doy, ENV.h, lat, lon, tz), pp = plotPos(), ss = sunriseSunset(ENV.doy, lat, lon, tz), M = roofModel(G, RF);
@@ -3501,7 +3609,7 @@ function buildEnvironment(host) {
   props.appendChild(el('div', { class:'gh', text:'Sun path' }));   // on the right, under the climograph
   const chart = makePanel(props, {
     title: 'Sun path over the site',
-    heightFn: w => Math.min(w / 1.25, 230),
+    heightFn: w => Math.min(w / 1.4, 200),
     render(ctx, W, H, PN) {
       const P = chartRect(W, H), wx = weatherOf(ENV.doy);
       if (wx.cloud > 0.04) { ctx.fillStyle = 'rgba(148,163,184,' + (0.16 * wx.cloud).toFixed(3) + ')'; ctx.fillRect(P.x, P.y, P.w, P.h); }
@@ -3591,6 +3699,7 @@ function buildEnvironment(host) {
   const resetBtn = el('button', { class:'btn small', text:'Back to the coordinates set up', onclick:() => resiteHome() });
   const cNb = checkCtl('Neighbouring buildings (OpenStreetMap)', ENV.nb, v => { ENV.nb = v; if (v && NB.status === 'failed') { NB.at = NB.want = null; NB.tries = 0; } refreshEnv(); });
   rail.appendChild(controls([cMap, cView, cWide, cNb]));
+  const nbFacts = rail.appendChild(el('div', { class:'facts' }));   // the neighbours, read beside their switch
   rail.appendChild(el('div', { class:'rgroup' }, [plotLine, resetBtn]));
 
   /** Keep the hour inside the day's daylight. */
@@ -3618,11 +3727,11 @@ function buildEnvironment(host) {
         + (NB.status === 'failed' ? ' — ' + t('the last read kept; the servers did not answer') + again : NB.status === 'loading' ? ' — ' + t('updating…') : '')]);
       nbRows.push([t('Sunlit walls and roof in their shade'), ns.sunUp && ns.sunlit > 0 ? fmt(100 * ns.shaded / ns.sunlit, 0) + ' %' : '–']);
     }
-    readings.innerHTML = '';
-    [[t('Sun altitude'), sp.alt > 0 ? fmt(sp.alt, 1) + '°' : t('below the horizon')], [t('Sun azimuth'), fmt(sp.azi, 0) + '° · ' + COMPASS8[Math.round(sp.azi / 45) % 8]],
+    const factRows = (box, rows) => { box.innerHTML = ''; rows.forEach(([k, v]) => box.appendChild(el('div', { class:'fact' }, [el('span', { text:k }), el('b', { text:v })]))); };
+    factRows(readings, [[t('Sun altitude'), sp.alt > 0 ? fmt(sp.alt, 1) + '°' : t('below the horizon')], [t('Sun azimuth'), fmt(sp.azi, 0) + '° · ' + COMPASS8[Math.round(sp.azi / 45) % 8]],
      [t('Sunrise – sunset'), ss ? hm(ss.rise) + ' – ' + hm(ss.set) : '–'], [t('Day length'), ss ? fmt(ss.set - ss.rise, 1) + ' h' : '–'],
-     [t('Noon altitude'), fmt(noonAlt, 1) + '°'], [t('Ridge shadow'), sp.alt > 0.5 ? fmt(M.ridge / Math.tan(sp.alt * RAD), 1) + ' m' : '–'], normalsLine(monthOf(ENV.doy))].concat(nbRows)
-      .forEach(([k, v]) => readings.appendChild(el('div', { class:'fact' }, [el('span', { text:k }), el('b', { text:v })])));
+     [t('Noon altitude'), fmt(noonAlt, 1) + '°'], [t('Ridge shadow'), sp.alt > 0.5 ? fmt(M.ridge / Math.tan(sp.alt * RAD), 1) + ' m' : '–'], normalsLine(monthOf(ENV.doy))]);
+    factRows(nbFacts, nbRows);
     const pp = plotPos(), H0s = STATE.home && STATE.home.site;
     plotLine.textContent = t('Plot') + ' ' + fmt(Math.abs(pp.lat), 5) + '° ' + (pp.lat < 0 ? 'S' : 'N') + ' · ' + fmt(Math.abs(pp.lon), 5) + '° ' + (pp.lon < 0 ? 'W' : 'E')
       + (ENV.plot ? '' : ' — ' + t(seeded ? 'the region’s reference coordinates; find the plot above, or drag the ground to move the building — the site follows it' : 'the site; drag the ground or find the plot to move it, and the site follows'));
@@ -3812,22 +3921,24 @@ function buildSite(host) {
      17° east of south for New York–New Jersey, 25° for Phoenix (1963,
      p. 58), elongations 1:1.6 and 1:1.3 adopted (p. 88). Rotation is the
      azimuth of the main (glazed) facade, clockwise from north. */
+  /* The workbench, as on every page: the plan's own decisions on the left —
+     the sizes, the break, the patio — and the sun that lights it; the model
+     in the middle, held in view; on the right what measures it and finishes
+     it — the optimum and the readings against it, the wall colour. The
+     notes follow below. */
+  const bench = host.appendChild(el('div', { class:'bench site' }));
+  const left = bench.appendChild(el('div', { class:'rail' }));
+  const stage = bench.appendChild(el('div', { class:'stage' }));
+  const right = bench.appendChild(el('div', { class:'props' }));
+  const planBox = left.appendChild(el('div', { class:'sidegrp' }));   // sizes, turn, storeys
+  const rail = left.appendChild(el('div', { class:'sidegrp' }));      // break the volume, patio
+  const sunGrp = left.appendChild(el('div', { class:'sidegrp' }));    // the sun, as on Environmental
+  const optGrp = right.appendChild(el('div', { class:'sidegrp' }));   // the optimum, over the readings against it
+  const info = right.appendChild(el('div', { class:'sidegrp' }));     // the readings
+  const props = right.appendChild(el('div', { class:'sidegrp' }));   // wall colour
+  const stick = () => benchStage(stage);
   host.appendChild(section('Plan geometry — stretch it, turn it',
     t('The solid plan is yours; the green dashed plan is the Olgyay optimum for') + ' ' + K.code));
-  /* The workbench, as on Ventilation: the plan's tools on the left, the model
-     in the middle with its readings under it, sizes, sun and colour on the
-     right — every decision taken beside the model, never scrolled away from
-     it. The notes follow below. */
-  /* Two columns: every toggle and every reading on the left, the model on
-     the right, held in view while the left column scrolls */
-  const bench = host.appendChild(el('div', { class:'bench site' }));
-  const side = bench.appendChild(el('div', { class:'props side' }));
-  const stage = bench.appendChild(el('div', { class:'stage' }));
-  const info = side.appendChild(el('div', { class:'sidegrp' }));      // the optimum and the readings
-  const planBox = side.appendChild(el('div', { class:'sidegrp' }));   // sizes, turn, storeys
-  const rail = side.appendChild(el('div', { class:'sidegrp' }));      // break the volume, patio
-  const props = side.appendChild(el('div', { class:'sidegrp' }));     // sun, wall colour
-  const stick = () => { const hd = document.querySelector('header'); stage.style.top = ((hd ? hd.offsetHeight : 0) + 8) + 'px'; };
   host.appendChild(hint('ori-lab',
     'Olgyay put the most sun on the facade in the underheated period and the least in the overheated one: New York–New Jersey came out <b>17° east of south</b>, Phoenix <b>25° east of south</b>, heat weighted four-to-one (1963, p. 58). For form, the square is never the optimum, north–south elongation is worse than the square, and the optimum always lies somewhere along east–west — 1:1.6 adopted for New York, 1:1.3 for Phoenix (p. 88), with east–west elongation “definitely desirable” in the temperate zone (p. 90). The green form interpolates those anchors for <b>%1</b>; stretch and turn yours against it.',
     [K.code]));
@@ -4038,7 +4149,7 @@ function buildSite(host) {
     const Hgt = Math.max(roofModel(G, ROOF).ridge, Hopt);    // world height to clear above the ring: the ridge of the roof set on Roof
     /* a phone-width canvas is taller, with its badges in a row across the
        top and a two-row key at the foot — the drawing sits between them */
-    const narrow = W < 600;
+    const narrow = phoneW(W);
     const top = narrow ? 166 : 14, bottom = H - (narrow ? 46 : 34);
     const availV = Math.max(40, bottom - top);
     const sByW = (W / 2 - 16) / (need * ISO_C * Math.SQRT2);
@@ -4153,8 +4264,8 @@ function buildSite(host) {
   }});
   planBox.appendChild(el('div', { class:'gh', text:'Plan' }));
   planBox.appendChild(controls([cL, cD, cR, cF, cFH]));
-  props.appendChild(el('div', { class:'gh', text:'Sun' }));
-  props.appendChild(controls([segDay, cH, playBtn]));
+  sunGrp.appendChild(el('div', { class:'gh', text:'Sun' }));
+  sunGrp.appendChild(controls([segDay, cH, playBtn]));
 
   /* --- the wall colour, read as albedo against this site's summer ----------
      Colour sets how much sun the walls absorb. It is a summer decision: the
@@ -4184,9 +4295,9 @@ function buildSite(host) {
   labPanel = makePanel(stage, {
     title: 'Your plan against the optimum',
     note: 'Isometric view, tilted from the south-west. Drag the plan to stretch it, the black knob to turn it, the black points to break it; drive the sun from the Sun controls. The windows are the ones sized on Windows & Shading, spread over every wall and every floor, and the roof is the one set on Roof.',
-    heightFn: w => w < 600 ? Math.round(w * 1.2 + 140) : Math.round(Math.min(w / 1.5, Math.max(460, (window.innerHeight || 900) - 200))),
+    heightFn: w => phoneW(w) ? Math.round(w * 1.2 + 140) : Math.round(Math.min(w / 1.5, Math.max(460, (window.innerHeight || 900) - 200))),
     render(ctx, W, H) {
-      const GREEN = '#16A34A', BLUE = '#2563EB', narrow = W < 600;
+      const GREEN = '#16A34A', BLUE = '#2563EB', narrow = phoneW(W);
       const desk = labelDesk(ctx, W, H);   // every number is placed last, clear of the lines
       const { cx, cy, s, R } = labFrame(W, H);
       const { Li, Di, H:Hopt } = optBox();
@@ -4731,8 +4842,8 @@ function buildSite(host) {
   rail.appendChild(el('div', { class:'rgroup' }, [cForm, cMode, mirrorX, mirrorY]));
   rail.appendChild(el('div', { class:'gh', text:'Patio' }));
   rail.appendChild(el('div', { class:'rgroup' }, [cPatio, patioNote]));
-  info.appendChild(el('div', { class:'gh', text:'Optimum' }));
-  info.appendChild(el('div', { class:'rgroup' }, [snap]));
+  optGrp.appendChild(el('div', { class:'gh', text:'Optimum' }));
+  optGrp.appendChild(el('div', { class:'rgroup' }, [snap]));
   rail.appendChild(el('div', { class:'keys', text:t('Drag the black points on the model: a corner stretches the bar, the break’s point sizes a wing or carves a recess, the patio’s point opens it wider or deeper.') }));
   syncFormTools();
   /* the readings, under the model: what each decision does, in words */
@@ -4963,14 +5074,15 @@ function buildRoof(host) {
     return o;
   };
 
-  /* --- the workbench: the collectors left, the model and its readings in
-     the middle, the roof's shape and colour right --------------------------- */
-  host.appendChild(section('Pitched roof — catch the low sun',
-    'South slope as a solar collector; the same geometry explains deep winter glass'));
+  /* --- the workbench: the roof's shape and its collectors left, the model
+     and its readings in the middle, the roof's colour right; the notes
+     follow under it ----------------------------------------------------------- */
   const bench = host.appendChild(el('div', { class:'bench' }));
   const rail = bench.appendChild(el('div', { class:'rail' }));
   const stage = bench.appendChild(el('div', { class:'stage' }));
   const props = bench.appendChild(el('div', { class:'props' }));
+  host.appendChild(section('Pitched roof — catch the low sun',
+    'South slope as a solar collector; the same geometry explains deep winter glass'));
   host.appendChild(hint('ori-roof',
     'A south surface collects most when the noon ray meets it near-perpendicularly: <b>winter = latitude + 15°, summer = latitude − 15°, year-round = latitude</b> (Galloway; Lechner) — here <b>%1° / %2° / %3°</b>. %4. Traditional Portuguese tile roofs sit far shallower, so collectors usually need their own frame — the tension is the lesson.',
     [fmt(idealW, 0), fmt(idealS, 0), fmt(idealB, 0), t(lean)]));
@@ -4979,8 +5091,8 @@ function buildRoof(host) {
     v => { RF.n = v; cP.range.disabled = v === 0; roofDraw(); });
   const cP = rangeCtl('Pitch', 10, 60, 1, RF.th, v => { RF.th = v; roofDraw(); }, v => fmt(v, 0) + '°');
   cP.range.disabled = RF.n === 0;
-  props.appendChild(el('div', { class:'gh', text:'Roof' }));
-  props.appendChild(controls([cN, cP]));
+  rail.appendChild(el('div', { class:'gh', text:'Roof' }));
+  rail.appendChild(controls([cN, cP]));
   props.appendChild(el('div', { class:'gh', text:'Roof colour — albedo' }));
   props.appendChild(finishPicker(() => RF.col, k => { RF.col = k; roofDraw(); })).classList.add('fpick');
 
@@ -5043,7 +5155,7 @@ function buildRoof(host) {
   /** Scale and centre so the plan, the roof and the gauge's steepest ray fit
       beside the badges. */
   const roofFrame = (W, H) => {
-    const M = roofModel(G, RF), bb = M.pl.bbox, gm = 1.2, gg = gaugeOf(M), narrow = W < 600;
+    const M = roofModel(G, RF), bb = M.pl.bbox, gm = 1.2, gg = gaugeOf(M), narrow = phoneW(W);
     const zTop = Math.max(M.ridge, gg ? M.H0 + gg.run * Math.tan(idealW * RAD) : 0);
     const top = narrow ? 142 : 44, bottom = H - 30, left = 8, right = narrow ? W - 8 : W - 100;
     let uMin = Infinity, uMax = -Infinity, vMin = Infinity, vMax = -Infinity;
@@ -5063,9 +5175,9 @@ function buildRoof(host) {
   roofPanel = makePanel(stage, {
     title: 'The roof in three dimensions',
     note: 'Isometric view of the plan from Site, the main facade toward the lower right. Drag the black point to re-pitch the roof — the green gauge draws each ideal pitch; stand the slope parallel to a ray to take it. Drag the amber point to size the collector field.',
-    heightFn: w => w < 600 ? Math.round(w * 0.95 + 150) : Math.round(w / 1.55),
+    heightFn: w => phoneW(w) ? Math.round(w * 0.95 + 150) : Math.round(Math.max(300, Math.min(w / 1.55, roomH() - 200))),
     render(ctx, W, H) {
-      const FR = roofFrame(W, H), narrow = W < 600, M = FR.M, pl = M.pl, H0 = FR.H0, bb = pl.bbox;
+      const FR = roofFrame(W, H), narrow = phoneW(W), M = FR.M, pl = M.pl, H0 = FR.H0, bb = pl.bbox;
       const desk = labelDesk(ctx, W, H);   // numbers are placed last, beside their lines
       const proj = (x, y, z) => projF(FR, x, y, z);
       const pathOf = pts3 => {
@@ -5181,10 +5293,12 @@ function buildRoof(host) {
 
       // the readout: the roof's geometry, and the field's size
       const ff = formFactor(G, RF), ca = collectArea(M);
-      const readout = 'θ ' + fmt(RF.n === 0 ? 0 : RF.th, 0) + '° · ' + t('roof') + ' ' + fmt(M.roofArea, 0) + ' m²'
-        + (ca > 0 && !narrow ? ' · ' + t('slope facing the main facade') + ' ' + fmt(ca, 0) + ' m²' : '')
-        + ' · ' + t('ridge') + ' ' + fmt(M.ridge, 1) + ' m · FF ' + fmt(ff.ff, 2) + (hitTag && !narrow ? ' · = ' + t(hitTag) + ' ideal' : '');
       const rf = FM(narrow ? 9 : 11), ry = narrow ? 112 : 12;
+      const readoutOf = full => 'θ ' + fmt(RF.n === 0 ? 0 : RF.th, 0) + '° · ' + t('roof') + ' ' + fmt(M.roofArea, 0) + ' m²'
+        + (ca > 0 && full ? ' · ' + t('slope facing the main facade') + ' ' + fmt(ca, 0) + ' m²' : '')
+        + ' · ' + t('ridge') + ' ' + fmt(M.ridge, 1) + ' m · FF ' + fmt(ff.ff, 2) + (hitTag && full ? ' · = ' + t(hitTag) + ' ideal' : '');
+      // the long form while it clears the badges on the right, the short one where the model is narrower
+      const readout = !narrow && desk.measure(readoutOf(true), rf).w <= W - 124 ? readoutOf(true) : readoutOf(false);
       label(ctx, readout, 8, ry, CH.ink2, rf, 'left', 'middle');
       desk.block(4, ry - 9, 12 + desk.measure(readout, rf).w, ry + 9);
       if (sn) {
@@ -5329,7 +5443,7 @@ function buildRoof(host) {
       ['Irradiation source', sn.measured ? 'ERA5 1991–2020 via Open-Meteo' : 'estimate: clearness index 0.55 × extraterrestrial']];
   }
   solarRedraw = () => { roofDraw(); };
-  host._refresh = () => refreshRoof();   // the plan may have changed on Site since this tab was built
+  host._refresh = () => { refreshRoof(); benchStage(stage); };   // the plan may have changed on Site since this tab was built
   host.appendChild(hint('roof-solar',
     'Choose <b>PV panels</b> or <b>thermal collectors</b> left of the model, then size the field — by its columns and rows, or by dragging the amber point at its corner across the roof. The modules lie flush on the largest roof plane facing the main facade, whatever the plan’s wings, recesses or patio do to it — rows from 0.4 m above its lowest edge, kept 0.3 m inside it, clear of ridges, hips and valleys — so they face the direction set on Site; on a flat roof they stand in racked rows at the best pitch, spaced so the 21 December noon sun clears the row in front. The sun on the collector plane is read from the site’s own horizontal irradiation — daily shortwave radiation 1991–2020 from the ERA5 reanalysis (Hersbach et al., 2020), via Open-Meteo — carried onto the tilted plane month by month with the method of Duffie &amp; Beckman: the Erbs, Klein &amp; Duffie monthly split into beam and diffuse, the beam ratio over each month’s mean day (Klein), the isotropic sky and 20 % ground reflection. The pitch’s share of the best yield is the one pitch score on the model. PV: modules of about 20 % efficiency (0.20 kWp per m²) and a performance ratio of 0.80 (IEC 61724-1) give the electricity. Thermal: a flat-plate collector read by the EN ISO 9806 efficiency curve with typical coefficients (η0 0.78, a1 3.5, a2 0.015) at a 50 °C mean fluid against each month’s air temperature gives the heat it can collect — more than a house draws in summer, so a real system’s solar fraction is lower. A real module’s or collector’s datasheet replaces these figures. Without the site’s data the numbers rest on an assumed clearness index of 0.55 and say so.'));
   refreshRoof();
@@ -5502,14 +5616,15 @@ function buildOpenings(host) {
     'Shading fit /100 by facade':Object.fromEntries(FACES.map(f => [f, shadingScore(f) === null ? null : Math.round(shadingScore(f))])),
     'Windows by facade':Object.fromEntries(FACES.map(f => [f + ' (faces ' + COMPASS8_EN[Math.round(faceAz(f) / 45) % 8] + ')', winCount(f)])) });
 
-  /* --- the workbench: the side under study, its window and its shading on
-     the left; the model and its readings in the middle; the sunspace and the
-     roof windows on the right ------------------------------------------------ */
-  host.appendChild(section('Window sizing — WWR', 'Glazing area as a fraction of each wall’s own area'));
+  /* --- the workbench: where the glass goes on the left — the side under
+     study, its window, the roof windows; the model and its readings in the
+     middle; how the sun is met at the glass on the right — the side's
+     shading devices and the sunspace. The notes follow under it. ----------- */
   const bench = host.appendChild(el('div', { class:'bench' }));
   const rail = bench.appendChild(el('div', { class:'rail' }));
   const stage = bench.appendChild(el('div', { class:'stage' }));
   const props = bench.appendChild(el('div', { class:'props' }));
+  host.appendChild(section('Window sizing — WWR', 'Glazing area as a fraction of each wall’s own area'));
   { const [wwrLo0, wwrHi0] = wwrRange(curFace);
   host.appendChild(hint('open-wwr',
     'WWR bands follow Ching &amp; Shapiro’s classification (low &lt;10%, moderate 10–20%, high 20–30%, very high &gt;30%; p.242) read against Lechner’s orientation guidance — south takes the most glass, north the least of the sunlit faces, and east/west are minimised where the climate leans hot (pp.130–132, 416). The band shown for %1 in this climate is <b>%2–%3%</b>. North is held to 5–10 % and starts at 5 %: it takes almost no winter sun and loses heat all year. That is this app’s bioclimatic choice, not a rule of the SCE — the regulation sets no maximum for north glass; it exempts north-quadrant glazing, and any space whose glazing is at most 5 % of its <i>floor</i> area, from the solar-factor requirement (Portaria n.º 138-I/2021). The RGEU sets the floor instead: every room needs openings of at least 1/10 of its floor area, 1.08 m² at the least (art. 71.º), and the reading for the north side says how many rooms its glass can serve. It is this app’s own synthesis across sources, not a single citable number — treat it as a target to aim for, not a pass/fail test. Each side is judged by the way it really faces once the plan is turned on Site, and its WWR applies to every wall of the plan on that side — a wing’s, a recess’s, a patio’s. On two or three storeys that glass is shared equally between the floors: each wall takes one window per floor, all of one width, the sill and head measured from each floor, the head stopping 0.10 m under the floor above. The WWR fit badge averages this test across the four sides.',
@@ -5537,8 +5652,8 @@ function buildOpenings(host) {
   rail.appendChild(el('div', { class:'rgroup' }, [cFace]));
   rail.appendChild(el('div', { class:'gh', text:'Window' }));
   rail.appendChild(controls([cWWR, cSill, cHead]));
-  rail.appendChild(el('div', { class:'gh', text:'Shading devices' }));
-  rail.appendChild(controls([cOvD, cOvN, cFinD, cFinN, cFinSide]));
+  props.appendChild(el('div', { class:'gh', text:'Shading devices' }));
+  props.appendChild(controls([cOvD, cOvN, cFinD, cFinN, cFinSide]));
 
   const pillWWR = el('span', { class:'pill ok' });
   const pillShade = el('span', { class:'pill ok' });
@@ -5547,7 +5662,7 @@ function buildOpenings(host) {
   host.appendChild(hint('open-shading',
     'A horizontal overhang cuts the high summer sun on equator-facing glass, using the same profile-angle geometry as the roof pitch on the previous tab (Olgyay, pp.79–80; Lechner, pp.249–253). East and west glass gets low, near-level morning and evening sun that an overhang barely touches — vertical fins address it instead: Olgyay’s own shading-coefficient table gives fixed vertical fins on east/west walls about 0.31 (i.e. cutting roughly two-thirds of the unshaded gain), against about 0.20–0.25 for a continuous south overhang and 0.10–0.15 for movable horizontal louvres (pp.70–71) — fins genuinely earn their keep on the low, oblique east and west sun, west more than east once afternoon heat is added on top. Lechner still notes horizontal devices outperform fins even there, and that fins mainly suit the equator-side of an oblique facade (pp.255–259); on a due-south wall a fin fails only at the single moment the sun sits exactly perpendicular to the glass — solar noon — and keeps cutting the oblique morning and afternoon sun the rest of the day, so its contribution there can be substantial too, just covering different hours than an overhang does. Several shallower louvres or several narrower fins cut the same angle as one deep device while blocking less of the view — an eggcrate is the two stacked together, not added twice (DeKay &amp; Brown, Strategy 91, pp.248–249). Both sit directly on the opening: a single overhang rides the head, several louvres spread down across the full glazing top to bottom, and fins run left to right across whichever width is chosen — never floating clear of the window itself. In a heating-led climate a good overhang discriminates by season — cutting the high June sun while still admitting the low December sun that offsets the heating bill — so the shading score below rewards that gap rather than sheer depth: a device deep enough to block summer and winter equally scores no better than none at all.'));
 
-  /* --- the sunspace and the roof windows, right of the model -------------- */
+  /* --- the sunspace, right of the model, under the shading --------------- */
   const cSunOn = checkCtl('Attach a sunspace', SUNSP.on, v => { SUNSP.on = v; refreshOpenings(); });
   const cSunFace = segCtl('Sunspace facade', FACES.map(f => ({ value:f, label:faceName[f] })), SUNSP.face,
     v => { SUNSP.face = v; refreshOpenings(); });
@@ -5643,14 +5758,14 @@ function buildOpenings(host) {
     return { quads, pp, qc, hp, run };
   }
   const rwArea = () => ['S', 'N', 'E', 'W', 'F'].reduce((a, sl) => { const r = roofRow(sl); return a + (r ? r.quads.length * rwSize().w * rwSize().h : 0); }, 0);
-  props.appendChild(el('div', { class:'gh', text:'Roof windows' }));
+  rail.appendChild(el('div', { class:'gh', text:'Roof windows' }));
   const cRwSize = selectCtl('Standard size', Object.keys(RW_SIZES).map(k => ({ value:k, label:RW_SIZES[k].label })), RWIN.size,
     v => { RWIN.size = v; refreshOpenings(); });
   const cRwS = rangeCtl(RF.n === 0 ? 'Skylights' : 'South slope windows', 0, 4, 1, RWIN.s, v => { RWIN.s = v; refreshOpenings(); }, v => fmt(v, 0));
   const cRwN = rangeCtl('North slope windows', 0, 4, 1, RWIN.n, v => { RWIN.n = v; refreshOpenings(); }, v => fmt(v, 0));
   const cRwE = rangeCtl('East slope windows', 0, 4, 1, RWIN.e, v => { RWIN.e = v; refreshOpenings(); }, v => fmt(v, 0));
   const cRwW = rangeCtl('West slope windows', 0, 4, 1, RWIN.w, v => { RWIN.w = v; refreshOpenings(); }, v => fmt(v, 0));
-  props.appendChild(controls([cRwSize, cRwS, cRwN, cRwE, cRwW]));
+  rail.appendChild(controls([cRwSize, cRwS, cRwN, cRwE, cRwW]));
   host.appendChild(hint('open-roofwin',
     'Daylight and winter sun from above: glass on the slope facing the main facade earns its keep where the climate leans heating and overheats where it leans cooling; glass on the opposite slope gives soft diffuse light with little gain either way. Each slope is the roof’s own largest plane facing that way — the slope facing the main facade is the one the Roof tab collects on, so each glazed square metre there is one less for collectors. A slope the roof does not have takes no windows. Rows centre on the widest run of their slope; drag a row’s dot to slide it up or down the slope, or, on a flat roof, along it. Windows on a slope turned away from the camera draw dashed at their true places.'));
 
@@ -5810,7 +5925,7 @@ function buildOpenings(host) {
       once the plan is turned on Site. */
   const compassDir = az => { const a = (G.rot - 180) * RAD, X = Math.sin(az * RAD), Y = Math.cos(az * RAD); return [X * Math.cos(a) - Y * Math.sin(a), X * Math.sin(a) + Y * Math.cos(a)]; };
   const openFrame = (W, H) => {
-    const Mm = Mod(), bb = Mm.pl.bbox, sg0 = camSign(), narrow = W < 600;
+    const Mm = Mod(), bb = Mm.pl.bbox, sg0 = camSign(), narrow = phoneW(W);
     const ext = 1.2 + Math.max(SUNSP.on ? SUNSP.depth : 0, ...FACES.map(f => Math.max(OPEN[f].ovD, OPEN[f].finD)));
     const R = Math.hypot(Math.max(-bb[0], bb[2]), Math.max(-bb[1], bb[3])) + 1.6;
     const top = narrow ? 84 : 30, bottom = H - 12, left = 8, right = narrow ? W - 8 : W - 100;
@@ -5828,9 +5943,9 @@ function buildOpenings(host) {
   openPanel = makePanel(stage, {
     title: 'The facades in three dimensions',
     note: 'Isometric view of the volume from Site under the roof from Roof; the compass marks true north. The model turns to face the side selected on the left, so its windows stay in view: on its longest wall, drag the window’s top corner to resize every window on that side, its lower corner to open them down to the floor, the sunspace’s outer glazed corner to change its width and depth, and a roof-window row’s dot to slide it along its slope.',
-    heightFn: w => w < 600 ? Math.round(w * 0.8 + 90) : Math.round(w / 1.55),
+    heightFn: w => phoneW(w) ? Math.round(w * 0.8 + 90) : Math.round(Math.max(300, Math.min(w / 1.55, roomH() - 200))),
     render(ctx, W, H) {
-      const FR = openFrame(W, H), camS = camSign(), Mm = Mod(), narrow = W < 600, bb = Mm.pl.bbox;
+      const FR = openFrame(W, H), camS = camSign(), Mm = Mod(), narrow = phoneW(W), bb = Mm.pl.bbox;
       const proj = (x, y, z) => projF(FR, camS * x, camS * y, z);
       const pathOf = pts3 => { ctx.beginPath(); pts3.forEach((q, i) => { const p = proj(q[0], q[1], q[2]); i ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1]); }); ctx.closePath(); };
       const poly = (pts3, fill, strokeColor, width, dash) => {
@@ -5977,7 +6092,7 @@ function buildOpenings(host) {
      its controls and readings catch up with the model */
   host._refresh = () => {
     cRwS.querySelector('label').textContent = t(RF.n === 0 ? 'Skylights' : 'South slope windows');
-    syncFaceCtls(); refreshOpenings();
+    syncFaceCtls(); refreshOpenings(); benchStage(stage);
   };
 
   /* --- direct manipulation: on the longest wall of the side under study,
@@ -6107,16 +6222,17 @@ function buildVentilation(host) {
   const lat = S.lat, lon = S.lon;
   pageHead(host, 'Ventilation',
     'One model from Site, Roof and Windows & Shading — volume, slopes, true openings and sunspace — with sun shadows and opposite-pair airflow. Altitude thins the air, the eave height drives the stack, terrain and exposure shape the wind.');
-  /* ---- the workbench: tools on the left, the model in the middle with
-     the view bar over it, and on the right the selection, the view, the
-     wind, the site and the local tune — every control beside the model, as
-     in a CAD program, never scrolled away from it. The explanations follow
-     below. ---- */
+  /* ---- the workbench: on the left what the student puts on the ground —
+     the tools, the planting, the walls — and the ground itself, its terrain
+     and exposure; the model in the middle with the view bar over it; on the
+     right the selection, the view, the wind and its local tune — every
+     control beside the model, as in a CAD program, the two columns of about
+     one length. The explanations follow below. ---- */
   const bench = host.appendChild(el('div', { class:'bench vent' }));
   const rail = bench.appendChild(el('div', { class:'rail' }));
   const stage = bench.appendChild(el('div', { class:'stage' }));
   const props = bench.appendChild(el('div', { class:'props' }));
-  const stickV = () => { const hd = document.querySelector('header'); stage.style.top = ((hd ? hd.offsetHeight : 0) + 8) + 'px'; };
+  const stickV = () => benchStage(stage);
   const benchNote = host.appendChild(el('p', { class:'hint' }));
   props.appendChild(el('div', { class:'gh', text:'Selection' }));
   const effLine = props.appendChild(el('div', { class:'effect' }));
@@ -6125,8 +6241,8 @@ function buildVentilation(host) {
   const viewBox = props.appendChild(el('div', { class:'controls' }));
   props.appendChild(el('div', { class:'gh', text:'Wind' }));
   const windBox = props.appendChild(el('div', { class:'controls' }));
-  props.appendChild(el('div', { class:'gh', text:'Site exposure' }));
-  const siteBox = props.appendChild(el('div', { class:'controls' }));
+  const siteHead = el('div', { class:'gh', text:'Site exposure' });   // left, under the walls
+  const siteBox = el('div', { class:'controls' });
   props.appendChild(el('div', { class:'gh', text:'Local tune' }));
   const tuneBox = props.appendChild(el('div', { class:'controls' }));
 
@@ -7314,7 +7430,7 @@ function buildVentilation(host) {
     const cs = [[-gx, -gy], [gx, -gy], [gx, gy], [-gx, gy]];
     const uMax = Math.max(...cs.map(q => Math.abs(q[0] * ax.r[0] + q[1] * ax.r[1])));
     const vs = cs.map(q => (q[0] * ax.d[0] + q[1] * ax.d[1]) * ax.se), vMin = Math.min(...vs), vMax = Math.max(...vs);
-    const top = W < 600 ? 88 : 40, bottom = H - 34;   // room for the readout (and, on a phone, the badges) above
+    const top = phoneW(W) ? 88 : 40, bottom = H - 34;   // room for the readout (and, on a phone, the badges) above
     const availV = Math.max(40, bottom - top);
     const sByW = (W / 2 - 16) / (CAM_K * uMax);
     const sByH = availV / (CAM_K * ((vMax - vMin) + maxH * ax.ce));
@@ -7685,6 +7801,7 @@ function buildVentilation(host) {
   wallPalette.appendChild(wallBtn);
   const wallClear = el('button', { class:'btn small', text:'Clear walls', onclick: () => { WALLS.length = 0; selected = null; refresh(); } });
   wallPalette.appendChild(wallClear);
+  rail.appendChild(siteHead); rail.appendChild(siteBox);
   const placeHint = el('span', { class:'hint', text:'' });
 
   /* ---- selected item: click a placed plant or wall to tune it ---- */
@@ -8494,7 +8611,7 @@ function buildVentilation(host) {
     }
 
     /* ---- score readout ---- */
-    const wwR = winterWind(), saR = summerAir(), narrowV = W < 600, ry = narrowV ? 66 : 14;
+    const wwR = winterWind(), saR = summerAir(), narrowV = phoneW(W), ry = narrowV ? 66 : 14;
     const cmp = az => COMPASS8[Math.round(az / 45) % 8];
     ctx.fillStyle = '#14171a'; ctx.font = 'bold 10px ui-monospace'; ctx.textAlign = 'left';
     ctx.fillText(t('Winter') + ' ' + (lat < 0 ? t('Jun–Aug') : t('Dec–Feb')) + ' ' + cmp(wwR.dir) + ' ' + fmt(wwR.U, 1) + ' m/s ' + t('at the eaves') + ' → '
@@ -8616,7 +8733,7 @@ function buildVentilation(host) {
   ventPanel = makePanel(stage, {
     title: 'One model \u2014 site, roof, windows, sun and air',
     note: 'Volume and eave height from Site, slopes from Roof, openings and sunspace from Windows & Shading, shadows from the same sun on the garden and the house, airflow from the opposite pairs \u2014 pick a tool on the left, click the ground to place; the selection and the view are on the right',
-    heightFn: w => w < 600 ? Math.round(w * 0.95 + 80) : Math.round(clamp(w * 0.64, 340, 660)),
+    heightFn: w => phoneW(w) ? Math.round(w * 0.95 + 80) : Math.round(clamp(Math.min(w * 0.64, roomH() - 262), 340, 660)),
     render: renderVent,
     csv: ventCSV
   });
@@ -9634,8 +9751,43 @@ function initSetup() {
     return { t:inputs.t.map(num), p:inputs.p.map(num), source:srcInp.value.trim(), mode:srcMode };
   }
 
+  /* The climograph of the boxes, drawn as they fill: the bars and the line
+     Environmental draws, so the year the normals make is seen before Köppen
+     names it. Months still empty are left out of it. */
+  const climo = $('#setupClimo');
+  climo.setAttribute('aria-label', t('Climograph of the normals'));
+  function drawClimo(c) {
+    const W = climo.clientWidth, H = climo.clientHeight;
+    if (!W || !H) return;
+    const dpr = window.devicePixelRatio || 1;
+    climo.width = Math.round(W * dpr); climo.height = Math.round(H * dpr);
+    const g = climo.getContext('2d');
+    g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, W, H);
+    const x0 = 26, x1 = W - 22, y0 = 7, y1 = H - 17, bw = (x1 - x0) / 12;
+    const ps = c.p.filter(v => v !== null && v >= 0), ts = c.t.filter(v => v !== null);
+    const pMax = Math.max(50, Math.ceil(Math.max(0, ...ps) / 50) * 50);
+    const tLo = Math.min(0, Math.floor(Math.min(0, ...ts) / 10) * 10), tHi = Math.max(30, Math.ceil(Math.max(0, ...ts) / 10) * 10);
+    const py = v => y1 - (y1 - y0) * v / pMax, ty = v => y1 - (y1 - y0) * (v - tLo) / (tHi - tLo);
+    g.font = '9px ' + MONO; g.textBaseline = 'middle'; g.lineWidth = 1; g.strokeStyle = '#eceee9';
+    [0, 0.5, 1].forEach(f => { const y = Math.round(y1 - (y1 - y0) * f) + 0.5; g.beginPath(); g.moveTo(x0, y); g.lineTo(x1, y); g.stroke(); });
+    g.fillStyle = '#7f95ad'; g.textAlign = 'right';
+    [0, pMax / 2, pMax].forEach(v => g.fillText(String(v), x0 - 4, py(v)));
+    g.fillStyle = '#b45309'; g.textAlign = 'left';
+    [tLo, (tLo + tHi) / 2, tHi].forEach(v => g.fillText(String(v), x1 + 4, ty(v)));
+    g.fillStyle = '#bcd2ea';
+    c.p.forEach((v, i) => { if (v !== null && v >= 0) g.fillRect(x0 + (i + 0.15) * bw, py(v), bw * 0.7, y1 - py(v)); });
+    g.strokeStyle = '#D97706'; g.lineWidth = 1.8; g.lineJoin = 'round'; g.beginPath();
+    let on = false;
+    c.t.forEach((v, i) => { if (v === null) { on = false; return; } const x = x0 + (i + 0.5) * bw; if (on) g.lineTo(x, ty(v)); else g.moveTo(x, ty(v)); on = true; });
+    g.stroke();
+    g.fillStyle = '#8a9095'; g.textAlign = 'center';
+    MON3.forEach((m, i) => g.fillText(m.slice(0, 1), x0 + (i + 0.5) * bw, H - 7));
+  }
+  initSetup.redraw = () => drawClimo(readNormals());   // the one resize listener below calls the latest
+
   function refresh() {
     const c = readNormals();
+    drawClimo(c);
     inputs.t.forEach((inp, i) => inp.classList.toggle('miss', c.t[i] === null));
     inputs.p.forEach((inp, i) => inp.classList.toggle('miss', c.p[i] === null || c.p[i] < 0));
     if (!climComplete(c)) {
@@ -9991,8 +10143,8 @@ function mountApp(site, clim, keepTab, keepModel, keepScroll) {
         catch (err) { console.error(err); }
       }
     });
-    requestAnimationFrame(redrawVisiblePanels);
-    setTimeout(redrawVisiblePanels, 150);
+    requestAnimationFrame(() => { redrawVisiblePanels(); stickStages(); });
+    setTimeout(() => { redrawVisiblePanels(); stickStages(); }, 150);
     window.scrollTo(0, 0);
   }
 }
@@ -10111,7 +10263,7 @@ function resiteHome() {
 
 window.addEventListener('resize', () => {
   clearTimeout(mountApp._t);
-  mountApp._t = setTimeout(redrawVisiblePanels, 180);
+  mountApp._t = setTimeout(() => { redrawVisiblePanels(); stickStages(); if (!$('#empty').hidden && initSetup.redraw) initSetup.redraw(); }, 180);
 });
 
 const subtitleFor = () => LANG === 'pt' ? 'Desenho Bioclimático' : 'Bioclimatic Design';
@@ -10123,6 +10275,7 @@ $('#btnReload').addEventListener('click', () => {
   $('#sitechip').classList.remove('on');
   document.title = APP.name + ' — ' + subtitleFor();
   window.scrollTo(0, 0);
+  if (initSetup.redraw) initSetup.redraw();   // the window may have changed while the setup was hidden
 });
 
 /* --- static markup and language -------------------------------------------- */
@@ -10192,6 +10345,12 @@ Object.assign(STATIC_PT, {
   fldOpSub: 'Um edifício novo ainda pode escolher a sua orientação e a sua forma; uma reabilitação tem de tomar ambas como as encontra.',
   normTitle: 'Normais mensais',
   normBody: 'Köppen–Geiger é calculado, não consultado, pelo que precisa das doze temperaturas médias mensais e dos doze totais mensais de precipitação. Esta aplicação não traz nenhuns: as normais são dados medidos e ela não tem autoridade para os inventar. Tome-os das <i>normais climatológicas</i> do IPMA para a estação mais próxima, de outro serviço nacional, ou de um produto em grelha como o WorldClim, e identifique a fonte para que a exportação a leve consigo. Os quadros preenchem-se sozinhos por esta ordem: a estação do IPMA incorporada a menos de 5 km das coordenadas acima; onde não houver nenhuma, uma mistura das estações mais próximas, ponderada pelo inverso da distância; e, a pedido, normais da web — reanálise para estas coordenadas exactas. Misturar próximas e Buscar na web só se abrem onde nenhuma estação fica a menos de 5 km. Mude as coordenadas e a escolha refaz-se; escreva nos quadros e eles ficam seus.',
+  ghSite: 'O local',
+  ghCoords: 'Coordenadas',
+  ghBuilding: 'O edifício',
+  ghClimate: 'O clima que fazem',
+  climoP: 'Precipitação, mm',
+  climoT: 'Temperatura média, °C',
   srcFill: 'Preencher caixas',
   srcBlend: 'Misturar próximas',
   srcWeb: 'Buscar na web',
@@ -10221,6 +10380,7 @@ Object.assign(STATIC_PT, {
 Object.assign(PT, {
   /* the setup preview */
   "Enter the normals": "Introduza as normais",
+  "Climograph of the normals": "Climograma das normais",
   "of 24 still to fill": "de 24 por preencher",
   "The twelve pairs of normals are not complete": "Os doze pares de normais não estão completos",
   "No climate has been entered": "Não foi introduzido nenhum clima",
@@ -10873,6 +11033,19 @@ Object.assign(PT, {
   "Summer": "Verão",
   "Ventilation": "Ventilação",
   "Place wall": "Colocar muro",
+  "Standard size": "Dimensão normalizada",
+  "Skylights": "Clarabóias",
+  "South slope windows": "Janelas na vertente sul",
+  "North slope windows": "Janelas na vertente norte",
+  "East slope windows": "Janelas na vertente nascente",
+  "West slope windows": "Janelas na vertente poente",
+  "Prevailing direction": "Direcção dominante",
+  "Editing": "A editar",
+  "defaults until derived or hand-set per month": "valores por omissão até serem derivados ou definidos à mão, mês a mês",
+  "Direction shift": "Desvio de direcção",
+  "Speed factor": "Factor de velocidade",
+  "relief unavailable — terrain stays manual": "relevo indisponível — o terreno fica manual",
+  "Arm the wall tool, then click open ground. Click a placed wall to tune it, drag its corner dots to resize it, drag the wall to move it, double-click to remove it. A wall near a south or north facade runs east–west; near east or west it runs north–south. Each wall shelters its nearest facade.": "Arme a ferramenta de muro e depois clique em terreno livre. Clique num muro colocado para o afinar, arraste os pontos dos cantos para o redimensionar, arraste o muro para o mover, faça duplo clique para o remover. Um muro perto de uma fachada sul ou norte corre de nascente a poente; perto de nascente ou poente, de norte a sul. Cada muro abriga a fachada mais próxima.",
   "Clear walls": "Limpar muros",
   "Plant removed": "Planta retirada",
   "Wall removed": "Muro retirado",
