@@ -746,7 +746,7 @@ details.more[open] > summary{color:var(--ink)}
 /* ------------------------------------------------------------ 0. IDENTITY -- */
 const APP = {
   name:        'Architecture Advisor',
-  version:     '1.93.0',
+  version:     '1.94.0',
   author:      'Nuno Dinis Cortiços',
   institution: 'Lisbon School of Architecture, Universidade de Lisboa',
   builtWith:   'Claude Opus 5 (Anthropic)',
@@ -2751,6 +2751,85 @@ const phoneW = w => w < 600 && (window.innerWidth || 1000) <= 700;
 /** The window's height under the header: a model beside its columns is
     kept within it, so it can stay in view as they scroll. */
 const roomH = () => (window.innerHeight || 900) - ((document.querySelector('header') || {}).offsetHeight || 95) - 16;
+
+/* ---- the orbit camera the models share — Roof, Windows & Shading and
+   Ventilation: orthographic, turning round the plan in the plan's own
+   frame. az is where the camera stands, counter-clockwise from the plan's
+   +x: 225 is the south-west corner Site and Environmental draw from. el is
+   how high it looks down: 35.26° is their isometric exactly, so the first
+   view is theirs; 0 is a true elevation, 89.5 a plan. ---- */
+const ISO_EL = Math.atan(Math.SQRT1_2) / RAD, CAM_K = Math.sqrt(1.5);
+/** Where each page's camera stands; kept through a rebuild of the pages. */
+const CAMS = { roof:{ az:225, el:ISO_EL }, open:{ az:240, el:ISO_EL } };
+/** The camera's axes: c toward the camera (plan), r screen right, d into
+    the screen (plan), and the elevation's sine, cosine and tangent. */
+function camAxes(cam, elMin) {
+  const a = cam.az * RAD, e = clamp(cam.el, elMin === undefined ? 8 : elMin, 89.5) * RAD, c = [Math.cos(a), Math.sin(a)];
+  return { c, r:[-c[1], c[0]], d:[-c[0], -c[1]], se:Math.sin(e), ce:Math.cos(e), te:Math.tan(e) };
+}
+/** A plan point on the screen before scaling: u to the right, v up. */
+const camUV = (A, x, y, z) => [CAM_K * (x * A.r[0] + y * A.r[1]), CAM_K * ((x * A.d[0] + y * A.d[1]) * A.se + (z || 0) * A.ce)];
+/** How far from the camera: larger is farther, for painting back to front. */
+const camDepth = (A, x, y, z) => (x * A.d[0] + y * A.d[1]) * A.ce - (z || 0) * A.se;
+/** Does a face with outward normal (nx, ny, nz) turn toward the camera? */
+const camSees = (A, nx, ny, nz) => (nx * A.c[0] + ny * A.c[1]) * A.ce + (nz || 0) * A.se > 1e-6;
+/** The point of the plane O + u·U + v·V under a screen point, as [u, v],
+    read through the page's own projection — null where the plane is seen
+    too nearly edge-on to follow the pointer. */
+function camPick(proj, O, U, V, px, py) {
+  const p0 = proj(O[0], O[1], O[2]), pu = proj(O[0] + U[0], O[1] + U[1], O[2] + U[2]), pv = proj(O[0] + V[0], O[1] + V[1], O[2] + V[2]);
+  const ux = pu[0] - p0[0], uy = pu[1] - p0[1], vx = pv[0] - p0[0], vy = pv[1] - p0[1], det = ux * vy - uy * vx;
+  if (Math.abs(det) < 0.08 * Math.hypot(ux, uy) * Math.hypot(vx, vy)) return null;
+  const dx = px - p0[0], dy = py - p0[1];
+  return [(dx * vy - dy * vx) / det, (ux * dy - uy * dx) / det];
+}
+/** A compass direction (clockwise from north) in the frame of a plan turned
+    by rot on Site, whose main facade faces rot along −y. */
+const planDir = (rot, az) => { const a = (rot - 180) * RAD, X = Math.sin(az * RAD), Y = Math.cos(az * RAD); return [X * Math.cos(a) - Y * Math.sin(a), X * Math.sin(a) + Y * Math.cos(a)]; };
+/** The camera azimuth that stands it on the compass side az of the plan. */
+const camAzFrom = (rot, az) => { const q = planDir(rot, az); return Math.atan2(q[1], q[0]) / RAD; };
+/** Where the camera stands, in the compass of the real site. */
+function camWhere(cam, rot) {
+  const pv = [Math.cos(cam.az * RAD), Math.sin(cam.az * RAD)];
+  let best = 0, bd = -2;
+  for (let a = 0; a < 360; a += 45) { const q = planDir(rot, a), d = q[0] * pv[0] + q[1] * pv[1]; if (d > bd) { bd = d; best = a; } }
+  return cam.el > 85 ? t('from above') : t('from the') + ' ' + COMPASS8[best / 45] + ' · ' + fmt(cam.el, 0) + '°';
+}
+/** A drag on open canvas that turns the camera: sideways to go round the
+    model, up and down to look from higher or lower. */
+function orbitDrag(cam, set) {
+  let o = null;
+  return {
+    start(ev) { o = { x0:ev.clientX, y0:ev.clientY, az:cam.az, el:cam.el, moved:false }; },
+    move(ev) {
+      if (!o) return false;
+      const dx = ev.clientX - o.x0, dy = ev.clientY - o.y0;
+      if (Math.hypot(dx, dy) > 4) o.moved = true;
+      if (o.moved) set(o.az - dx * 0.4, o.el + dy * 0.3);
+      return true;
+    },
+    end() { const m = !!(o && o.moved); o = null; return m; },
+    get on() { return !!o; }
+  };
+}
+/** The bar over a model: turn, tilt, look straight down, the page's own
+    views, and the line saying where the camera stands. */
+function camBar(stage, cam, rotFn, redraw, views, elMin) {
+  const bar = el('div', { class:'viewbar' }), line = el('span', { class:'hint' });
+  const sync = () => { line.textContent = camWhere(cam, rotFn()); };
+  const set = (az, e) => { cam.az = ((az % 360) + 360) % 360; cam.el = clamp(e, elMin, 89.5); sync(); redraw(); };
+  [['↺', 'Turn left', () => set(cam.az - 45, cam.el)], ['↻', 'Turn right', () => set(cam.az + 45, cam.el)],
+   ['▲', 'Look from higher', () => set(cam.az, cam.el + 15)], ['▼', 'Look from lower', () => set(cam.az, cam.el - 15)],
+   ['Top', 'Straight down, as a plan', () => set(cam.az, 89.5)]].concat(views(set))
+    .forEach(([txt, tip, fn]) => bar.appendChild(el('button', { class:'btn small', text:txt, title:t(tip), 'aria-label':t(tip), onclick:fn })));
+  bar.appendChild(line);
+  stage.insertBefore(bar, stage.firstChild);
+  sync();
+  return { set, sync };
+}
+/** An oblique view keeps its height; a plan or an elevation goes back to
+    the corner view's when a turn to a side is asked for. */
+const camMidEl = cam => cam.el >= 5 && cam.el <= 80 ? cam.el : ISO_EL;
 function benchStage(stage) { STAGES.add(stage); stickStages(); return stage; }
 function stickStages() {
   const hd = document.querySelector('header'), top = (hd ? hd.offsetHeight : 0) + 8;
@@ -5126,11 +5205,12 @@ function buildRoof(host) {
     pillRoof.textContent = t('Slope facing') + ' ' + facing + ', ' + fmt(RF.th, 0) + '° — ' + t('nearest the ' + ni.k + ' ideal') + ' (' + fmt(ni.a, 0) + '°) · '
       + t('best pitch here') + ' ' + pn.opt.tilt + '°' + none;
   }
-  /* The same fixed south-west isometric camera as the Site tab, in the
-     plan's own frame, so the view never orbits: the main facade (y = −D/2)
-     faces the lower right. screenX = (x−y)·cos30·s, screenY = −(x+y)·sin30·s − z·s. */
-  const ISO_C = Math.cos(30 * RAD), ISO_S = Math.sin(30 * RAD);
-  const projF = (FR, x, y, z) => [FR.cx + (x - y) * ISO_C * FR.s, FR.cy - (x + y) * ISO_S * FR.s - (z || 0) * FR.s];
+  /* The shared orbit camera (see camAxes), in the plan's own frame: it
+     opens on the south-west corner Site draws from, the main facade
+     (y = −D/2) toward the lower right, and turns as the student drags open
+     ground or presses the bar over the model. */
+  const RCAM = CAMS.roof;
+  const projF = (FR, x, y, z) => { const q = camUV(FR.A, x, y, z); return [FR.cx + q[0] * FR.s, FR.cy - q[1] * FR.s]; };
   /** The pitch point and its gauge: the highest corner of the collecting
       plane (or, without one, of the largest pitched plane) — the west end of
       a level ridge — and the eave point straight down its fall. */
@@ -5152,21 +5232,22 @@ function buildRoof(host) {
     }));
     return { x:top.x, y:top.y, run:top.d, ex:top.x - f.a * top.d, ey:top.y - f.b * top.d };
   };
+  /** Is the collector field in view? A slope's field faces the main facade
+      with the roof's pitch; racked rows on a flat roof are seen from above. */
+  const fieldSeen = (A, fl) => fl.flat ? A.se > 0.05 : camSees(A, 0, -Math.sin(fl.th), Math.cos(fl.th));
   /** Scale and centre so the plan, the roof and the gauge's steepest ray fit
-      beside the badges. */
+      beside the badges, whichever way the camera turns. */
   const roofFrame = (W, H) => {
-    const M = roofModel(G, RF), bb = M.pl.bbox, gm = 1.2, gg = gaugeOf(M), narrow = phoneW(W);
+    const M = roofModel(G, RF), bb = M.pl.bbox, gm = 1.2, gg = gaugeOf(M), narrow = phoneW(W), A = camAxes(RCAM, 0);
     const zTop = Math.max(M.ridge, gg ? M.H0 + gg.run * Math.tan(idealW * RAD) : 0);
     const top = narrow ? 142 : 44, bottom = H - 30, left = 8, right = narrow ? W - 8 : W - 100;
-    let uMin = Infinity, uMax = -Infinity, vMin = Infinity, vMax = -Infinity;
-    [[bb[0] - gm, bb[1] - gm], [bb[2] + gm, bb[1] - gm], [bb[2] + gm, bb[3] + gm], [bb[0] - gm, bb[3] + gm]].forEach(([x, y]) => [0, zTop].forEach(z => {
-      const u = (x - y) * ISO_C, v = (x + y) * ISO_S + z;
-      uMin = Math.min(uMin, u); uMax = Math.max(uMax, u); vMin = Math.min(vMin, v); vMax = Math.max(vMax, v);
-    }));
+    /* the ground's circle, not its corners, so the model keeps its size as it turns */
+    const R = Math.max(...[[bb[0] - gm, bb[1] - gm], [bb[2] + gm, bb[1] - gm], [bb[2] + gm, bb[3] + gm], [bb[0] - gm, bb[3] + gm]].map(q => Math.hypot(q[0], q[1])));
+    const uMin = -CAM_K * R, uMax = CAM_K * R, vMin = -CAM_K * R * A.se, vMax = CAM_K * (R * A.se + zTop * A.ce);
     const availW = right - left, availV = Math.max(40, bottom - top);
-    const s = Math.max(3, Math.min(availW / (uMax - uMin), availV / (vMax - vMin)));
+    const s = Math.max(3, Math.min(availW / (uMax - uMin), availV / Math.max(1e-6, vMax - vMin)));
     return { cx:left + (availW - (uMax - uMin) * s) / 2 - uMin * s, cy:bottom - (availV - (vMax - vMin) * s) / 2 + vMin * s,
-      s, H0:M.H0, M, gg };
+      s, H0:M.H0, M, gg, A };
   };
 
   let roofPanel = null;
@@ -5174,8 +5255,8 @@ function buildRoof(host) {
 
   roofPanel = makePanel(stage, {
     title: 'The roof in three dimensions',
-    note: 'Isometric view of the plan from Site, the main facade toward the lower right. Drag the black point to re-pitch the roof — the green gauge draws each ideal pitch; stand the slope parallel to a ray to take it. Drag the amber point to size the collector field.',
-    heightFn: w => phoneW(w) ? Math.round(w * 0.95 + 150) : Math.round(Math.max(300, Math.min(w / 1.55, roomH() - 200))),
+    note: 'The plan from Site under its roof, from the south-west corner until you turn it: drag open ground to go round it or to look from higher or lower, or use the bar over it. Drag the black point to re-pitch the roof — the green gauge draws each ideal pitch; stand the slope parallel to a ray to take it. Drag the amber point to size the collector field.',
+    heightFn: w => phoneW(w) ? Math.round(w * 0.95 + 150) : Math.round(Math.max(300, Math.min(w / 1.55, roomH() - 252))),
     render(ctx, W, H) {
       const FR = roofFrame(W, H), narrow = phoneW(W), M = FR.M, pl = M.pl, H0 = FR.H0, bb = pl.bbox;
       const desk = labelDesk(ctx, W, H);   // numbers are placed last, beside their lines
@@ -5197,7 +5278,7 @@ function buildRoof(host) {
          the step walls where one roof stands over another, every roof plane
          in the roof's colour, shaded by the way it faces — painted back to
          front. */
-      const faces = [], seen = (nx, ny) => -nx - ny > 1e-6;
+      const A = FR.A, faces = [], seen = (nx, ny) => camSees(A, nx, ny, 0);
       const wallCol = ns => opaque(wallFill(ns ? 0.14 : 0.08, ns ? 0.85 : 1));
       M.walls.forEach(wl => {
         const sg = wl.sg;
@@ -5212,11 +5293,11 @@ function buildRoof(host) {
       });
       M.pieces.forEach(pc => {
         const f = pc.f;
-        if (M.t * (f.a + f.b) + 1 <= 1e-6) return;   // a steep back slope, turned away
+        if (!camSees(A, -M.t * f.a, -M.t * f.b, 1)) return;   // a slope turned away from the camera
         const k = RF.n === 0 ? 1 : 0.87 + 0.11 * f.b + 0.05 * f.a;
         faces.push({ pts:pc.poly.map(q => [q[0], q[1], M.zOf(f, q[0], q[1])]), fill:opaque(roofFill(0.2 + 0.3 * (1 - k), k)), pc });
       });
-      const depth = F => F.pts.reduce((a, q) => a + q[0] + q[1] - q[2], 0) / F.pts.length;
+      const depth = F => F.pts.reduce((a, q) => a + camDepth(A, q[0], q[1], q[2]), 0) / F.pts.length;
       faces.sort((p, q) => depth(q) - depth(p)).forEach(F => {
         const p = pathOf(F.pts);
         ctx.fillStyle = F.fill; ctx.fill();
@@ -5236,7 +5317,9 @@ function buildRoof(host) {
          flat-plate collectors with an aluminium frame and their risers;
          racked rows on a flat roof go down back to front, each on its legs */
       const sn = solarNow();
-      if (sn && sn.fld && sn.fld.fits) {
+      if (sn && sn.fld && sn.fld.fits && !fieldSeen(A, sn.fld)) {   // the slope turned away: the field dashed at its place
+        sn.fld.mods.forEach(mo => { pathOf(mo.q); stroke(ctx, 'rgba(30,58,138,.55)', 1, [5, 4]); ctx.stroke(); });
+      } else if (sn && sn.fld && sn.fld.fits) {
         const pv = sn.sol.tech === 'pv', fl = sn.fld;
         const mods = fl.flat ? fl.mods.slice().sort((a, b) => b.j - a.j || a.i - b.i) : fl.mods;
         const lerp = (a, b, t0) => [a[0] + (b[0] - a[0]) * t0, a[1] + (b[1] - a[1]) * t0, a[2] + (b[2] - a[2]) * t0];
@@ -5392,6 +5475,15 @@ function buildRoof(host) {
     }
   });
   stage.appendChild(el('div', { class:'limitrow readings' }, [pillRoof, pillRoofCol, pillSolar]));
+  /* --- the bar over the model: turn, tilt, the plan, the main facade's
+     elevation, the end elevation (the roof's true pitch), and the building
+     seen from true south or north ------------------------------------------- */
+  const roofCam = camBar(stage, RCAM, () => G.rot, () => { if (roofPanel) roofPanel.draw(); }, set => [
+    ['Front', 'Square to the main facade, level: its elevation', () => set(270, 0)],
+    ['Side', 'Square to the end wall, level: the roof’s true pitch', () => set(Math.cos(RCAM.az * RAD) >= 0 ? 0 : 180, 0)],
+    ['From S', 'Stand to the true south of the building', () => set(camAzFrom(G.rot, 180), camMidEl(RCAM))],
+    ['From N', 'Stand to the true north of the building', () => set(camAzFrom(G.rot, 0), camMidEl(RCAM))],
+    ['Reset', 'Back to the south-west corner', () => set(225, ISO_EL)]], 0);
 
   /* --- the rail: the technology, and the field in columns and rows (or its
      corner point on the model) --------------------------------------------- */
@@ -5443,7 +5535,7 @@ function buildRoof(host) {
       ['Irradiation source', sn.measured ? 'ERA5 1991–2020 via Open-Meteo' : 'estimate: clearness index 0.55 × extraterrestrial']];
   }
   solarRedraw = () => { roofDraw(); };
-  host._refresh = () => { refreshRoof(); benchStage(stage); };   // the plan may have changed on Site since this tab was built
+  host._refresh = () => { roofCam.sync(); refreshRoof(); benchStage(stage); };   // the plan may have changed on Site since this tab was built
   host.appendChild(hint('roof-solar',
     'Choose <b>PV panels</b> or <b>thermal collectors</b> left of the model, then size the field — by its columns and rows, or by dragging the amber point at its corner across the roof. The modules lie flush on the largest roof plane facing the main facade, whatever the plan’s wings, recesses or patio do to it — rows from 0.4 m above its lowest edge, kept 0.3 m inside it, clear of ridges, hips and valleys — so they face the direction set on Site; on a flat roof they stand in racked rows at the best pitch, spaced so the 21 December noon sun clears the row in front. The sun on the collector plane is read from the site’s own horizontal irradiation — daily shortwave radiation 1991–2020 from the ERA5 reanalysis (Hersbach et al., 2020), via Open-Meteo — carried onto the tilted plane month by month with the method of Duffie &amp; Beckman: the Erbs, Klein &amp; Duffie monthly split into beam and diffuse, the beam ratio over each month’s mean day (Klein), the isotropic sky and 20 % ground reflection. The pitch’s share of the best yield is the one pitch score on the model. PV: modules of about 20 % efficiency (0.20 kWp per m²) and a performance ratio of 0.80 (IEC 61724-1) give the electricity. Thermal: a flat-plate collector read by the EN ISO 9806 efficiency curve with typical coefficients (η0 0.78, a1 3.5, a2 0.015) at a 50 °C mean fluid against each month’s air temperature gives the heat it can collect — more than a house draws in summer, so a real system’s solar fraction is lower. A real module’s or collector’s datasheet replaces these figures. Without the site’s data the numbers rest on an assumed clearness index of 0.55 and say so.'));
   refreshRoof();
@@ -5461,7 +5553,7 @@ function buildRoof(host) {
   const nearSlope = (clientX, clientY) => {
     if (RF.n === 0 || !roofPanel.W || !roofPanel.H) return false;
     const FR = roofFrame(roofPanel.W, roofPanel.H), gg = FR.gg;
-    if (!gg) return false;
+    if (!gg || FR.A.ce < 0.2) return false;   // looking nearly straight down, the point cannot be raised
     const r = rcv.getBoundingClientRect(), mx = clientX - r.left, my = clientY - r.top;
     const p1 = projF(FR, gg.ex, gg.ey, FR.H0), p2 = projF(FR, gg.x, gg.y, FR.H0 + FR.M.t * gg.run);
     if (Math.hypot(mx - p2[0], my - p2[1]) <= 24) return true;
@@ -5474,8 +5566,10 @@ function buildRoof(host) {
   const doDrag = (clientX, clientY) => {
     const FR = roofFrame(roofPanel.W, roofPanel.H), gg = FR.gg;
     if (!gg) return;
-    const r = rcv.getBoundingClientRect();
-    const z = (FR.cy - (clientY - r.top)) / FR.s - (gg.x + gg.y) * ISO_S;
+    const r = rcv.getBoundingClientRect(), A = FR.A;
+    if (A.ce < 0.2) return;
+    // the pointer's height over the point's own spot on the plan, whichever way the camera looks
+    const z = ((FR.cy - (clientY - r.top)) / (FR.s * CAM_K) - (gg.x * A.d[0] + gg.y * A.d[1]) * A.se) / A.ce;
     RF.th = Math.round(clamp(Math.atan2(z - FR.H0, Math.max(0.5, gg.run)) / RAD, 10, 60));
     syncCtl(cP, RF.th, v => fmt(v, 0) + '°');
     roofDraw();
@@ -5486,6 +5580,7 @@ function buildRoof(host) {
     const sn = solarNow();
     if (!sn || !sn.fld || !sn.fld.fits || !roofPanel.W) return false;
     const r = rcv.getBoundingClientRect(), FR = roofFrame(roofPanel.W, roofPanel.H);
+    if (!fieldSeen(FR.A, sn.fld)) return false;
     const q = projF(FR, sn.fld.handle[0], sn.fld.handle[1], sn.fld.handle[2]);
     return Math.hypot(clientX - r.left - q[0], clientY - r.top - q[1]) <= 12;
   };
@@ -5496,23 +5591,27 @@ function buildRoof(host) {
     const sn = solarNow();
     if (!sn || !sn.fld || !sn.fld.fits) return;
     const r = rcv.getBoundingClientRect(), FR = roofFrame(roofPanel.W, roofPanel.H), fl = sn.fld, md = fl.md;
-    const a = (clientX - r.left - FR.cx) / (ISO_C * FR.s), bv = (FR.cy - (clientY - r.top)) / FR.s;   // x − y = a, (x + y)·sin30 + z = bv
+    const px = clientX - r.left, py = clientY - r.top, proj = (x0, y0, z0) => projF(FR, x0, y0, z0);
     let x, rows;
-    if (fl.flat) {
-      const sum = (bv - fl.handle[2]) / ISO_S, y = (sum - a) / 2;
-      x = (a + sum) / 2;
-      rows = 1 + Math.round((y - fl.y0 - md.h * Math.cos(fl.beta)) / fl.row);
-    } else {
-      const sl = (bv - a * ISO_S - 2 * fl.ey0 * ISO_S - FR.H0 - 0.03) / (2 * ISO_S * Math.cos(fl.th) + Math.sin(fl.th));
-      x = a + fl.ey0 + sl * Math.cos(fl.th);
-      rows = Math.round((sl - fl.s0 + md.gap) / (md.h + md.gap));
+    if (fl.flat) {   // the racks' top edge: a level plane
+      const q = camPick(proj, [0, 0, fl.handle[2]], [1, 0, 0], [0, 1, 0], px, py);
+      if (!q) return;
+      x = q[0];
+      rows = 1 + Math.round((q[1] - fl.y0 - md.h * Math.cos(fl.beta)) / fl.row);
+    } else {         // the slope: along the eave (x) and up its fall (sl)
+      const q = camPick(proj, [0, fl.ey0, FR.H0 + 0.03], [1, 0, 0], [0, Math.cos(fl.th), Math.sin(fl.th)], px, py);
+      if (!q) return;
+      x = q[0];
+      rows = Math.round((q[1] - fl.s0 + md.gap) / (md.h + md.gap));
     }
     RF.sol.cols = clamp(Math.round((2 * Math.abs(x - fl.xc) + md.gap) / (md.w + md.gap)), 1, Math.max(1, fl.maxC));
     RF.sol.rows = clamp(rows, 1, Math.max(1, fl.maxR));
     roofDraw();
   };
 
-  /* --- pointer events (pen / touch / mouse) --- */
+  /* --- pointer events (pen / touch / mouse): the two points drag; open
+     canvas turns the camera --- */
+  const orbit = orbitDrag(RCAM, (az, e) => roofCam.set(az, e));
   rcv.addEventListener('pointerdown', ev => {
     if (fieldHandleAt(ev.clientX, ev.clientY)) {
       ev.preventDefault();
@@ -5521,22 +5620,23 @@ function buildRoof(host) {
       rcv.style.cursor = 'grabbing';
       return;
     }
-    if (!nearSlope(ev.clientX, ev.clientY)) return;
     ev.preventDefault();
-    rdrag = true;
+    if (nearSlope(ev.clientX, ev.clientY)) rdrag = true;
+    else orbit.start(ev);
     try { rcv.setPointerCapture(ev.pointerId); } catch (err) {}
     rcv.style.cursor = 'grabbing';
   });
   rcv.addEventListener('pointermove', ev => {
+    if (orbit.move(ev)) { ev.preventDefault(); return; }
     if (fdrag) { ev.preventDefault(); doFieldDrag(ev.clientX, ev.clientY); return; }
     if (!rdrag) {
-      rcv.style.cursor = fieldHandleAt(ev.clientX, ev.clientY) ? 'move' : nearSlope(ev.clientX, ev.clientY) ? 'ns-resize' : 'default';
+      rcv.style.cursor = fieldHandleAt(ev.clientX, ev.clientY) ? 'move' : nearSlope(ev.clientX, ev.clientY) ? 'ns-resize' : 'grab';
       return;
     }
     ev.preventDefault();
     doDrag(ev.clientX, ev.clientY);
   });
-  const endDrag = () => { rdrag = fdrag = false; rcv.style.cursor = 'default'; };
+  const endDrag = () => { orbit.end(); rdrag = fdrag = false; rcv.style.cursor = 'default'; };
   rcv.addEventListener('pointerup', endDrag);
   rcv.addEventListener('pointercancel', endDrag);
 }
@@ -5553,14 +5653,17 @@ function buildOpenings(host) {
   const FACES = ['S', 'N', 'E', 'W'];
   const faceName = { S:'South', N:'North', E:'East', W:'West' };
   let curFace = 'S';
-  /** The camera always shows the sides facing two adjacent directions, from
-      whichever corner puts the facade under study in view — south-west for
-      South or West, north-east for North or East — so its windows are
-      visible and draggable while they are being edited. */
-  const camSign = () => (curFace === 'S' || curFace === 'W') ? 1 : -1;
-  const faceVisible = () => camSign() === 1 ? { S:true, W:true, N:false, E:false } : { N:true, E:true, S:false, W:false };
+  /* The shared orbit camera (see camAxes). Choosing a side turns it to a
+     corner view that puts that side in front — its windows visible and
+     draggable while they are edited — and the student can turn it on from
+     there: drag open ground, or press the bar over the model. SQ stands the
+     camera square to each side of the plan, CORNER a little off it. */
+  const OCAM = CAMS.open;
+  const SQ = { S:270, W:180, N:90, E:0 }, CORNER = { S:240, W:210, N:60, E:30 };
+  const oAx = () => camAxes(OCAM, 0);
+  let openCam = null;   // the bar over the model, made with it below
   /** A wall is seen when its outward normal turns toward the camera. */
-  const segSeen = sg => camSign() * (-sg.n[0] - sg.n[1]) > 1e-6;
+  const segSeen = sg => camSees(oAx(), sg.n[0], sg.n[1], 0);
   /** The way a facade side really faces once the plan is turned on Site,
       clockwise from north; its compass name; and the key its glazing is
       judged by — the nearest cardinal, north and south swapped below the
@@ -5631,7 +5734,10 @@ function buildOpenings(host) {
     [t(faceName[curFace]), fmt(wwrLo0 * 100, 0), fmt(wwrHi0 * 100, 0)])); }
 
   const cFace = segCtl(null, FACES.map(f => ({ value:f, label:faceName[f] })), curFace,
-    v => { curFace = v; syncFaceCtls(); refreshOpenings(); });
+    v => { curFace = v; turnTo(v); syncFaceCtls(); refreshOpenings(); });
+  /** Turn the camera to the side under study: square to it in an
+      elevation, over it in a plan, else to its corner view. */
+  const turnTo = f => { OCAM.az = OCAM.el < 5 ? SQ[f] : CORNER[f]; if (openCam) openCam.sync(); };
   const cWWR = rangeCtl('Window-to-wall ratio', 0, 80, 1, Math.round(OPEN[curFace].wwr * 100),
     v => { OPEN[curFace].wwr = v / 100; refreshOpenings(); }, v => fmt(v, 0) + '%');
   const cSill = rangeCtl('Sill height', 0, 1.8, 0.05, OPEN[curFace].sillZ,
@@ -5916,37 +6022,33 @@ function buildOpenings(host) {
     if (openPanel) openPanel.draw();
   }
 
-  /* --- the model: the same isometric camera as Site and Roof, mirrored to a
-     north-east view when the side under study needs it (see camSign) ------ */
-  const ISO_C = Math.cos(30 * RAD), ISO_S = Math.sin(30 * RAD);
-  const projF = (FR, x, y, z) => [FR.cx + (x - y) * ISO_C * FR.s, FR.cy - (x + y) * ISO_S * FR.s - (z || 0) * FR.s];
-  const projCam = (FR, x, y, z) => { const s = camSign(); return projF(FR, s * x, s * y, z); };
+  /* --- the model, through the shared orbit camera ------------------------- */
+  const projCam = (FR, x, y, z) => { const q = camUV(FR.A, x, y, z); return [FR.cx + q[0] * FR.s, FR.cy - q[1] * FR.s]; };
   /** Where true north, east, south and west lie in the plan's own frame,
       once the plan is turned on Site. */
   const compassDir = az => { const a = (G.rot - 180) * RAD, X = Math.sin(az * RAD), Y = Math.cos(az * RAD); return [X * Math.cos(a) - Y * Math.sin(a), X * Math.sin(a) + Y * Math.cos(a)]; };
   const openFrame = (W, H) => {
-    const Mm = Mod(), bb = Mm.pl.bbox, sg0 = camSign(), narrow = phoneW(W);
+    const Mm = Mod(), bb = Mm.pl.bbox, narrow = phoneW(W), A = oAx();
     const ext = 1.2 + Math.max(SUNSP.on ? SUNSP.depth : 0, ...FACES.map(f => Math.max(OPEN[f].ovD, OPEN[f].finD)));
     const R = Math.hypot(Math.max(-bb[0], bb[2]), Math.max(-bb[1], bb[3])) + 1.6;
     const top = narrow ? 84 : 30, bottom = H - 12, left = 8, right = narrow ? W - 8 : W - 100;
-    let uMin = Infinity, uMax = -Infinity, vMin = Infinity, vMax = -Infinity;
-    const add = (x, y, z) => { const u = sg0 * (x - y) * ISO_C, v = sg0 * (x + y) * ISO_S + z;
-      uMin = Math.min(uMin, u); uMax = Math.max(uMax, u); vMin = Math.min(vMin, v); vMax = Math.max(vMax, v); };
-    [[bb[0] - ext, bb[1] - ext], [bb[2] + ext, bb[1] - ext], [bb[2] + ext, bb[3] + ext], [bb[0] - ext, bb[3] + ext]].forEach(([x, y]) => { add(x, y, 0); add(x, y, Mm.ridge); });
-    [0, 90, 180, 270].forEach(az => { const d = compassDir(az); add(d[0] * R, d[1] * R, 0); });
+    /* the circle round the ground, the devices and the compass, so the model
+       keeps its size as it turns */
+    const Rf = Math.max(R + 0.6, ...[[bb[0] - ext, bb[1] - ext], [bb[2] + ext, bb[1] - ext], [bb[2] + ext, bb[3] + ext], [bb[0] - ext, bb[3] + ext]].map(q => Math.hypot(q[0], q[1])));
+    const uMin = -CAM_K * Rf, uMax = CAM_K * Rf, vMin = -CAM_K * Rf * A.se, vMax = CAM_K * (Rf * A.se + Mm.ridge * A.ce);
     const availW = right - left, availV = Math.max(40, bottom - top);
-    const s = Math.max(3, Math.min(availW / (uMax - uMin), availV / (vMax - vMin)));
-    return { cx:left + (availW - (uMax - uMin) * s) / 2 - uMin * s, cy:bottom - (availV - (vMax - vMin) * s) / 2 + vMin * s, s, R };
+    const s = Math.max(3, Math.min(availW / (uMax - uMin), availV / Math.max(1e-6, vMax - vMin)));
+    return { cx:left + (availW - (uMax - uMin) * s) / 2 - uMin * s, cy:bottom - (availV - (vMax - vMin) * s) / 2 + vMin * s, s, R, A };
   };
 
   let openPanel = null;
   openPanel = makePanel(stage, {
     title: 'The facades in three dimensions',
-    note: 'Isometric view of the volume from Site under the roof from Roof; the compass marks true north. The model turns to face the side selected on the left, so its windows stay in view: on its longest wall, drag the window’s top corner to resize every window on that side, its lower corner to open them down to the floor, the sunspace’s outer glazed corner to change its width and depth, and a roof-window row’s dot to slide it along its slope.',
-    heightFn: w => phoneW(w) ? Math.round(w * 0.8 + 90) : Math.round(Math.max(300, Math.min(w / 1.55, roomH() - 200))),
+    note: 'The volume from Site under the roof from Roof; the compass marks true north. The model turns to the side selected on the left, so its windows stay in view, and turns on as you drag open ground or use the bar over it — Elevation stands square to that side. On its longest wall, drag the window’s top corner to resize every window on that side, its lower corner to open them down to the floor, the sunspace’s outer glazed corner to change its width and depth, and a roof-window row’s dot to slide it along its slope.',
+    heightFn: w => phoneW(w) ? Math.round(w * 0.8 + 90) : Math.round(Math.max(300, Math.min(w / 1.55, roomH() - 240))),
     render(ctx, W, H) {
-      const FR = openFrame(W, H), camS = camSign(), Mm = Mod(), narrow = phoneW(W), bb = Mm.pl.bbox;
-      const proj = (x, y, z) => projF(FR, camS * x, camS * y, z);
+      const FR = openFrame(W, H), A = FR.A, Mm = Mod(), narrow = phoneW(W), bb = Mm.pl.bbox;
+      const proj = (x, y, z) => projCam(FR, x, y, z);
       const pathOf = pts3 => { ctx.beginPath(); pts3.forEach((q, i) => { const p = proj(q[0], q[1], q[2]); i ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1]); }); ctx.closePath(); };
       const poly = (pts3, fill, strokeColor, width, dash) => {
         pathOf(pts3);
@@ -5974,17 +6076,17 @@ function buildOpenings(host) {
         if (wn) winGeo(sg, wn.w).devs.forEach(dv => items.push({ pts:dv.pts, dev:dv }));
       });
       Mm.steps.forEach(st => {
-        if (camS * (-st.n[0] - st.n[1]) <= 1e-6) return;
+        if (!camSees(A, st.n[0], st.n[1], 0)) return;
         const P = (u, z) => st.ax === 'x' ? [st.a[0], st.a[1] + u, z] : [st.a[0] + u, st.a[1], z];
         items.push({ pts:st.prof.map(q => P(q[0], q[1])).concat(st.prof.slice().reverse().map(q => P(q[0], q[2]))), fill:wallCol(st.n[1] !== 0) });
       });
       Mm.pieces.forEach(pc => {
         const f = pc.f;
-        if (camS * Mm.t * (f.a + f.b) + 1 <= 1e-6) return;
-        const k = RF.n === 0 ? 1 : 0.87 + 0.11 * camS * f.b + 0.05 * camS * f.a;
+        if (!camSees(A, -Mm.t * f.a, -Mm.t * f.b, 1)) return;
+        const k = RF.n === 0 ? 1 : 0.87 + 0.11 * f.b + 0.05 * f.a;
         items.push({ pts:pc.poly.map(q => [q[0], q[1], Mm.zOf(f, q[0], q[1])]), fill:opaque(roofFill(0.2 + 0.3 * (1 - k), k)), pc });
       });
-      const depth = it => it.pts.reduce((a, q) => a + camS * (q[0] + q[1]) - q[2], 0) / it.pts.length - (it.dev ? 0.01 : 0);
+      const depth = it => it.pts.reduce((a, q) => a + camDepth(A, q[0], q[1], q[2]), 0) / it.pts.length - (it.dev ? 0.01 : 0);
       items.sort((p, q) => depth(q) - depth(p)).forEach(it => {
         if (it.dev) {
           const act = it.dev.f === curFace, ov = it.dev.kind === 'ov';
@@ -6012,8 +6114,9 @@ function buildOpenings(host) {
         }
       });
       /* windows and devices on the walls turned away draw dashed at their
-         true places, so no placed glass vanishes behind the volume */
-      wins.forEach(o => {
+         true places, so no placed glass vanishes behind the volume — except
+         in a level elevation, where they would fall on the facade in front */
+      if (A.se > 0.09) wins.forEach(o => {
         if (segSeen(o.sg)) return;
         const g = winGeo(o.sg, o.w);
         g.glass.forEach(gl => poly(gl, 'rgba(37,99,235,.04)', 'rgba(37,99,235,.55)', 1.1, [5, 4]));
@@ -6026,7 +6129,7 @@ function buildOpenings(host) {
       ['S', 'N', 'E', 'W', 'F'].forEach(sl => {
         const r = roofRow(sl);
         if (!r) return;
-        const seenP = sl === 'F' || camS * Mm.t * (r.pp.f.a + r.pp.f.b) + 1 > 1e-6;
+        const seenP = sl === 'F' ? A.se > 0.05 : camSees(A, -Mm.t * r.pp.f.a, -Mm.t * r.pp.f.b, 1);
         r.quads.forEach(q => seenP ? poly(q, 'rgba(219,234,254,.9)', '#2563EB', 1.4) : poly(q, 'rgba(37,99,235,.05)', 'rgba(37,99,235,.65)', 1.2, [5, 4]));
         if (seenP) rowHandles.push(r.quads[r.quads.length - 1][2]);
       });
@@ -6087,12 +6190,19 @@ function buildOpenings(host) {
     }
   });
   stage.appendChild(el('div', { class:'limitrow readings' }, [pillWWR, pillShade, rwLine]));
+  /* the bar over the model: turn, tilt, the plan, the elevation of the side
+     under study, the building from true south or north, back to its corner */
+  openCam = camBar(stage, OCAM, () => G.rot, () => { if (openPanel) openPanel.draw(); }, set => [
+    ['Elevation', 'Square to the side under study, level: its elevation', () => set(SQ[curFace], 0)],
+    ['From S', 'Stand to the true south of the building', () => set(camAzFrom(G.rot, 180), camMidEl(OCAM))],
+    ['From N', 'Stand to the true north of the building', () => set(camAzFrom(G.rot, 0), camMidEl(OCAM))],
+    ['Reset', 'Back to the corner view of the side under study', () => set(CORNER[curFace], ISO_EL)]], 0);
   refreshOpenings();
   /* the tab is built once; coming back to it after Site or Roof changed,
      its controls and readings catch up with the model */
   host._refresh = () => {
     cRwS.querySelector('label').textContent = t(RF.n === 0 ? 'Skylights' : 'South slope windows');
-    syncFaceCtls(); refreshOpenings(); benchStage(stage);
+    openCam.sync(); syncFaceCtls(); refreshOpenings(); benchStage(stage);
   };
 
   /* --- direct manipulation: on the longest wall of the side under study,
@@ -6112,20 +6222,21 @@ function buildOpenings(host) {
     if (!w) return null;
     return { sg, w, top:onWall(sg, w.uc + w.w / 2, Math.min(w.head, h0())), sill:onWall(sg, w.uc + w.w / 2, w.sill) };
   }
-  /** The screen point back to the wall's own plane: along it (u) and up (z). */
+  /** The screen point back to the wall's own plane: along it (u) and up (z);
+      null where the wall is seen edge-on. */
   const invOnWall = (FR, px, py, sg) => {
-    const s = camSign(), A = s * (px - FR.cx) / (ISO_C * FR.s), Cc = (FR.cy - py) / FR.s;
-    if (sg.n[1] !== 0) { const y = sg.a[1], x = A + y; return { u:x - sg.a[0], z:Cc - s * (x + y) * ISO_S }; }
-    const x = sg.a[0], y = x - A; return { u:y - sg.a[1], z:Cc - s * (x + y) * ISO_S };
+    const q = camPick((x, y, z) => projCam(FR, x, y, z), onWall(sg, 0, 0), [(sg.b[0] - sg.a[0]) / sg.len, (sg.b[1] - sg.a[1]) / sg.len, 0], [0, 0, 1], px, py);
+    return q ? { u:q[0], z:q[1] } : null;
   };
+  /** The screen point back to a level plane at height z0; null seen edge-on. */
   const invAtZ = (FR, px, py, z0) => {
-    const s = camSign(), A = s * (px - FR.cx) / (ISO_C * FR.s), B = ((FR.cy - py) / FR.s - z0) / ISO_S * s;
-    return { x:(A + B) / 2, y:(B - A) / 2 };
+    const q = camPick((x, y, z) => projCam(FR, x, y, z), [0, 0, z0], [1, 0, 0], [0, 1, 0], px, py);
+    return q ? { x:q[0], y:q[1] } : null;
   };
   const rowHandleOf = sl => {
-    const r = roofRow(sl);
+    const r = roofRow(sl), A = oAx();
     if (!r) return null;
-    if (sl !== 'F' && !(camSign() * Mod().t * (r.pp.f.a + r.pp.f.b) + 1 > 1e-6)) return null;
+    if (sl === 'F' ? A.se <= 0.05 : !camSees(A, -Mod().t * r.pp.f.a, -Mod().t * r.pp.f.b, 1)) return null;
     return r.quads[r.quads.length - 1][2];
   };
   const pick = (clientX, clientY) => {
@@ -6148,6 +6259,7 @@ function buildOpenings(host) {
     const r = ocv.getBoundingClientRect(), FR = openFrame(openPanel.W, openPanel.H), px = clientX - r.left, py = clientY - r.top;
     if (kind === 'window' || kind === 'sill') {
       const wh = drag.wall, o = OPEN[curFace], inv = invOnWall(FR, px, py, wh.sg), len = wh.sg.len;
+      if (!inv) return;
       /* the glass is shared by the storeys: one window this size on each */
       const nS = Math.max(1, G.fl), per = h0() / nS;
       if (kind === 'window') {
@@ -6166,6 +6278,7 @@ function buildOpenings(host) {
       const sg = sunspaceWall(Mod().pl, SUNSP.face);
       if (!sg) return;
       const p = invAtZ(FR, px, py, 0), mx = (sg.a[0] + sg.b[0]) / 2, my = (sg.a[1] + sg.b[1]) / 2;
+      if (!p) return;
       const along = Math.abs((p.x - mx) * (sg.b[0] - sg.a[0]) / sg.len + (p.y - my) * (sg.b[1] - sg.a[1]) / sg.len);
       const depth = (p.x - mx) * sg.n[0] + (p.y - my) * sg.n[1];
       SUNSP.widthFrac = clamp(along * 2 / sg.len, 0.15, 0.95);
@@ -6178,7 +6291,7 @@ function buildOpenings(host) {
       roof, sideways): the pointer is read back onto the plane through the
       row's two screen axes, with the grab offset kept so it never jumps. */
   const rowParam = (sl, FR, px, py) => {
-    if (sl === 'F') return { x:invAtZ(FR, px, py, h0() + 0.03).x };
+    if (sl === 'F') { const q = invAtZ(FR, px, py, h0() + 0.03); return q ? { x:q.x } : null; }
     const r = roofRow(sl);
     if (!r) return null;
     const O = r.pp.P(r.qc, r.pp.dMin), U = r.pp.P(r.qc + 1, r.pp.dMin), V = r.pp.P(r.qc, r.pp.dMax);
@@ -6187,9 +6300,16 @@ function buildOpenings(host) {
     if (Math.abs(det) < 1e-6) return null;
     return { f:(ux * (py - p0[1]) - uy * (px - p0[0])) / det };
   };
+  const orbit = orbitDrag(OCAM, (az, e) => openCam.set(az, e));
   ocv.addEventListener('pointerdown', ev => {
     const kind = pick(ev.clientX, ev.clientY);
-    if (!kind) return;
+    if (!kind) {   // open canvas: turn the camera
+      ev.preventDefault();
+      orbit.start(ev);
+      try { ocv.setPointerCapture(ev.pointerId); } catch (err) {}
+      ocv.style.cursor = 'grabbing';
+      return;
+    }
     ev.preventDefault();
     const r = ocv.getBoundingClientRect(), FR = openFrame(openPanel.W, openPanel.H);
     if (kind.startsWith('rw')) {
@@ -6201,7 +6321,8 @@ function buildOpenings(host) {
     ocv.style.cursor = 'grabbing';
   });
   ocv.addEventListener('pointermove', ev => {
-    if (!drag) { ocv.style.cursor = pick(ev.clientX, ev.clientY) ? 'grab' : 'default'; return; }
+    if (orbit.move(ev)) { ev.preventDefault(); return; }
+    if (!drag) { ocv.style.cursor = pick(ev.clientX, ev.clientY) ? 'move' : 'grab'; return; }
     ev.preventDefault();
     if (drag.kind === 'rw') {
       const r = ocv.getBoundingClientRect(), FR = openFrame(openPanel.W, openPanel.H), h = rowParam(drag.sl, FR, ev.clientX - r.left, ev.clientY - r.top);
@@ -6211,7 +6332,7 @@ function buildOpenings(host) {
       refreshOpenings();
     } else if (drag.wall || drag.kind === 'sunspace') doDrag(drag.kind, ev.clientX, ev.clientY);
   });
-  const endDrag = () => { drag = null; ocv.style.cursor = 'default'; };
+  const endDrag = () => { orbit.end(); drag = null; ocv.style.cursor = 'default'; };
   ocv.addEventListener('pointerup', endDrag);
   ocv.addEventListener('pointercancel', endDrag);
 }
@@ -7400,14 +7521,8 @@ function buildVentilation(host) {
      east (225 = the south-west corner every other tab uses), el how high it
      looks down (35.26° = the isometric of the other tabs, so the default
      view is theirs exactly). Drag the ground to turn and tilt it. ---- */
-  const ISO_EL = Math.atan(Math.SQRT1_2) / RAD, CAM_K = Math.sqrt(1.5);
   const CAM = { az:K0 && K0.cam ? K0.cam.az : 225, el:K0 && K0.cam ? K0.cam.el : ISO_EL };
-  /** The camera's axes: c toward the camera (plan), r screen right, d into
-      the screen (plan), and the sine and cosine of the elevation. */
-  const camAx = () => {
-    const a = CAM.az * RAD, e = clamp(CAM.el, 8, 89.5) * RAD, c = [Math.cos(a), Math.sin(a)];
-    return { c, r:[-c[1], c[0]], d:[-c[0], -c[1]], se:Math.sin(e), ce:Math.cos(e), te:Math.tan(e) };
-  };
+  const camAx = () => camAxes(CAM);   // the shared camera's axes (see camAxes)
   const projF = (FR, x, y, z) => {
     const A = FR.ax, k = CAM_K * FR.s;
     return [FR.cx + k * (x * A.r[0] + y * A.r[1]), FR.cy - k * ((x * A.d[0] + y * A.d[1]) * A.se + (z || 0) * A.ce)];
@@ -10792,8 +10907,19 @@ Object.assign(PT, {
   "Between the seasonal ideals — decide by use": "Entre os ideais sazonais — decidir pelo uso",
   "Far from any solar ideal": "Longe de qualquer ideal solar",
   "The roof in three dimensions": "O telhado em três dimensões",
-  "Isometric view of the plan from Site, the main facade toward the lower right. Drag the black point to re-pitch the roof — the green gauge draws each ideal pitch; stand the slope parallel to a ray to take it. Drag the amber point to size the collector field.":
-    "Vista isométrica da planta do Local, com a fachada principal para baixo à direita. Arraste o ponto preto para mudar a inclinação — o calibre verde desenha cada inclinação ideal; ponha a vertente paralela a um raio para a tomar. Arraste o ponto âmbar para dimensionar o campo de colectores.",
+  "The plan from Site under its roof, from the south-west corner until you turn it: drag open ground to go round it or to look from higher or lower, or use the bar over it. Drag the black point to re-pitch the roof — the green gauge draws each ideal pitch; stand the slope parallel to a ray to take it. Drag the amber point to size the collector field.":
+    "A planta do Local sob a sua cobertura, vista do canto sudoeste até a rodar: arraste o terreno livre para a contornar ou a ver de mais alto ou mais baixo, ou use a barra sobre o modelo. Arraste o ponto preto para mudar a inclinação — o calibre verde desenha cada inclinação ideal; ponha a vertente paralela a um raio para a tomar. Arraste o ponto âmbar para dimensionar o campo de colectores.",
+  "Front": "Frente",
+  "Side": "Lado",
+  "From S": "De S",
+  "From N": "De N",
+  "Elevation": "Alçado",
+  "Square to the main facade, level: its elevation": "De frente para a fachada principal, à altura dos olhos: o seu alçado",
+  "Square to the end wall, level: the roof’s true pitch": "De frente para a empena, à altura dos olhos: a inclinação verdadeira da cobertura",
+  "Stand to the true south of the building": "Ficar a sul verdadeiro do edifício",
+  "Stand to the true north of the building": "Ficar a norte verdadeiro do edifício",
+  "Square to the side under study, level: its elevation": "De frente para o lado em estudo, à altura dos olhos: o seu alçado",
+  "Back to the corner view of the side under study": "Voltar à vista de canto do lado em estudo",
   "winter": "inverno",
   "summer": "verão",
   "year": "ano",
@@ -10849,8 +10975,8 @@ Object.assign(PT, {
   "Sunspace facade": "Fachada do espaço solar",
   "Sunspace width": "Largura do espaço solar",
   "The facades in three dimensions": "As fachadas em três dimensões",
-  "Isometric view of the volume from Site under the roof from Roof; the compass marks true north. The model turns to face the side selected on the left, so its windows stay in view: on its longest wall, drag the window’s top corner to resize every window on that side, its lower corner to open them down to the floor, the sunspace’s outer glazed corner to change its width and depth, and a roof-window row’s dot to slide it along its slope.":
-    "Vista isométrica do volume do Local sob a cobertura do separador Cobertura; a bússola marca o norte verdadeiro. O modelo roda para mostrar o lado escolhido à esquerda, pelo que as suas janelas ficam à vista: na sua parede mais comprida, arraste o canto superior da janela para redimensionar todas as janelas desse lado, o canto inferior para as abrir até ao chão, o canto envidraçado exterior do espaço solar para mudar a sua largura e profundidade, e o ponto de uma fila de janelas de cobertura para a deslizar na vertente.",
+  "The volume from Site under the roof from Roof; the compass marks true north. The model turns to the side selected on the left, so its windows stay in view, and turns on as you drag open ground or use the bar over it — Elevation stands square to that side. On its longest wall, drag the window’s top corner to resize every window on that side, its lower corner to open them down to the floor, the sunspace’s outer glazed corner to change its width and depth, and a roof-window row’s dot to slide it along its slope.":
+    "O volume do Local sob a cobertura do separador Cobertura; a bússola marca o norte verdadeiro. O modelo roda para o lado escolhido à esquerda, pelo que as suas janelas ficam à vista, e continua a rodar quando arrasta o terreno livre ou usa a barra sobre ele — Alçado põe-no de frente para esse lado. Na sua parede mais comprida, arraste o canto superior da janela para redimensionar todas as janelas desse lado, o canto inferior para as abrir até ao chão, o canto envidraçado exterior do espaço solar para mudar a sua largura e profundidade, e o ponto de uma fila de janelas de cobertura para a deslizar na vertente.",
   "shading": "sombreamento",
   "Overall glazing performance": "Desempenho global do envidraçado",
   "Fin side": "Lado dos brises",
