@@ -468,8 +468,8 @@ next_steps() {
   say "  • The five AI: entries are on by default. If one is missing from the menu:"
   say "    System Settings → Keyboard → Keyboard Shortcuts… → Services → Text."
   say "  • Offline answers need a Qwen model in Bionic: Settings → Local Models → Explore."
-  say "  • Muse Spark needs no setup. To use your OpenCode Zen key: run opencode, then /connect."
-  say "  • The first time Claude is out of tokens, a dialog asks before any text goes to Muse Spark."
+  say "  • LongCat and Muse Spark need no setup. To use your OpenCode Zen key: run opencode, then /connect."
+  say "  • When Claude and LongCat both cannot answer, a dialog asks before any text goes to Muse Spark."
   say "  • Settings: $DEST/config.zsh"
   say "  • Your own prompts: copy a file from prompts/ into prompts.local/ and edit that copy."
 }

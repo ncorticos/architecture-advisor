@@ -4,7 +4,8 @@
 # Reads the selected text on stdin, performs ACTION on it and asks the AI
 # providers in turn until one answers:
 #
-#   online   Claude  →  Muse Spark 1.3 Free (OpenCode Zen)  →  Qwen (Bionic, local)
+#   online   Claude  →  LongCat 2.5 Preview Free  →  Muse Spark 1.3 Free  →  Qwen (Bionic, local)
+#            (both free models through OpenCode Zen; Muse Spark only after a consent dialog)
 #   offline  Qwen (Bionic, local)
 #
 # Usage
@@ -17,7 +18,7 @@
 #             dialog     copy the result and show it in a dialog
 #             calendar   turn the result into a Calendar event
 #             stdout     print the result (for trying it in Terminal)
-#   PROVIDER  claude | muse | qwen — use only that one (for testing)
+#   PROVIDER  claude | longcat | muse | qwen — use only that one (for testing)
 #
 # Settings: config.zsh next to this file. Log (no text content): ~/Library/Logs/AI Services.log
 
@@ -39,7 +40,7 @@ path=($HOME/.local/bin $HOME/.claude/local $HOME/.lmstudio/bin $HOME/.opencode/b
 typeset -U path
 
 # ---------- settings (override them in config.zsh) ----------
-AI_CHAIN=(claude muse qwen)
+AI_CHAIN=(claude longcat muse qwen)
 CLAUDE_METHOD=auto                 # auto: Claude Code first, then an API key if one is stored | cli | api
 CLAUDE_CLI_BIN=                    # empty: find `claude` on PATH
 CLAUDE_CLI_MODEL=                  # empty: Claude Code's default model
@@ -48,6 +49,9 @@ CLAUDE_API_EFFORT=medium
 CLAUDE_API_URL=https://api.anthropic.com/v1/messages
 CLAUDE_KEYCHAIN_SERVICE='AI Services: Anthropic API key'
 CLAUDE_TIMEOUT=120
+LONGCAT_MODEL=longcat-2.5-preview-free   # any Zen chat-completions model, e.g. space-bunny-free
+LONGCAT_URL=https://opencode.ai/zen/v1/chat/completions
+LONGCAT_TIMEOUT=120
 MUSE_MODEL=muse-spark-1.3-contributor-free
 MUSE_URL=https://opencode.ai/zen/v1/responses
 MUSE_CONSENT=ask                   # ask | always | never
@@ -188,6 +192,7 @@ short_reason() {
 provider_name() {
   case $1 in
     claude) print Claude ;;
+    longcat) print LongCat ;;
     muse) print "Muse Spark" ;;
     qwen) print Qwen ;;
   esac
@@ -356,8 +361,8 @@ muse_consent() {
     always) return 0 ;;
     never) fail declined "turned off in config.zsh (MUSE_CONSENT=never)"; return 1 ;;
   esac
-  local why=
-  [[ -n $CLAUDE_KIND ]] && why="Claude cannot answer now: $(short_reason $CLAUDE_KIND)."$'\n\n'
+  local why=   # $reasons belongs to main: what the models before this one answered
+  (( ${#reasons} )) && why="Not available now — ${(j:; :)reasons}."$'\n\n'
   answer=$(dialog "AI: $TITLE" "${why}Send the selected text to Muse Spark 1.3 Free on OpenCode?
 
 On this free tier Meta may use the text and the answer to train its models. Do not send personal or confidential information.
@@ -387,54 +392,102 @@ stream_error() {  # stream_error FILE — the first error event of a Responses s
     | (.error.message? // .response.error.message? // .message? // "error")' 2>/dev/null | head -n 1
 }
 
-provider_muse_cli() {  # provider_muse_cli OPENCODE_BIN — the same model through the OpenCode CLI
-  local bin=$1 msg
+chat_text() {  # chat_text FILE — answer text of an OpenAI chat-completions stream or body
+  local f=$1 t
+  if grep -q '^data:' $f; then
+    t=$(sed -n 's/^data: *//p' $f | jq -R -j 'fromjson? | .choices[0]?.delta?.content // empty')
+  else
+    t=$(jq -j '.choices[0].message.content // ""' $f 2>/dev/null)
+  fi
+  print -rn -- $t
+}
+
+chat_error() {  # chat_error FILE — the first error in a chat-completions stream
+  sed -n 's/^data: *//p' $1 | jq -R -r 'fromjson? | select(.error? != null) | (.error.message? // (.error | tostring))' 2>/dev/null | head -n 1
+}
+
+zen_headers() {  # zen_headers FILE — the headers OpenCode itself sends to OpenCode Zen
+  print -rl -- "Authorization: Bearer $(opencode_key)" "Content-Type: application/json" "Accept: text/event-stream" \
+    "User-Agent: ai-services/$VERSION" "x-opencode-client: ai-services" \
+    "x-opencode-session: $(new_id)" "x-opencode-request: $(new_id)" > $1
+}
+
+zen_error() {  # zen_error NAME HTTP_STATUS FILE — sets FAIL_KIND/FAIL_MSG for an answer that is not 200
+  local msg
+  msg=$(json_error $3)
+  [[ -n $msg ]] || msg=$(head -c 200 $3 2>/dev/null)
+  case $2 in
+    000) fail network "no connection to OpenCode Zen" ;;
+    402|429) fail quota "$1: ${msg:-rate limited}" ;;
+    *) fail error "$1: HTTP $2 $msg" ;;
+  esac
+}
+
+opencode_cli() {  # opencode_cli OPENCODE_BIN MODEL LABEL TIMEOUT — the same Zen model through the OpenCode CLI
+  local bin=$1 model=$2 label=$3 secs=$4 msg err
   msg="$SYSTEM"$'\n\n'"$(<$TMPD/user.txt)"
-  run_with_timeout $MUSE_TIMEOUT /dev/null $TMPD/opencode.jsonl $TMPD/opencode.err \
-    env OPENCODE_CONFIG_DIR=$AI_HOME/opencode $bin run --format json --agent ai-services -m opencode/$MUSE_MODEL $msg
-  (( $? == 124 )) && { fail timeout "OpenCode did not answer within $MUSE_TIMEOUT s"; return 1 }
+  run_with_timeout $secs /dev/null $TMPD/opencode.jsonl $TMPD/opencode.err \
+    env OPENCODE_CONFIG_DIR=$AI_HOME/opencode $bin run --format json --agent ai-services -m opencode/$model $msg
+  (( $? == 124 )) && { fail timeout "OpenCode did not answer within $secs s"; return 1 }
   RESULT=$(jq -R -s -j '[split("\n")[] | fromjson? | select(.type == "text") | .part.text // empty] | join("\n")' $TMPD/opencode.jsonl)
   if [[ -n ${RESULT//[[:space:]]/} ]]; then
-    PROVIDER_LABEL="Muse Spark 1.3 (OpenCode)"
+    PROVIDER_LABEL=$label
     return 0
   fi
-  local err
   err=$(jq -R -r 'fromjson? | select(.type == "error") | (.error.data.message? // .error.message? // .error.name? // "error")' $TMPD/opencode.jsonl 2>/dev/null | head -n 1)
   fail error "OpenCode: ${err:-$(head -c 200 $TMPD/opencode.err)}"
 }
 
+# LongCat 2.5 Preview Free: OpenCode's docs say its provider keeps no data and does not train on
+# it, so it needs no consent dialog.
+provider_longcat() {
+  local resp=$TMPD/longcat-resp.txt code msg bin label="LongCat 2.5 Preview (OpenCode)"
+  jq -n --arg model $LONGCAT_MODEL --arg system $SYSTEM --rawfile user $TMPD/user.txt '
+    {model: $model, stream: true,
+     messages: [{role: "system", content: $system}, {role: "user", content: $user}]}' > $TMPD/longcat-req.json
+  zen_headers $TMPD/longcat.headers
+  code=$(http_post $LONGCAT_URL $TMPD/longcat.headers $TMPD/longcat-req.json $resp $LONGCAT_TIMEOUT)
+  if [[ $code == 200 ]]; then
+    RESULT=$(chat_text $resp)
+    if [[ -n ${RESULT//[[:space:]]/} ]]; then
+      PROVIDER_LABEL=$label
+      return 0
+    fi
+    msg=$(chat_error $resp)
+    fail error "LongCat: ${msg:-empty answer}"
+  else
+    zen_error LongCat $code $resp
+  fi
+  # A change on the gateway's side: let OpenCode itself try, when it is installed.
+  if [[ $FAIL_KIND == error ]] && bin=$(find_bin opencode "$OPENCODE_BIN"); then
+    opencode_cli $bin $LONGCAT_MODEL $label $LONGCAT_TIMEOUT && return 0
+  fi
+  return 1
+}
+
 provider_muse() {
   muse_consent || return 1
-  local key resp=$TMPD/muse-resp.txt code msg bin
-  key=$(opencode_key)
+  local resp=$TMPD/muse-resp.txt code msg bin label="Muse Spark 1.3 (OpenCode)"
   jq -n --arg model $MUSE_MODEL --arg system $SYSTEM --rawfile user $TMPD/user.txt '
     {model: $model, stream: true, store: false,
      input: [{role: "system", content: $system},
              {role: "user", content: [{type: "input_text", text: $user}]}]}' > $TMPD/muse-req.json
-  print -rl -- "Authorization: Bearer $key" "Content-Type: application/json" "Accept: text/event-stream" \
-    "User-Agent: ai-services/$VERSION" "x-opencode-client: ai-services" \
-    "x-opencode-session: $(new_id)" "x-opencode-request: $(new_id)" > $TMPD/muse.headers
+  zen_headers $TMPD/muse.headers
   code=$(http_post $MUSE_URL $TMPD/muse.headers $TMPD/muse-req.json $resp $MUSE_TIMEOUT)
   if [[ $code == 200 ]]; then
     RESULT=$(responses_text $resp)
     if [[ -n ${RESULT//[[:space:]]/} ]]; then
-      PROVIDER_LABEL="Muse Spark 1.3 (OpenCode)"
+      PROVIDER_LABEL=$label
       return 0
     fi
     msg=$(stream_error $resp)
     fail error "Muse Spark: ${msg:-empty answer}"
   else
-    msg=$(json_error $resp)
-    [[ -n $msg ]] || msg=$(head -c 200 $resp 2>/dev/null)
-    case $code in
-      000) fail network "no connection to OpenCode Zen" ;;
-      402|429) fail quota "Muse Spark: ${msg:-rate limited}" ;;
-      *) fail error "Muse Spark: HTTP $code ${msg}" ;;
-    esac
+    zen_error "Muse Spark" $code $resp
   fi
   # A change on the gateway's side: let OpenCode itself try, when it is installed.
   if [[ $FAIL_KIND == error ]] && bin=$(find_bin opencode "$OPENCODE_BIN"); then
-    provider_muse_cli $bin && return 0
+    opencode_cli $bin $MUSE_MODEL $label $MUSE_TIMEOUT && return 0
   fi
   return 1
 }
@@ -637,6 +690,7 @@ doctor() {
   fi
   if [[ -n $(anthropic_key) ]]; then print -r -- "Claude API key: stored (model $CLAUDE_API_MODEL)"; else print "Claude API key: none (optional)"; fi
   if [[ $(opencode_key) == public ]]; then print "OpenCode Zen:   no key, free models only"; else print "OpenCode Zen:   key found"; fi
+  print -r -- "LongCat:        $LONGCAT_MODEL (its provider keeps no data)"
   local consent=$MUSE_CONSENT
   [[ $consent == ask && "$(cat $STATE_DIR/muse-consent 2>/dev/null)" == always ]] && consent="always (chosen in the dialog)"
   print -r -- "Muse Spark:     $MUSE_MODEL, consent: $consent"
@@ -662,7 +716,7 @@ doctor() {
 # ---------- main ----------
 
 usage() {
-  print -r -- "usage: ai-service improve|reply|reply-selection|resume|calendar [--output replace|clipboard|dialog|calendar|stdout] [--only claude|muse|qwen]"
+  print -r -- "usage: ai-service improve|reply|reply-selection|resume|calendar [--output replace|clipboard|dialog|calendar|stdout] [--only claude|longcat|muse|qwen]"
   print -r -- "       ai-service --doctor"
 }
 
@@ -721,15 +775,20 @@ main() {
   SYSTEM=${SYSTEM//'{{TZ}}'/$(local_tz)}
   print -rn -- "<selected_text>"$'\n'"$INPUT"$'\n'"</selected_text>" > $TMPD/user.txt
 
-  local -a chain reasons
-  local p
+  local -a chain reasons here network=(claude longcat muse)
+  local p online_needed=0
   if [[ -n $only ]]; then chain=($only); else chain=($AI_CHAIN); fi
-  if [[ -z $only ]] && (( ${chain[(I)claude]} || ${chain[(I)muse]} )) && ! is_online; then
-    chain=(${chain:#(claude|muse)})   # offline: only what runs on this Mac
+  for p in $chain; do
+    (( ${network[(Ie)$p]} )) && online_needed=1
+  done
+  if [[ -z $only ]] && (( online_needed )) && ! is_online; then
+    for p in $chain; do   # offline: only what runs on this Mac
+      (( ${network[(Ie)$p]} )) || here+=($p)
+    done
+    chain=($here)
     reasons+=("offline")
   fi
 
-  CLAUDE_KIND=
   RESULT= PROVIDER_LABEL= FAIL_KIND= FAIL_MSG=
   local ok=0 start_time=$EPOCHREALTIME
   for p in $chain; do
@@ -743,7 +802,6 @@ main() {
       log "answered by $PROVIDER_LABEL in $(printf '%.1f' $(( EPOCHREALTIME - start_time ))) s"
       break
     fi
-    [[ $p == claude ]] && CLAUDE_KIND=$FAIL_KIND
     reasons+=("$(provider_name $p): $(short_reason $FAIL_KIND)")
     log "$p failed ($FAIL_KIND): ${FAIL_MSG[1,200]}"
     [[ $FAIL_KIND == refusal ]] && break

@@ -115,6 +115,7 @@ LMS_BIN=$HERE/stubs/lms
 OPENCODE_BIN=$HERE/stubs/opencode
 CLAUDE_API_URL=$URL/v1/messages
 MUSE_URL=$URL/zen/v1/responses
+LONGCAT_URL=$URL/zen/v1/chat/completions
 LMSTUDIO_URL=$URL
 ONLINE_CHECK_URL=$URL/hotspot
 [[ -r $T/overrides.zsh ]] && source $T/overrides.zsh
@@ -128,6 +129,10 @@ SSE_OK='{"status": 200, "sse": [
   {"type": "response.output_text.delta", "delta": "answer"},
   {"type": "response.completed", "response": {"output": [{"type": "message", "content": [{"type": "output_text", "text": "Muse answer"}]}]}}]}'
 ZEN_429='{"status": 429, "body": {"error": {"message": "Rate limit exceeded for free models"}}}'
+CHAT_OK='{"status": 200, "sse": [
+  {"id": "c1", "choices": [{"index": 0, "delta": {"role": "assistant", "content": ""}}]},
+  {"id": "c1", "choices": [{"index": 0, "delta": {"content": "LongCat "}}]},
+  {"id": "c1", "choices": [{"index": 0, "delta": {"content": "answer"}, "finish_reason": "stop"}]}]}'
 MODELS='{"models": [
   {"type": "llm", "key": "google/gemma-4-26b", "display_name": "Gemma 4 26B", "loaded_instances": [{"id": "gemma"}]},
   {"type": "llm", "key": "qwen/qwen3.6-35b-a3b", "display_name": "Qwen3.6 35B A3B", "loaded_instances": [],
@@ -164,10 +169,35 @@ expect "Claude Code runs without tools (the empty --tools value is kept)" contai
 expect "Claude Code runs without customisations or a saved transcript" contains "$args" "--safe-mode"
 expect "the system prompt holds the shared rules and the task" contains "$args" "Task — Improve"
 expect "the selected text reaches Claude on stdin" contains "$(<$STUB_LOG/claude.stdin)" "<selected_text>"$'\n'$TEXT
-expect_eq "no other provider is asked" "$(requests /zen/v1/responses)$(requests /api/v1/chat)" 00
+expect_eq "no other provider is asked" "$(requests /zen/v1/chat/completions)$(requests /zen/v1/responses)$(requests /api/v1/chat)" 000
 expect_eq "no notification when Claude answers" "$(events notification)" ""
 
-print "\nClaude out of tokens → Muse Spark (consent given before)"
+print "\nClaude out of tokens → LongCat"
+scenario "{\"zen_chat\": $CHAT_OK, \"zen\": $SSE_OK}"
+export CLAUDE_SCENARIO=limit
+run "$TEXT" improve --output replace
+expect_eq "LongCat's answer replaces the selection" "$OUT" "LongCat answer"
+expect_eq "the free LongCat model is requested" "$(request /zen/v1/chat/completions .body.model)" longcat-2.5-preview-free
+expect_eq "the system prompt travels as the system message" "$(request /zen/v1/chat/completions '.body.messages[0].role')" system
+expect "the selected text is the user message" contains "$(request /zen/v1/chat/completions '.body.messages[1].content')" "<selected_text>"
+expect_eq "without an OpenCode key the public free access is used" "$(request /zen/v1/chat/completions '.headers.authorization')" "Bearer public"
+expect_eq "the request identifies this tool" "$(request /zen/v1/chat/completions '.headers["x-opencode-client"]')" ai-services
+expect_eq "no consent dialog: LongCat's provider keeps no data" "$(events dialog)" ""
+expect_eq "Muse Spark is not asked" "$(requests /zen/v1/responses)" 0
+expect "the notification names LongCat and the reason" contains "$(events notification)" "LongCat 2.5 Preview (OpenCode) (Claude: no tokens left (usage limit))"
+
+scenario '{"zen_chat": {"status": 200, "body": {"choices": [{"index": 0, "message": {"role": "assistant", "content": "Plain answer"}}]}}}'
+export CLAUDE_SCENARIO=limit
+run "$TEXT" improve --output replace
+expect_eq "a non-streamed LongCat answer is read too" "$OUT" "Plain answer"
+
+scenario '{"zen_chat": {"status": 401, "body": {"error": {"message": "Unauthorized client"}}}}'
+export CLAUDE_SCENARIO=limit OPENCODE_TEXT="OpenCode LongCat answer"
+run "$TEXT" improve --output replace
+expect_eq "LongCat refused directly → the OpenCode CLI answers" "$OUT" "OpenCode LongCat answer"
+expect "OpenCode runs the LongCat model" contains "$(tr '\0' ' ' < $STUB_LOG/opencode.args)" "-m opencode/longcat-2.5-preview-free"
+
+print "\nClaude and LongCat out of tokens → Muse Spark (consent given before)"
 scenario "{\"zen\": $SSE_OK}"
 export CLAUDE_SCENARIO=limit
 override MUSE_CONSENT=always
@@ -186,7 +216,8 @@ scenario "{\"zen\": $SSE_OK}"
 export CLAUDE_SCENARIO=limit DIALOG_ANSWER="Send once"
 run "$TEXT" resume
 expect "the dialog warns that Meta may train on the text" contains "$(events dialog | head -n 20)" "Meta may use the text"
-expect "the dialog says why Claude cannot answer" contains "$(events dialog)" "no tokens left (usage limit)"
+expect "the dialog says why Claude cannot answer" contains "$(events dialog)" "Claude: no tokens left (usage limit)"
+expect "the dialog says why LongCat cannot answer" contains "$(events dialog)" "LongCat: no tokens left (usage limit)"
 expect_eq "the summary is copied" "$(<$STUB_LOG/clipboard.txt)" "Muse answer"
 expect "the summary is shown in a dialog" contains "$(events dialog)" "Muse answer"
 expect "a one-off consent is not remembered" test ! -e "$DEST/state/muse-consent"
@@ -203,7 +234,7 @@ scenario "{\"zen\": $SSE_OK, \"lms_models\": $MODELS, \"lms_chat\": $QWEN_OK}"
 export CLAUDE_SCENARIO=limit DIALOG_ANSWER=""
 run "$TEXT" improve --output replace
 expect_eq "Qwen answers" "$OUT" "Qwen answer"
-expect_eq "nothing is sent to OpenCode Zen" "$(requests /zen/v1/responses)" 0
+expect_eq "nothing is sent to Muse Spark" "$(requests /zen/v1/responses)" 0
 expect_eq "a downloaded Qwen model is chosen (not the loaded Gemma, not an embedding)" "$(request /api/v1/chat .body.model)" qwen/qwen3.6-35b-a3b
 expect_eq "Qwen's thinking is switched off" "$(request /api/v1/chat .body.reasoning)" off
 expect_eq "a model loaded on demand gets room for long emails" "$(request /api/v1/chat .body.context_length)" 8192
@@ -226,7 +257,7 @@ export CLAUDE_SCENARIO=limit
 override MUSE_CONSENT=always
 run "$TEXT" reply
 expect_eq "the reply from Qwen is copied" "$(<$STUB_LOG/clipboard.txt)" "Qwen answer"
-expect "the notification lists both reasons" contains "$(events notification)" "Claude: no tokens left (usage limit); Muse Spark: no tokens left (usage limit)"
+expect "the notification lists the three reasons" contains "$(events notification)" "Claude: no tokens left (usage limit); LongCat: no tokens left (usage limit); Muse Spark: no tokens left (usage limit)"
 expect_eq "the OpenCode CLI is not tried after a rate limit" "$(print -r -- $STUB_LOG/opencode.args(N))" ""
 
 print "\nOffline → Qwen directly"
@@ -234,7 +265,7 @@ scenario "{\"online\": false, \"lms_models\": $MODELS, \"lms_chat\": $QWEN_OK}"
 run "$TEXT" improve --output replace
 expect_eq "Qwen answers" "$OUT" "Qwen answer"
 expect "Claude is not tried" test ! -e $STUB_LOG/claude.calls
-expect_eq "OpenCode Zen is not tried" "$(requests /zen/v1/responses)" 0
+expect_eq "OpenCode Zen is not tried (LongCat, Muse Spark)" "$(requests /zen/v1/chat/completions)$(requests /zen/v1/responses)" 00
 expect "the notification says offline" contains "$(events notification)" "(offline)"
 
 print "\nLM Studio's server is off → started with lms"

@@ -4,7 +4,7 @@
 # Uncomment a line to change a setting.
 
 # Order of the providers. Offline, only qwen is tried.
-# AI_CHAIN=(claude muse qwen)
+# AI_CHAIN=(claude longcat muse qwen)
 
 # ---- Claude ----
 # auto: Claude Code (your Claude subscription) first, then an Anthropic API key if one is
@@ -17,14 +17,19 @@
 # Store an API key (optional):
 #   security add-generic-password -U -s 'AI Services: Anthropic API key' -a "$USER" -w
 
+# ---- LongCat 2.5 Preview Free on OpenCode Zen (its provider keeps no data; no dialog) ----
+# LONGCAT_MODEL=longcat-2.5-preview-free   # any Zen chat-completions model, e.g. space-bunny-free
+# LONGCAT_TIMEOUT=120
+
 # ---- Muse Spark 1.3 Free on OpenCode Zen ----
 # ask: a dialog asks before text is sent (Meta may train on this free tier's prompts)
 # always: send without asking; never: skip Muse Spark and go straight to local Qwen
 # MUSE_CONSENT=ask
 # MUSE_MODEL=muse-spark-1.3-contributor-free
 # MUSE_TIMEOUT=120
-# Uses the Zen key saved by OpenCode's /connect (~/.local/share/opencode/auth.json) when there
-# is one, otherwise OpenCode's public free access. OPENCODE_API_KEY in the environment wins.
+# LongCat and Muse Spark use the Zen key saved by OpenCode's /connect
+# (~/.local/share/opencode/auth.json) when there is one, otherwise OpenCode's public free
+# access. OPENCODE_API_KEY in the environment wins.
 
 # ---- Qwen in Bionic (LM Studio runtime, local, works offline) ----
 # QWEN_MODEL=                        # empty: first downloaded model with "qwen" in its name

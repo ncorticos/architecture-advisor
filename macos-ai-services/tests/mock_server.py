@@ -3,7 +3,8 @@
 
   GET  /hotspot                 Apple's connectivity check ("Success" when online)
   POST /v1/messages             Claude API
-  POST /zen/v1/responses        OpenCode Zen (Responses API, SSE)
+  POST /zen/v1/responses        OpenCode Zen (Responses API, SSE): Muse Spark
+  POST /zen/v1/chat/completions OpenCode Zen (chat completions, SSE): LongCat — 429 unless set
   GET  /api/v1/models           LM Studio model list      (503 while STATE/lms_down exists)
   POST /api/v1/chat             LM Studio native chat
   POST /v1/chat/completions     LM Studio OpenAI-compatible chat
@@ -103,6 +104,12 @@ class Handler(BaseHTTPRequestHandler):
                 events = "".join("event: %s\ndata: %s\n\n" % (e.get("type", "message"), json.dumps(e))
                                  for e in r["sse"])
                 return self.reply(200, events + "data: [DONE]\n\n", "text/event-stream")
+        elif self.path == "/zen/v1/chat/completions":
+            r = pick("zen_chat", self.path,
+                     {"status": 429, "body": {"error": {"message": "Rate limit exceeded for free models"}}})
+            if "sse" in r and r.get("status", 200) == 200:
+                chunks = "".join("data: %s\n\n" % json.dumps(c) for c in r["sse"])
+                return self.reply(200, chunks + "data: [DONE]\n\n", "text/event-stream")
         elif self.path == "/api/v1/chat":
             r = pick("lms_chat", self.path, {"status": 500, "body": {}})
         elif self.path == "/v1/chat/completions":
