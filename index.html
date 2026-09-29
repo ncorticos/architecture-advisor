@@ -800,7 +800,7 @@ details.more[open] > summary{color:var(--ink)}
 /* ------------------------------------------------------------ 0. IDENTITY -- */
 const APP = {
   name:        'Architecture Advisor',
-  version:     '1.99.0',
+  version:     '1.100.0',
   author:      'Nuno Dinis Cortiços',
   institution: 'Lisbon School of Architecture, Universidade de Lisboa',
   builtWith:   'Claude Opus 5 (Anthropic)',
@@ -3384,7 +3384,7 @@ const roomH = () => (window.innerHeight || 900) - ((document.querySelector('head
    view is theirs; 0 is a true elevation, 89.5 a plan. ---- */
 const ISO_EL = Math.atan(Math.SQRT1_2) / RAD, CAM_K = Math.sqrt(1.5);
 /** Where each page's camera stands; kept through a rebuild of the pages. */
-const CAMS = { roof:{ az:225, el:ISO_EL }, open:{ az:240, el:ISO_EL } };
+const CAMS = { roof:{ az:225, el:ISO_EL }, open:{ az:240, el:ISO_EL }, site:{ az:0, fixed:false } };
 /** The camera's axes: c toward the camera (plan), r screen right, d into
     the screen (plan), and the elevation's sine, cosine and tangent. */
 function camAxes(cam, elMin) {
@@ -4863,6 +4863,19 @@ function buildSite(host) {
      circle becomes the ellipse the compass ring is drawn as; height simply
      lifts a point straight up the screen. */
   const ISO_C = Math.cos(30 * RAD), ISO_S = Math.sin(30 * RAD);
+  /* The plate the model stands on turns: the ground with its compass, the
+     sun, the shadow and the building, spun together about the plate's
+     centre by PL.az degrees, anticlockwise seen from above — 0 is the view
+     from the south-west. Fixed, the plate holds its angle and a drag on
+     open ground turns the building on it instead. */
+  const PL = CAMS.site;
+  const plateXY = (x, y) => { const a = PL.az * RAD, c = Math.cos(a), q = Math.sin(a); return [x * c - y * q, x * q + y * c]; };
+  /** A world point (x east, y north, z up) on the canvas of frame F. */
+  const isoAt = (F, x, y, z) => { const q = plateXY(x, y); return [F.cx + (q[0] - q[1]) * ISO_C * F.s, F.cy - (q[0] + q[1]) * ISO_S * F.s - (z || 0) * F.s]; };
+  /** Toward the camera, in world metres: the south-west on an unturned plate. */
+  const camToward = () => { const a = PL.az * RAD, c = Math.cos(a), q = Math.sin(a); return { x:-c - q, y:q - c }; };
+  /** Farther from the camera is larger, for painting back to front. */
+  const plateDepth = (x, y, z) => { const q = plateXY(x, y); return q[0] + q[1] - (z || 0); };
   /** How far the plan reaches in front of the main facade on its centre
       line, as local y — the bar's face, a T stem or L wing standing in front
       of it, or the back of a notch carved into it. The black arrow and its
@@ -5078,7 +5091,7 @@ function buildSite(host) {
 
   labPanel = makePanel(stage, {
     title: 'Your plan against the optimum',
-    note: 'Isometric view, tilted from the south-west. Drag the plan to stretch it, the black knob to turn it, the black points to break it; drive the sun from the Sun controls. The windows are the ones sized on Windows & Shading, spread over every wall and every floor, and the roof is the one set on Roof.',
+    note: 'Isometric view on a turning plate. Drag open ground to turn the plate — or, with the plate fixed, to turn the building on it; drag the plan to stretch it, the black knob to turn it, the black points to break it; drive the sun from the Sun controls. The windows are the ones sized on Windows & Shading, spread over every wall and every floor, and the roof is the one set on Roof.',
     heightFn: w => phoneW(w) ? Math.round(w * 1.2 + 140) : Math.round(Math.min(w / 1.5, Math.max(460, (window.innerHeight || 900) - 200))),
     render(ctx, W, H) {
       const GREEN = '#16A34A', BLUE = '#2563EB', narrow = phoneW(W);
@@ -5086,7 +5099,7 @@ function buildSite(host) {
       const { cx, cy, s, R } = labFrame(W, H);
       const { Li, Di, H:Hopt } = optBox();
       const arr = Math.max(2.5, 0.3 * Math.min(G.L, G.D));
-      const proj = (x, y, z) => [cx + (x - y) * ISO_C * s, cy - (x + y) * ISO_S * s - (z || 0) * s];
+      const proj = (x, y, z) => isoAt({ cx, cy, s }, x, y, z);
       const rot = (x, y, cw) => {
         const a = cw * RAD;
         return [x * Math.cos(a) + y * Math.sin(a), -x * Math.sin(a) + y * Math.cos(a)];
@@ -5200,7 +5213,7 @@ function buildSite(host) {
       const tq = proj(far[0] + ox * tk, far[1] + oy * tk, 0);
 
       // only the faces the south-west camera can see get drawn
-      const camDir = { x:-1, y:-1 };
+      const camDir = camToward();
       const faceVerts = (L, D, beta, hgt) => {
         const local = [[L/2, D/2], [-L/2, D/2], [-L/2, -D/2], [L/2, -D/2]];
         const base = local.map(pt => rot(pt[0], pt[1], beta));
@@ -5303,7 +5316,7 @@ function buildSite(host) {
       const P3s = q => at(q[0], q[1], beta, q[2]);
       const drawPlan = hgt => {
         const faces = [];
-        const dep = pts => pts.reduce((a, q) => { const w = rot(q[0], q[1], beta); return a + w[0] + w[1] - q[2]; }, 0) / pts.length;
+        const dep = pts => pts.reduce((a, q) => { const w = rot(q[0], q[1], beta); return a + plateDepth(w[0], w[1], q[2]); }, 0) / pts.length;
         /* the projecting balconies: slab tops, the edges facing the camera, the parapets both ways */
         BS.solids.forEach(sl => { if (sl.kind === 'par' || seesL(sl.n)) faces.push({ balc:sl, pts:sl.pts }); });
         RM.walls.forEach(wl => {
@@ -5347,7 +5360,7 @@ function buildSite(host) {
           if (wn) drawWindow(fc.sg, wn.w, false);
           if ((pl.boxes.length > 1 || BS.bg.slabs.length) && sun.alt > 0.5 && fc.sg.n[0] * sunL[0] + fc.sg.n[1] * sunL[1] > 0) castShade(fc, hgt);
           /* the loggias open in this wall, seen through their mouths */
-          balcHoles(ctx, BS.holes.get(fc.sg), P3s, q => { const w = rot(q[0], q[1], beta); return w[0] + w[1] - q[2]; }, seesL);
+          balcHoles(ctx, BS.holes.get(fc.sg), P3s, q => { const w = rot(q[0], q[1], beta); return plateDepth(w[0], w[1], q[2]); }, seesL);
         });
       };
       drawPlan(Hgt);
@@ -5612,6 +5625,30 @@ function buildSite(host) {
       ['Köppen–Geiger', STATE.clim.k.code]]));
     }
   });
+  /* --- the plate: the bar over the model turns it, stands the view south or
+     north of the building, brings it back to the south-west, or fixes it;
+     fixed, a drag on open ground turns the building on it instead ------- */
+  const plateBar = el('div', { class:'viewbar' }), plateLine = el('span', { class:'hint' });
+  function plateSet(az) { PL.az = Math.round(((az % 360) + 360) % 360 * 10) / 10; syncPlate(); if (labPanel) labPanel.draw(); }
+  const plateBtns = [['↺', 'Turn the plate anticlockwise', () => plateSet(PL.az + 45)], ['↻', 'Turn the plate clockwise', () => plateSet(PL.az - 45)],
+    ['From S', 'Stand to the true south of the building', () => plateSet(180 - 225)], ['From N', 'Stand to the true north of the building', () => plateSet(-225)],
+    ['Reset', 'Back to the view from the south-west', () => plateSet(0)]]
+    .map(([txt, tip, fn]) => el('button', { class:'btn small', text:txt, title:tip, 'aria-label':t(tip), onclick:fn }));
+  const fixBtn = el('button', { class:'btn small', title:'Fix the plate at this angle: a drag on open ground then turns the building on it',
+    onclick:() => { PL.fixed = !PL.fixed; syncPlate(); } });
+  function syncPlate() {
+    const A = ((PL.az + 225) % 360 + 360) % 360;   // where the camera stands, clockwise from true north
+    plateLine.textContent = t('from the') + ' ' + COMPASS8[Math.round(A / 45) % 8] + ' · '
+      + t(PL.fixed ? 'plate fixed: drag open ground to turn the building' : 'drag open ground to turn the plate');
+    plateBtns.forEach(b => { b.disabled = PL.fixed; });
+    fixBtn.textContent = t(PL.fixed ? 'Plate fixed' : 'Fix the plate');
+    fixBtn.setAttribute('aria-pressed', PL.fixed ? 'true' : 'false');
+    fixBtn.classList.toggle('solid', PL.fixed);
+  }
+  plateBtns.concat([fixBtn, plateLine]).forEach(k => plateBar.appendChild(k));
+  stage.insertBefore(plateBar, stage.firstChild);
+  syncPlate();
+
   /* --- the rail: break the volume, mirror it, open a patio ----------------
      A break works one long side of the bar: out past it as a wing, or into
      it as a recess — the same black point runs from the one to the other
@@ -5810,7 +5847,8 @@ function buildSite(host) {
     const F = labFrame(labPanel.W, labPanel.H);
     const U = (px - F.cx) / (ISO_C * F.s);
     const V = (F.cy - py - (z || 0) * F.s) / (ISO_S * F.s);
-    return { x:(U + V) / 2, y:(V - U) / 2 };
+    const x = (U + V) / 2, y = (V - U) / 2, a = PL.az * RAD, c = Math.cos(a), q = Math.sin(a);   // back off the turned plate
+    return { x:x * c + y * q, y:-x * q + y * c };
   };
   const toPlan = (px, py) => toPlanZ(px, py, 0);
   const toLocal = (x, y) => {
@@ -5829,17 +5867,17 @@ function buildSite(host) {
     const F = labFrame(labPanel.W, labPanel.H);
     const px = clientX - r.left, py = clientY - r.top;
     const k = knobPlan();
-    const kx = F.cx + (k.x - k.y) * ISO_C * F.s, ky = F.cy - (k.x + k.y) * ISO_S * F.s;
+    const [kx, ky] = isoAt(F, k.x, k.y, 0);
     if (Math.hypot(px - kx, py - ky) <= 15) return 'rotate';
     const a = (G.rot - 180) * RAD, Hh = G.fl * G.fh;
     for (const h of balcHandles()) {
       const wx = h.x * Math.cos(a) + h.y * Math.sin(a), wy = -h.x * Math.sin(a) + h.y * Math.cos(a);
-      const hx = F.cx + (wx - wy) * ISO_C * F.s, hy = F.cy - (wx + wy) * ISO_S * F.s - h.z * F.s;
+      const [hx, hy] = isoAt(F, wx, wy, h.z);
       if (Math.hypot(px - hx, py - hy) <= 11) return 'balc:' + h.i + ':' + h.kind + ':' + h.z;
     }
     for (const h of vertexHandles()) {
       const wx = h.x * Math.cos(a) + h.y * Math.sin(a), wy = -h.x * Math.sin(a) + h.y * Math.cos(a);
-      const hx = F.cx + (wx - wy) * ISO_C * F.s, hy = F.cy - (wx + wy) * ISO_S * F.s - Hh * F.s;
+      const [hx, hy] = isoAt(F, wx, wy, Hh);
       if (Math.hypot(px - hx, py - hy) <= 12) return 'vertex:' + h.id;
     }
     const bb = planOf().bbox;
@@ -5853,7 +5891,14 @@ function buildSite(host) {
   let drag = null;
   cv.addEventListener('pointerdown', ev => {
     const h = hitAt(ev.clientX, ev.clientY);
-    if (!h) return;
+    if (!h) {   // open ground: the plate turns — or, fixed, the building turns on it
+      ev.preventDefault();
+      const r0 = cv.getBoundingClientRect(), p0 = toPlan(ev.clientX - r0.left, ev.clientY - r0.top);
+      drag = PL.fixed ? { kind:'turn', az0:Math.atan2(p0.x, p0.y) / RAD, rot0:G.rot } : { kind:'plate', x0:ev.clientX, az0:PL.az };
+      try { cv.setPointerCapture(ev.pointerId); } catch (err) {}
+      cv.style.cursor = 'grabbing';
+      return;
+    }
     ev.preventDefault();
     const r = cv.getBoundingClientRect();
     const p = toPlan(ev.clientX - r.left, ev.clientY - r.top);
@@ -5876,12 +5921,20 @@ function buildSite(host) {
   cv.addEventListener('pointermove', ev => {
     if (!drag) {
       const h = hitAt(ev.clientX, ev.clientY);
-      cv.style.cursor = h === 'rotate' ? 'grab' : h === 'stretch' ? 'nwse-resize' : h && h.indexOf(':size:') > 0 ? 'crosshair' : h ? 'move' : 'default';
+      cv.style.cursor = h === 'rotate' ? 'grab' : h === 'stretch' ? 'nwse-resize' : h && h.indexOf(':size:') > 0 ? 'crosshair' : h ? 'move' : PL.fixed ? 'grab' : 'ew-resize';
       return;
     }
     ev.preventDefault();
     const r = cv.getBoundingClientRect();
     const p = toPlan(ev.clientX - r.left, ev.clientY - r.top);
+    if (drag.kind === 'plate') { plateSet(drag.az0 + (ev.clientX - drag.x0) * 0.4); return; }
+    if (drag.kind === 'turn') {
+      const az = Math.atan2(p.x, p.y) / RAD;
+      G.rot = Math.round(((drag.rot0 + az - drag.az0) % 360 + 360) % 360);
+      syncCtl(cR, G.rot, v => fmt(v, 0) + '°');
+      labDraw();
+      return;
+    }
     if (drag.kind === 'rotate') {
       const az = (Math.atan2(p.x, p.y) / RAD + 360) % 360;
       G.rot = Math.round((((az - drag.off) % 360) + 360) % 360);
@@ -11635,6 +11688,15 @@ Object.assign(STATIC_PT, {
 
 /* --- everything the pages ask for through t() --------------------------- */
 Object.assign(PT, {
+  /* the turning plate on Site */
+  "Turn the plate anticlockwise": "Rodar o prato no sentido contrário ao dos ponteiros do relógio",
+  "Turn the plate clockwise": "Rodar o prato no sentido dos ponteiros do relógio",
+  "Back to the view from the south-west": "Voltar à vista de sudoeste",
+  "Fix the plate at this angle: a drag on open ground then turns the building on it": "Fixar o prato neste ângulo: arrastar o terreno livre passa a rodar o edifício sobre ele",
+  "Plate fixed": "Prato fixo",
+  "Fix the plate": "Fixar o prato",
+  "plate fixed: drag open ground to turn the building": "prato fixo: arraste o terreno livre para rodar o edifício",
+  "drag open ground to turn the plate": "arraste o terreno livre para rodar o prato",
   /* the balconies on Site */
   "Balconies": "Varandas",
   "Balcony": "Varanda",
@@ -12397,7 +12459,7 @@ Object.assign(PT, {
   "A plain bar casts no shade on itself — break the volume or open a patio": "Uma barra simples não se sombreia a si própria — quebre o volume ou abra um pátio",
   "No room for a patio: it needs 2 m of building round it and 2 m clear of any recess — widen or deepen the bar": "Sem espaço para um pátio: precisa de 2 m de edifício à volta e 2 m livres de qualquer recuo — alargue ou aprofunde a barra",
   "Drag the black points on the model: a corner stretches the bar, the break’s point sizes a wing or carves a recess (a U has one on each leg and one in the middle of its court), the patio’s point opens it wider or deeper, a balcony’s round point slides it along the walls and round the corners, its square point sizes it.": "Arraste os pontos pretos no modelo: um canto estica a barra, o ponto da quebra dimensiona uma ala ou escava um recuo (um U tem um em cada perna e um no meio do seu pátio), o ponto do pátio abre-o mais largo ou mais fundo, o ponto redondo de uma varanda desliza-a ao longo das paredes e à volta dos cantos, o seu ponto quadrado dimensiona-a.",
-  "Isometric view, tilted from the south-west. Drag the plan to stretch it, the black knob to turn it, the black points to break it; drive the sun from the Sun controls. The windows are the ones sized on Windows & Shading, spread over every wall and every floor, and the roof is the one set on Roof.": "Vista isométrica, inclinada a partir de sudoeste. Arraste a planta para a esticar, o botão preto para a rodar, os pontos pretos para a quebrar; conduza o sol pelos comandos do Sol. As janelas são as dimensionadas em Janelas e Sombreamento, distribuídas por todas as paredes e todos os pisos, e a cobertura é a definida em Telhado.",
+  "Isometric view on a turning plate. Drag open ground to turn the plate — or, with the plate fixed, to turn the building on it; drag the plan to stretch it, the black knob to turn it, the black points to break it; drive the sun from the Sun controls. The windows are the ones sized on Windows & Shading, spread over every wall and every floor, and the roof is the one set on Roof.": "Vista isométrica sobre um prato que roda. Arraste o terreno livre para rodar o prato — ou, com o prato fixo, para rodar o edifício sobre ele; arraste a planta para a esticar, o botão preto para a rodar, os pontos pretos para a quebrar; conduza o sol pelos comandos do Sol. As janelas são as dimensionadas em Janelas e Sombreamento, distribuídas por todas as paredes e todos os pisos, e a cobertura é a definida em Telhado.",
   "Most glass faces": "Mais vidro virado a",
   "least faces": "menos virado a",
   "windows": "janelas",
