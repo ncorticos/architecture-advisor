@@ -352,6 +352,7 @@ footer{border-top:1px solid var(--line); margin-top:26px; background:var(--wash)
 .fieldstatus:empty{display:none}
 .climbox{gap:6px}
 #setupClimo{display:block; width:100%; height:150px}
+#setupMap{display:block; width:100%; height:230px; border-radius:8px; border:1px solid var(--line2); background:#eceee8}
 .climkey{display:flex; flex-wrap:wrap; align-items:center; gap:4px 6px; font-size:10.5px; color:var(--muted)}
 .climkey i{display:inline-block; width:10px; height:8px; border-radius:2px}
 .climkey i.kp{background:#bcd2ea}
@@ -578,6 +579,11 @@ details.more[open] > summary{color:var(--ink)}
               <select id="selNuts"></select>
               <span class="sub" data-t="fldNutsSub">Seeds the coordinates with the region’s main town and labels the site. With the altitude it sets the SCE climate zones (Manual SCE, Anexo II), and it tunes the Site optimum for Portugal.</span>
             </div>
+          </div>
+          <div class="gh" data-t="ghSiteMap">Site map</div>
+          <div class="sbox">
+            <canvas id="setupMap" role="img" aria-label="Satellite view of the site"></canvas>
+            <span class="sub" data-t="fldMapSub">Satellite view centred on the coordinates above — 900 m across. Change the latitude or longitude and the view follows, so the surroundings can be read before any climate is named.</span>
           </div>
           <div class="gh" data-t="ghCoords">Coordinates</div>
           <div class="sbox two">
@@ -11080,6 +11086,82 @@ function initSetup() {
   }
   initSetup.redraw = () => drawClimo(readNormals());   // the one resize listener below calls the latest
 
+  /* --- Site map: the neighbourhood window, moved to the setup ----------------
+     The same 900 m satellite window Environmental draws as its locator inset
+     (north up, site at the centre, red ring round the model disc), but here it
+     sits above the coordinates and follows them as they are typed, so the
+     student reads roofs, streets, trees and slopes before any climate is
+     named. Tiles are the same Esri World Imagery Environmental uses, loaded
+     by the browser from Esri (which sees the map area asked for, as the
+     privacy note says); a tile still loading redraws on arrival. */
+  const setupMap = $('#setupMap');
+  const SETUP_ACROSS = 900;   // metres across the square, as the locator inset
+  function drawSetupMap() {
+    if (!setupMap || !setupMap.isConnected) return;
+    const W = setupMap.clientWidth, H = setupMap.clientHeight;
+    if (!W || !H) return;
+    const dpr = window.devicePixelRatio || 1;
+    setupMap.width = Math.round(W * dpr); setupMap.height = Math.round(H * dpr);
+    const ctx = setupMap.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.fillStyle = '#eceee8'; ctx.fillRect(0, 0, W, H);
+    const la = parseFloat(lat.value), lo = parseFloat(lon.value);
+    if (!isFinite(la) || !isFinite(lo) || Math.abs(la) > 84) {
+      ctx.fillStyle = CH.muted; ctx.font = F(11); ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(t('Enter the latitude and longitude to see the site'), W / 2, H / 2);
+      return;
+    }
+    const src = TILE_SRC.sat, cosl = Math.cos(la * RAD);
+    const S = Math.min(W, H);
+    const zl = clamp(Math.floor(Math.log2(40075016.686 * cosl * S / (SETUP_ACROSS * 256))) + 1, 10, 17);
+    const mpp = 40075016.686 * cosl / Math.pow(2, zl) / 256;
+    const k = S / SETUP_ACROSS;   // CSS px per metre
+    const xt = (lo + 180) / 360 * Math.pow(2, zl);
+    const lr = la * RAD;
+    const yt = (1 - Math.log(Math.tan(lr) + 1 / Math.cos(lr)) / Math.PI) / 2 * Math.pow(2, zl);
+    const span = SETUP_ACROSS / 2 / (256 * mpp);
+    const cx = W / 2, cy = H / 2;
+    let shown = 0;
+    for (let tx = Math.floor(xt - span); tx <= Math.floor(xt + span); tx++) {
+      for (let ty = Math.floor(yt - span); ty <= Math.floor(yt + span); ty++) {
+        const tile = tileImg(src.url(zl, tx, ty), drawSetupMap);
+        if (!tile.ok || tile.blank) continue;
+        const side = 256 * mpp * k;
+        ctx.drawImage(tile.img, cx + (tx - xt) * side, cy + (ty - yt) * side, side + 0.8, side + 0.8);
+        shown++;
+      }
+    }
+    if (!shown) {
+      ctx.fillStyle = CH.muted; ctx.font = F(11); ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(t('Loading the map…'), W / 2, H / 2);
+    }
+    // frame, site ring + dot, north, scale — the locator inset's marks
+    ctx.strokeStyle = '#fff'; ctx.lineWidth = 3; ctx.strokeRect(0, 0, W, H);
+    ctx.strokeStyle = CH.ink; ctx.lineWidth = 1; ctx.strokeRect(0, 0, W, H);
+    const rr = Math.max(10, 60 * k);
+    ctx.beginPath(); ctx.arc(cx, cy, rr, 0, 6.284);
+    ctx.strokeStyle = '#fff'; ctx.lineWidth = 3; ctx.stroke();
+    ctx.strokeStyle = '#DC2626'; ctx.lineWidth = 1.8; ctx.stroke();
+    ctx.fillStyle = '#DC2626'; ctx.beginPath(); ctx.arc(cx, cy, 2.2, 0, 6.284); ctx.fill();
+    ctx.fillStyle = 'rgba(255,255,255,.9)'; ctx.fillRect(cx - 8, 3, 16, 13);
+    label(ctx, 'N', cx, 9.5, CH.ink, F(9, '700'), 'center', 'middle');
+    const tag = fmt(SETUP_ACROSS, 0) + ' m';
+    ctx.font = FM(8); const tw = ctx.measureText(tag).width;
+    ctx.fillStyle = 'rgba(255,255,255,.9)'; ctx.fillRect(4, H - 16, tw + 12, 12);
+    label(ctx, tag, 7, H - 7.5, CH.ink, FM(8), 'left', 'middle');
+    const cred = src.attr;
+    ctx.font = F(7.5); const cw = Math.min(W - 16, ctx.measureText(cred).width);
+    if (cw > 60) {
+      ctx.fillStyle = 'rgba(255,255,255,.85)'; ctx.fillRect(W - cw - 14, 4, cw + 10, 12);
+      ctx.fillStyle = CH.muted; ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+      ctx.fillText(cred, W - 9, 10, cw);
+    }
+  }
+  let setupMapTimer = 0;
+  const kickSetupMap = () => { clearTimeout(setupMapTimer); setupMapTimer = setTimeout(drawSetupMap, 250); };
+  initSetup.redraw = () => { drawClimo(readNormals()); drawSetupMap(); };
+
+
   /* The SCE zones follow the region, the altitude and the coordinates as
      they are typed, and show once the normals are in as well. */
   const sceHost = $('#sceBlock');
@@ -11094,6 +11176,7 @@ function initSetup() {
   function refresh() {
     const c = readNormals();
     drawClimo(c);
+    kickSetupMap();
     inputs.t.forEach((inp, i) => inp.classList.toggle('miss', c.t[i] === null));
     inputs.p.forEach((inp, i) => inp.classList.toggle('miss', c.p[i] === null || c.p[i] < 0));
     if (!climComplete(c)) {
@@ -11375,6 +11458,7 @@ function initSetup() {
 
   seedCoords();
   refresh();
+  requestAnimationFrame(drawSetupMap);
 }
 
 /* --- the application ------------------------------------------------------- */
@@ -11658,6 +11742,8 @@ Object.assign(STATIC_PT, {
   normTitle: 'Normais mensais',
   normBody: 'Köppen–Geiger é calculado, não consultado, pelo que precisa das doze temperaturas médias mensais e dos doze totais mensais de precipitação. Esta aplicação não traz nenhuns: as normais são dados medidos e ela não tem autoridade para os inventar. Tome-os das <i>normais climatológicas</i> do IPMA para a estação mais próxima, de outro serviço nacional, ou de um produto em grelha como o WorldClim, e identifique a fonte para que a exportação a leve consigo. Os quadros preenchem-se sozinhos por esta ordem: a estação do IPMA incorporada a menos de 5 km das coordenadas acima; onde não houver nenhuma, uma mistura das estações mais próximas, ponderada pelo inverso da distância; e, a pedido, normais da web — reanálise para estas coordenadas exactas. Misturar próximas e Buscar na web só se abrem onde nenhuma estação fica a menos de 5 km. Mude as coordenadas e a escolha refaz-se; escreva nos quadros e eles ficam seus.',
   ghSite: 'O local',
+  ghSiteMap: 'Mapa do local',
+  fldMapSub: 'Vista de satélite centrada nas coordenadas acima — 900 m de lado. Mude a latitude ou a longitude e a vista acompanha, para ler o entorno antes de nomear qualquer clima.',
   ghCoords: 'Coordenadas',
   ghBuilding: 'O edifício',
   ghClimate: 'O clima que fazem',
@@ -12125,6 +12211,7 @@ Object.assign(PT, {
   "the sun is below the horizon": "o sol está abaixo do horizonte",
   "Map tiles unavailable — the plot is drawn without them": "Mosaicos do mapa indisponíveis — o lote é desenhado sem eles",
   "Loading the map…": "A carregar o mapa…",
+  "Enter the latitude and longitude to see the site": "Introduza a latitude e a longitude para ver o local",
   "Imagery: Esri World Imagery — Esri, Maxar, Earthstar Geographics and the GIS User Community":
     "Imagem: Esri World Imagery — Esri, Maxar, Earthstar Geographics e a GIS User Community",
   "Map © OpenStreetMap contributors": "Mapa © contribuidores do OpenStreetMap",
