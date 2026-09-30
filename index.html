@@ -440,6 +440,12 @@ footer{border-top:1px solid var(--line); margin-top:26px; background:var(--wash)
 .sce-ic svg{display:block; width:78px; height:68px; margin:0 auto; padding:2px 3px; box-sizing:border-box;
   border:1px solid var(--line); border-radius:8px; background:#fff}
 .sce-ic figcaption{font-size:10.5px; line-height:1.3; color:var(--ink2); margin-top:4px}
+.rec-ori{display:flex; gap:12px; align-items:flex-start; margin:8px 0 2px}
+.rec-ori figure{margin:0; flex:0 0 auto}
+.rec-ori svg{display:block; width:196px; max-width:44vw; height:auto; border:1px solid var(--line); border-radius:8px; background:#fff}
+.rec-ori figcaption{font-size:10.5px; color:var(--muted); text-align:center; margin-top:4px}
+.rec-ori .leadside{min-width:0}
+.rec-ics{margin-top:10px}
 .sce-wait{display:flex; align-items:center; gap:12px}
 .sce-wait .zb{background:var(--wash); color:var(--faint); border:1px dashed var(--line2); font-size:15px}
 .sce-wait p{margin:0; font-size:12px; color:var(--muted); line-height:1.5}
@@ -4622,19 +4628,64 @@ function buildEnvironment(host) {
   const rec = lower.appendChild(el('div'));
   rec.appendChild(section('The recommendation for this site', K.code + ' · ' + fmt(Math.abs(lat), 1) + '° ' + (lat < 0 ? 'S' : 'N')));
   const leadId = orientationLead(K.code, K.main);
-  rec.appendChild(hint(leadId, {
+  const LEAD_TXT = {
     'ori-lead-Csa': 'Elongate the plan east–west on one storey — up to 1:1.6 where the year is continental, 1:1.3 by the sea — so the long facades face south and north; open the living rooms south with fixed plus movable shade; keep the west nearly blind; let mass and night ventilation carry July and August.',
     'ori-lead-Csb': 'Keep the plan compact on two storeys — 1:1.3 on the coast, squarer to 1:1.1 in the cold interior, still east–west; generous south glass for the winter with light fixed shade for a short summer; cross ventilation and moderate mass.',
     'ori-lead-Cfb': 'Daylight and wind govern, not heat: shallow plan for daylight, high windows to the south and south-east, shelter the north from prevailing Atlantic winds and driving rain, moderate inertia against condensation.',
     'ori-lead-B': 'The daily swing is the resource: compact form, small openings except a south mass or Trombe wall, heavy mass discharged by night ventilation; patio or earth tempering where the slope allows.',
     'ori-lead-none': 'Apply the hemisphere rule below: collect winter sun from the south, refuse summer sun from the east and above all the west.'
-  }[leadId]));
-  rec.appendChild(hint('ori-form',
+  };
+  /* --- drawn as well as written: the plan keeps the lead's own ratio and
+     storeys, in the ink of the setup page's strategy icons — south glass,
+     a blind west end that no overhang can shade, diffuse north light. */
+  const ORI_RATIO = { 'ori-lead-Csa':1.6, 'ori-lead-Csb':1.3, 'ori-lead-Cfb':1.4, 'ori-lead-B':1.1, 'ori-lead-none':1.3 };
+  const ORI_STOREY = { 'ori-lead-Csa':'one storey', 'ori-lead-Csb':'two storeys', 'ori-lead-Cfb':'shallow plan', 'ori-lead-B':'compact, heavy mass', 'ori-lead-none':'' };
+  const oriPlanSVG = (r, heavy, upper) => {
+    const INK = '#3a3f44', ROOM = '#ECE6DC', COLD = '#6FA8DC', DARK = '#14171a';
+    const w = Math.min(148, 56 * r), h = 56, x = (196 - w) / 2, y = 52;
+    let s = '<g fill="none" stroke="' + INK + '" stroke-width="1.3" stroke-linecap="round">'
+      + '<path d="M' + (x - 14) + ' 14v14M' + (x - 17) + ' 17l3 -4 3 4" stroke-width="1.6"/></g>'
+      + '<text x="' + (x - 14) + '" y="36" font-size="8" text-anchor="middle" fill="' + INK + '" font-family="Arial,sans-serif" font-weight="700">N</text>';
+    if (upper) s += '<rect x="' + (x + 7) + '" y="' + (y - 8) + '" width="' + w + '" height="' + h + '" fill="none" stroke="' + INK + '" stroke-width="1" stroke-dasharray="3 2" opacity="0.65"/>';
+    s += '<rect x="' + x + '" y="' + y + '" width="' + w + '" height="' + h + '" fill="' + (heavy ? '#9AA0A6' : ROOM) + '" stroke="' + INK + '" stroke-width="1.6"/>';
+    if (heavy) s += '<rect x="' + (x + 5) + '" y="' + (y + 5) + '" width="' + (w - 10) + '" height="' + (h - 10) + '" fill="' + ROOM + '" stroke="none"/>';
+    const gw = w / 5;
+    for (let k = 0; k < 3; k++) { const gx = x + w * (0.22 + 0.28 * k);
+      s += '<path d="M' + gx.toFixed(1) + ' ' + (y + h) + 'h' + gw.toFixed(1) + '" stroke="' + COLD + '" stroke-width="3.4" stroke-linecap="round"/>'; }
+    s += '<path d="M' + x + ' ' + y + 'V' + (y + h) + '" stroke="' + DARK + '" stroke-width="4.5" stroke-linecap="round"/>';
+    for (let k = 0; k < 3; k++) s += '<circle cx="' + (x + w * (0.25 + 0.25 * k)).toFixed(1) + '" cy="' + (y - 7) + '" r="1.4" fill="#B9BDC2"/>';
+    s += '<text x="' + (x + w / 2) + '" y="130" font-size="8" text-anchor="middle" fill="' + INK + '" font-family="Arial,sans-serif" font-weight="700">S</text>'
+      + '<text x="' + (x - 8) + '" y="' + (y + h / 2 + 3) + '" font-size="8" text-anchor="middle" fill="' + INK + '" font-family="Arial,sans-serif" font-weight="700">W</text>'
+      + '<text x="' + (x + w + 8) + '" y="' + (y + h / 2 + 3) + '" font-size="8" text-anchor="middle" fill="' + INK + '" font-family="Arial,sans-serif" font-weight="700">E</text>';
+    return '<svg viewBox="0 0 196 138" role="img" aria-label="' + t('Orientation diagram') + '">' + s + '</svg>';
+  };
+  const oriSide = el('div', { class:'leadside' });
+  oriSide.appendChild(hint(leadId, LEAD_TXT[leadId]));
+  oriSide.appendChild(hint('ori-form',
     'Long axis east–west, short ends east and west (Ching &amp; Shapiro; DeKay &amp; Brown): the south facade collects the winter, the north gives diffuse light, and the two ends that no overhang can shade stay short.'));
+  const oriFig = el('figure', {});
+  oriFig.innerHTML = oriPlanSVG(ORI_RATIO[leadId] || 1.3, leadId === 'ori-lead-B', leadId === 'ori-lead-Csb')
+    + '<figcaption>1 : ' + (ORI_RATIO[leadId] || 1.3) + (ORI_STOREY[leadId] ? ' · ' + t(ORI_STOREY[leadId]) : '') + '</figcaption>';
+  rec.appendChild(el('div', { class:'rec-ori' }, [oriFig, oriSide]));
   const note = KOPPEN_NOTE[K.code];
   rec.appendChild(section('What this climate asks of a building', K.code + (note ? ' · ' + t(mainName) : '')));
   rec.appendChild(note ? hint('clim-note-' + K.code, note) : hint('clim-note-none',
     'The shared bibliography is written for temperate and Mediterranean building and does not treat <b>%1</b> directly. The pages that follow still compute their geometry from this site’s own latitude and normals, but where a guideline is quoted from a book it will be a guideline written for another climate — read it as a method, not as a number to adopt.', [K.code]));
+  /* --- the strategies as figures, in the setup page's own icon family:
+     what the building does, then what its surroundings do. */
+  const REC_ICONS = {
+    Csa:{ B:['shade', 'mass', 'night'], S:['sun', 'canopy', 'breeze'] },
+    Csb:{ B:['gain', 'shade', 'xvent'], S:['sun', 'canopy', 'breeze'] },
+    Csc:{ B:['gain', 'mass', 'insul'], S:['sun', 'shelter', 'slope'] },
+    Cfa:{ B:['shade', 'xvent', 'night'], S:['sun', 'breeze', 'canopy'] },
+    Cfb:{ B:['gain', 'xvent', 'insul'], S:['breeze', 'shelter', 'canopy'] },
+    BSk:{ B:['mass', 'night', 'solar'], S:['sun', 'surface', 'slope'] },
+    BSh:{ B:['shade', 'mass', 'night', 'evap'], S:['sun', 'surface', 'water'] }
+  };
+  const RI = REC_ICONS[K.code] || { B:['gain', 'shade'], S:['sun', 'breeze'] };
+  const strip = kinds => { const d = el('div', { class:'sce-ics rec-ics' }); d.innerHTML = kinds.map(k => sceFig(k[0], k[1])).join(''); return d; };
+  rec.appendChild(strip(RI.B.map(k => [k, 'B'])));
+  rec.appendChild(strip(RI.S.map(k => [k, 'S'])));
 
   /* the rest, folded: open what the design needs */
   const fold = (title, kids) => host.appendChild(el('details', { class:'more' }, [el('summary', { text:title })].concat(kids)));
@@ -12266,6 +12317,9 @@ Object.assign(PT, {
   "Olgyay adapted to Portugal": "Olgyay adaptado a Portugal",
   "one storey": "um piso",
   "two storeys": "dois pisos",
+  "shallow plan": "planta pouco profunda",
+  "compact, heavy mass": "compacta, massa pesada",
+  "Orientation diagram": "Diagrama de orientação",
   "east of south": "a leste do sul",
   "annual range": "amplitude anual",
   "coldest month": "mês mais frio",
