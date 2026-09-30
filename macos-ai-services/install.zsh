@@ -5,14 +5,14 @@
 #   zsh install.zsh --uninstall   remove the AI: Services and put the old Claude: ones back
 #
 # Straight from GitHub, in Terminal:
-#   curl -fsSL https://raw.githubusercontent.com/ncorticos/architecture-advisor/claude/exciting-shannon-33prun/macos-ai-services/install.zsh | zsh
+#   curl -fsSL https://raw.githubusercontent.com/ncorticos/architecture-advisor-pt/claude/exciting-shannon-33prun/macos-ai-services/install.zsh | zsh
 # (if that branch has been merged, add AI_SERVICES_REF=main before zsh)
 
 emulate -R zsh
 setopt pipe_fail extended_glob no_nomatch
 zmodload zsh/datetime
 
-REPO=ncorticos/architecture-advisor
+REPO=ncorticos/architecture-advisor-pt
 REF=${AI_SERVICES_REF:-claude/exciting-shannon-33prun}
 DEST=${AI_SERVICES_HOME:-$HOME/Library/Application Support/AI Services}
 SERVICES=${AI_SERVICES_DIR:-$HOME/Library/Services}

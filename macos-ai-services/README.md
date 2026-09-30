@@ -44,7 +44,7 @@ Requirements
 In Terminal:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/ncorticos/architecture-advisor/claude/exciting-shannon-33prun/macos-ai-services/install.zsh | zsh
+curl -fsSL https://raw.githubusercontent.com/ncorticos/architecture-advisor-pt/claude/exciting-shannon-33prun/macos-ai-services/install.zsh | zsh
 ```
 
 (After this branch is merged, put `AI_SERVICES_REF=main` before `zsh`.) Or download this folder and run `zsh install.zsh`.
