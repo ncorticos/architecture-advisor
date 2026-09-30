@@ -6097,8 +6097,17 @@ function buildSite(host) {
           else if (G.form === 'T') wg.w = 2 * Math.abs(l.u);
           else wg.w = G.L / 2 - Math.abs(l.u);
           wg.e = G.form === 'H' ? Math.abs(l.v) - G.D / 2 : r;
+          /* which side of the face the pointer is on — the release below
+             settles there instead of stalling on the face itself */
+          drag.faceR = (G.form === 'T' || G.form === 'L') ? r : null;
         }
         fixWing(G);
+        /* the leg goes negative into the volume: a T/L point dragged past
+           the face must not rest on it — inside the line it is already a
+           recess, outside it a wing, with no dead stop between */
+        if ((G.form === 'T' || G.form === 'L') && G.wing && G.wing.e > -0.5 && G.wing.e < 0.5) {
+          G.wing.e = r < -0.05 ? -0.5 : r > 0.05 ? 0.5 : 0;
+        }
         syncMode();
       }
       fixWing(G);
@@ -6142,7 +6151,18 @@ function buildSite(host) {
     }
     labDraw();
   });
-  const endDrag = () => { drag = null; cv.style.cursor = 'grab'; };
+  const endDrag = () => {
+    /* the leg crosses the facade instead of stopping on it: let go with the
+       pointer inside the bar and the T/L leg is already a recess; let go
+       outside and it stands out; let go on the line itself and the plain
+       bar returns. The bar's own sliders never move — only the leg does. */
+    if (drag && drag.kind === 'vertex' && drag.id === 'wing' && (G.form === 'T' || G.form === 'L')
+        && G.wing && Math.abs(G.wing.e) < 0.5 && drag.faceR !== null && drag.faceR !== undefined) {
+      const side = drag.faceR < -0.1 ? -0.5 : drag.faceR > 0.1 ? 0.5 : 0;
+      if (side !== G.wing.e) { G.wing.e = side; fixWing(G); syncMode(); labDraw(); }
+    }
+    drag = null; cv.style.cursor = 'grab';
+  };
   cv.addEventListener('pointerup', endDrag);
   cv.addEventListener('pointercancel', endDrag);
   refreshLab();
