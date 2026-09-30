@@ -689,6 +689,36 @@ details.more[open] > summary{color:var(--ink)}
           </div>
         </div>
 
+          <div class="gh" data-t="ghImport">Imported model</div>
+          <div class="sbox">
+            <div class="fld">
+              <label for="inpModelFile" data-t="fldImportFile">Model file</label>
+              <input type="file" id="inpModelFile" accept=".obj,.dxf,.ifc">
+              <span class="sub" data-t="fldImportSub">A model drawn in another app, in a format this application also exports: .obj, .dxf or .ifc. The file is read in this browser and never uploaded. Its overall size reshapes the plan below, and its surfaces show as a ghost in the 3D views; the plan itself stays rectangular.</span>
+            </div>
+            <div class="fld">
+              <label data-t="fldImportUnit">File units</label>
+              <div class="seg" id="segImportUnit" role="group" aria-label="File units">
+                <button type="button" data-u="1" aria-pressed="true">m</button>
+                <button type="button" data-u="0.01" aria-pressed="false">cm</button>
+                <button type="button" data-u="0.001" aria-pressed="false">mm</button>
+              </div>
+            </div>
+            <div class="fld">
+              <label data-t="fldImportUp">Up axis in the file</label>
+              <div class="seg" id="segImportUp" role="group" aria-label="Up axis in the file">
+                <button type="button" data-up="Y" aria-pressed="true">Y</button>
+                <button type="button" data-up="Z" aria-pressed="false">Z</button>
+              </div>
+            </div>
+            <span class="fieldstatus" id="importStatus"></span>
+            <div class="srcrow">
+              <button type="button" class="btn solid" id="btnImportAdopt" data-t="btnImportAdopt" disabled>Adopt as the massing</button>
+              <button type="button" class="btn" id="btnImportRemove" data-t="btnImportRemove" disabled>Remove</button>
+            </div>
+          </div>
+        </div>
+
         <div class="s-norm panel normals" id="normalsBlock">
           <div class="panel-head"><div class="panel-title">
             <h3 data-t="normTitle">Monthly normals</h3>
@@ -3338,6 +3368,145 @@ const STATE = { site:null, clim:null, tab:null, home:null, setupSync:null, note:
    that writes them into KEEP, and reads them back as it builds. */
 const KEEP = {}, KEEPERS = [];
 
+/* --- an imported model: the student's own massing, read in this browser ---
+   A file in any format this application exports (.obj, .dxf, .ifc) is parsed
+   here — vertices and 3D faces only (.obj f, .dxf 3DFACE and polyface meshes,
+   .ifc triangulated facesets as this application's own export writes them;
+   a closed 2D .dxf outline gives a footprint with no surfaces). Nothing is
+   uploaded; the triangles never leave this browser and live only in this
+   page's memory. The file's overall size reshapes the parametric bar the
+   tabs compute on; its surfaces show as a translucent ghost in the 3D
+   views. The plan itself stays rectangular — an imported free form is a
+   massing reference, not a new plan engine. */
+const IMPORT = { name:null, text:null, tris:[], show:[], L:0, D:0, H:0, flat:null, unit:1, up:'Y', active:false };
+const IMPFILL = 'rgba(37,99,235,0.20)';
+const IMPORT_MAX_TRIS = 6000, IMPORT_MAX_MB = 15;
+/** Triangles as read: OBJ faces (fan-triangulated), 1-based, /-separated. */
+function parseImportOBJ(text) {
+  const V = [], T = [];
+  text.split(/\r?\n/).forEach(ln => {
+    ln = ln.trim();
+    if (!ln || ln[0] === '#') return;
+    const p = ln.split(/\s+/);
+    if (p[0] === 'v' && p.length >= 4 && p.slice(1, 4).every(isFinite)) V.push([+p[1], +p[2], +p[3]]);
+    else if (p[0] === 'f' && p.length >= 4) {
+      const ix = p.slice(1).map(q => { const v = parseInt(q.split('/')[0], 10); return v < 0 ? V.length + v : v - 1; });
+      if (ix.some(i => !(i >= 0 && i < V.length))) return;
+      for (let k = 1; k < ix.length - 1; k++) T.push([V[ix[0]], V[ix[k]], V[ix[k + 1]]]);
+    }
+  });
+  return { tris:T, flat:null };
+}
+/** ASCII DXF entities: 3DFACE quads (a repeated corner makes a triangle)
+    and polyface meshes (POLYLINE 70&64 with 71–74 face records). */
+function parseImportDXF(text) {
+  const lines = text.split(/\r?\n/), recs = [];
+  for (let i = 0; i + 1 < lines.length; i += 2) recs.push([parseInt(lines[i].trim(), 10), (lines[i + 1] || '').trim()]);
+  const T = [], closed = [];
+  let i = 0;
+  while (i < recs.length) {
+    if (recs[i][0] === 0 && (recs[i][1] === '3DFACE' || recs[i][1] === 'SOLID' || recs[i][1] === 'TRACE')) {
+      const g = {};
+      i++;
+      while (i < recs.length && recs[i][0] !== 0) { if (!(recs[i][0] in g)) g[recs[i][0]] = +recs[i][1]; i++; }
+      const P = [[g[10], g[20], g[30]], [g[11], g[21], g[31]], [g[12], g[22], g[32]], [g[13], g[23], g[33]]];
+      if (P.every(q => q.every(isFinite))) {
+        T.push([P[0], P[1], P[2]]);
+        if (Math.hypot(P[3][0] - P[2][0], P[3][1] - P[2][1], P[3][2] - P[2][2]) > 1e-9) T.push([P[0], P[2], P[3]]);
+      }
+      continue;
+    }
+    if (recs[i][0] === 0 && recs[i][1] === 'POLYLINE') {
+      let flags = 0;
+      i++;
+      while (i < recs.length && recs[i][0] !== 0) { if (recs[i][0] === 70) flags = +recs[i][1]; i++; }
+      if (flags & 64) {
+        const VV = [];
+        let done = false;
+        while (i < recs.length && !done) {
+          if (recs[i][0] === 0 && recs[i][1] === 'SEQEND') { i++; done = true; break; }
+          if (recs[i][0] === 0 && recs[i][1] === 'VERTEX') {
+            const v = {};
+            i++;
+            while (i < recs.length && recs[i][0] !== 0) { if (!(recs[i][0] in v)) v[recs[i][0]] = +recs[i][1]; i++; }
+            if (v[70] !== undefined && (v[70] & 128)) {
+              const f = [v[71], v[72], v[73], v[74]].map(x => (x === undefined ? 0 : Math.abs(x))).filter(x => x > 0 && x <= VV.length);
+              for (let k = 1; k < f.length - 1; k++) T.push([VV[f[0] - 1], VV[f[k] - 1], VV[f[k + 1] - 1]]);
+            } else if (isFinite(v[10]) && isFinite(v[20])) VV.push([v[10], v[20], v[30] === undefined ? 0 : v[30]]);
+            continue;
+          }
+          i++;
+        }
+        continue;
+      }
+      continue;
+    }
+    if (recs[i][0] === 0 && recs[i][1] === 'LWPOLYLINE') {
+      const pts = [];
+      let shut = false;
+      i++;
+      while (i < recs.length && recs[i][0] !== 0) {
+        if (recs[i][0] === 70 && (+recs[i][1] & 1)) shut = true;
+        if (recs[i][0] === 10) pts.push([+recs[i][1], NaN]);
+        if (recs[i][0] === 20 && pts.length && isNaN(pts[pts.length - 1][1])) pts[pts.length - 1][1] = +recs[i][1];
+        i++;
+      }
+      const ok = pts.filter(q => q.every(isFinite));
+      if (shut && ok.length >= 3) closed.push(ok);
+      continue;
+    }
+    i++;
+  }
+  return { tris:T, flat:closed.length ? closed : null };
+}
+/** This application's own IFC: IFCCARTESIANPOINTLIST3D lists resolved by
+    the IFCTRIANGULATEDFACESET CoordIndex triples that cite them. */
+function parseImportIFC(text) {
+  const pls = new Map(), T = [];
+  let m;
+  const plRe = /#(\d+)\s*=\s*IFCCARTESIANPOINTLIST3D\(\((.*?)\)\)\s*;/gs;
+  while ((m = plRe.exec(text))) {
+    const pts = [], re = /\(\s*([-\d.Ee+]+)\s*,\s*([-\d.Ee+]+)\s*,\s*([-\d.Ee+]+)\s*\)/g;
+    let q;
+    while ((q = re.exec(m[2]))) pts.push([+q[1], +q[2], +q[3]]);
+    if (pts.length && pts.every(q2 => q2.every(isFinite))) pls.set(+m[1], pts);
+  }
+  const fsRe = /#\d+\s*=\s*IFCTRIANGULATEDFACESET\(#(\d+)(.*?);/gs;
+  while ((m = fsRe.exec(text))) {
+    const pts = pls.get(+m[1]);
+    if (!pts) continue;
+    const re = /\((\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)/g;
+    let q;
+    while ((q = re.exec(m[2]))) {
+      const f = [+q[1] - 1, +q[2] - 1, +q[3] - 1];
+      if (f.every(k => k >= 0 && k < pts.length)) T.push([pts[f[0]], pts[f[1]], pts[f[2]]]);
+    }
+  }
+  return { tris:T, flat:null };
+}
+/** Metres, Z-up, centred on its footprint with its base at z = 0; capped
+    for the canvas painters. Returns null where there is nothing to show. */
+function importNormalize(raw, unit, up) {
+  const area = t => Math.abs((t[1][0] - t[0][0]) * (t[2][1] - t[0][1]) - (t[2][0] - t[0][0]) * (t[1][1] - t[0][1])
+    + (t[1][1] - t[0][1]) * (t[2][2] - t[0][2]) - (t[2][1] - t[0][1]) * (t[1][2] - t[0][2])
+    + (t[1][2] - t[0][2]) * (t[2][0] - t[0][0]) - (t[2][2] - t[0][2]) * (t[1][0] - t[0][0])) / 2;
+  let pts = raw.map(t => t.map(p => up === 'Y' ? [p[0] * unit, -p[2] * unit, p[1] * unit] : [p[0] * unit, p[1] * unit, p[2] * unit]));
+  pts = pts.filter(t => t.every(q => q.every(isFinite)) && area(t) > 1e-9);
+  if (!pts.length) return null;
+  let x0 = 1e18, x1 = -1e18, y0 = 1e18, y1 = -1e18, z0 = 1e18, z1 = -1e18;
+  pts.forEach(t => t.forEach(q => { x0 = Math.min(x0, q[0]); x1 = Math.max(x1, q[0]); y0 = Math.min(y0, q[1]); y1 = Math.max(y1, q[1]); z0 = Math.min(z0, q[2]); z1 = Math.max(z1, q[2]); }));
+  const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2, s = 1.004;   // a hair proud, so it never z-fights the bar it sizes
+  const show = pts.map(t => t.map(q => [(q[0] - cx) * s, (q[1] - cy) * s, q[2] - z0]));
+  const stride = Math.max(1, Math.ceil(show.length / IMPORT_MAX_TRIS));
+  return { show:show.filter((_, k) => k % stride === 0), L:x1 - x0, D:y1 - y0, H:z1 - z0, n:pts.length };
+}
+/** The imported ghost into any building painter's face list (plan-local
+    metres; map translates, as the Environmental view's world frame does). */
+function pushImportFaces(arr, map) {
+  if (!IMPORT.active || !IMPORT.show.length) return;
+  for (const t of IMPORT.show) arr.push({ pts:map ? t.map(map) : t, fill:IMPFILL, import:true });
+}
+
 /**
  * Twelve monthly mean temperatures, °C, and twelve monthly precipitation
  * totals, mm, January first. The application ships neither: monthly normals
@@ -4238,8 +4407,10 @@ function buildEnvironment(host) {
       sunUp:sun.alt > 0.5, sunlit:stat.sunlit, shaded:stat.shaded };
     const dep = f2 => f2.pts.reduce((a, q) => a + depthOf(FR, q[0], q[1], q[2]), 0) / f2.pts.length;
     const path3 = pts3 => { ctx.beginPath(); pts3.forEach((q, i) => { const p2 = pt(q[0], q[1], q[2]); i ? ctx.lineTo(p2[0], p2[1]) : ctx.moveTo(p2[0], p2[1]); }); ctx.closePath(); };
+    pushImportFaces(faces, wQ);
     faces.sort((p1, q1) => dep(q1) - dep(p1)).forEach(f2 => {
       if (f2.balc) { balcFace(ctx, f2.balc, P3e); return; }
+      if (f2.import) { path3(f2.pts); ctx.fillStyle = f2.fill; ctx.fill(); return; }
       path3(f2.pts);
       if (!(f2.nb && f2.nb.ghost)) { ctx.fillStyle = f2.fill; ctx.fill(); }
       if (f2.nb) {
@@ -5463,9 +5634,11 @@ function buildSite(host) {
           if (nW[0] * camDir.x + nW[1] * camDir.y + 1 <= 1e-6) return;   // a slope turned away from the camera
           faces.push({ pc, pts:pc.poly.map(q => [q[0], q[1], RM.zOf(f, q[0], q[1])]) });
         });
+        pushImportFaces(faces);
         faces.sort((p, q) => dep(q.pts) - dep(p.pts) || (p.balc ? 1 : 0) - (q.balc ? 1 : 0)).forEach(fc => {
           const scr = fc.pts.map(q => at(q[0], q[1], beta, q[2]));
           if (fc.balc) { desk.path(scr, true); balcFace(ctx, fc.balc, P3s); return; }
+          if (fc.import) { outline(scr, true); ctx.fillStyle = fc.fill; ctx.fill(); return; }
           outline(scr, true);
           if (fc.pc) {
             const f = fc.pc.f, kk = ROOF.n === 0 ? 1 : 0.87 + 0.11 * f.b + 0.05 * f.a;
@@ -6389,8 +6562,10 @@ function buildRoof(host) {
         faces.push({ pts:pc.poly.map(q => [q[0], q[1], M.zOf(f, q[0], q[1])]), fill:opaque(roofFill(0.2 + 0.3 * (1 - k), k)), pc });
       });
       const depth = F => F.pts.reduce((a, q) => a + camDepth(A, q[0], q[1], q[2]), 0) / F.pts.length;
+      pushImportFaces(faces);
       faces.sort((p, q) => depth(q) - depth(p)).forEach(F => {
         if (F.balc) { desk.path(F.pts.map(P3), true); balcFace(ctx, F.balc, P3); return; }
+        if (F.import) { const p = pathOf(F.pts); ctx.fillStyle = F.fill; ctx.fill(); return; }
         const p = pathOf(F.pts);
         ctx.fillStyle = F.fill; ctx.fill();
         if (F.pc) {
@@ -7210,8 +7385,10 @@ function buildOpenings(host) {
         items.push({ pts:pc.poly.map(q => [q[0], q[1], Mm.zOf(f, q[0], q[1])]), fill:opaque(roofFill(0.2 + 0.3 * (1 - k), k)), pc });
       });
       const depth = it => it.pts.reduce((a, q) => a + camDepth(A, q[0], q[1], q[2]), 0) / it.pts.length - (it.dev ? 0.01 : 0);
+      pushImportFaces(items);
       items.sort((p, q) => depth(q) - depth(p)).forEach(it => {
         if (it.balc) { balcFace(ctx, it.balc, P3); return; }
+        if (it.import) { pathOf(it.pts); ctx.fillStyle = it.fill; ctx.fill(); return; }
         if (it.dev) {
           const act = it.dev.f === curFace, ov = it.dev.kind === 'ov';
           poly(it.pts, ov ? (act ? 'rgba(217,119,6,.35)' : 'rgba(217,119,6,.2)') : (act ? 'rgba(220,38,38,.3)' : 'rgba(220,38,38,.18)'), ov ? '#D97706' : '#DC2626', act ? 1.4 : 1.1);
@@ -9512,8 +9689,10 @@ function buildVentilation(host) {
     });
     const depthV = it => it.pts.reduce((a2, q) => a2 + camDepth(q[0], q[1], q[2]), 0) / it.pts.length - (it.dev ? 0.01 : 0);
     const pathV = pts3 => { ctx.beginPath(); pts3.forEach((q, i) => { const p2 = proj(q[0], q[1], q[2]); i ? ctx.lineTo(p2[0], p2[1]) : ctx.moveTo(p2[0], p2[1]); }); ctx.closePath(); };
+    pushImportFaces(items);
     items.sort((p1, q1) => depthV(q1) - depthV(p1)).forEach(it => {
       if (it.balc) { balcFace(ctx, it.balc, P3v); return; }
+      if (it.import) { pathV(it.pts); ctx.fillStyle = it.fill; ctx.fill(); return; }
       if (it.dev) { poly(it.pts, it.dev.ov ? 'rgba(217,119,6,.22)' : 'rgba(220,38,38,.18)', it.dev.ov ? '#D97706' : '#DC2626', 1.2); return; }
       pathV(it.pts); ctx.fillStyle = it.fill; ctx.fill();
       if (it.pc) {
@@ -11826,6 +12005,96 @@ function initSetup() {
   if (btnWeb) btnWeb.addEventListener('click', () => { fetchWebNormals(); });
   srcInp.addEventListener('change', () => fillFromSource(true));
 
+  /* --- imported model: read locally, adopt as the massing ------------------
+     The file never leaves this browser: FileReader parses .obj faces,
+     .dxf 3D faces/polyface meshes (or a closed 2D outline as a footprint),
+     and the triangulated facesets of this application's own .ifc export.
+     Adopting stores the overall size; Work through the design reshapes the
+     plan to it, and the surfaces show as a ghost in every 3D view. */
+  const fileInp = $('#inpModelFile'), impStatus = $('#importStatus');
+  const btnAdopt = $('#btnImportAdopt'), btnRemove = $('#btnImportRemove');
+  const unitBtns = $$('#segImportUnit button'), upBtns = $$('#segImportUp button');
+  function refreshImportUI() {
+    unitBtns.forEach(b => b.setAttribute('aria-pressed', String(+b.dataset.u === IMPORT.unit)));
+    upBtns.forEach(b => b.setAttribute('aria-pressed', String(b.dataset.up === IMPORT.up)));
+    if (btnAdopt) btnAdopt.disabled = !IMPORT.tris.length && !IMPORT.flat;
+    if (btnRemove) btnRemove.disabled = !IMPORT.active && !IMPORT.tris.length && !IMPORT.flat;
+    if (impStatus) impStatus.textContent = IMPORT.note || '';
+  }
+  function parseImportNow() {
+    if (!IMPORT.text) return;
+    const out = IMPORT.ext === '.obj' ? parseImportOBJ(IMPORT.text)
+      : IMPORT.ext === '.dxf' ? parseImportDXF(IMPORT.text) : parseImportIFC(IMPORT.text);
+    IMPORT.tris = out.tris;
+    const norm = importNormalize(out.tris, IMPORT.unit, IMPORT.up);
+    if (norm) {
+      IMPORT.show = norm.show; IMPORT.L = norm.L; IMPORT.D = norm.D; IMPORT.H = norm.H; IMPORT.flat = null;
+      IMPORT.note = t('{} triangles · {} × {} × {} m').replace('{}', String(norm.n))
+        .replace('{}', fmt(norm.L, 1)).replace('{}', fmt(norm.D, 1)).replace('{}', fmt(norm.H, 1));
+    } else if (out.flat) {
+      let x0 = 1e18, x1 = -1e18, y0 = 1e18, y1 = -1e18;
+      out.flat.forEach(ring => ring.forEach(q => { x0 = Math.min(x0, q[0]); x1 = Math.max(x1, q[0]); y0 = Math.min(y0, q[1]); y1 = Math.max(y1, q[1]); }));
+      IMPORT.show = []; IMPORT.L = (x1 - x0) * IMPORT.unit; IMPORT.D = (y1 - y0) * IMPORT.unit; IMPORT.H = 0; IMPORT.flat = true;
+      IMPORT.note = t('{} closed outlines · {} × {} m — outline only, no surfaces to show')
+        .replace('{}', String(out.flat.length)).replace('{}', fmt(IMPORT.L, 1)).replace('{}', fmt(IMPORT.D, 1));
+    } else {
+      IMPORT.show = []; IMPORT.L = IMPORT.D = IMPORT.H = 0; IMPORT.flat = null;
+      IMPORT.note = t('No 3D faces (or closed outlines) found in that file — .obj needs f, .dxf needs 3DFACE or polyface meshes, .ifc needs triangulated facesets.');
+    }
+    IMPORT.active = false;
+    refreshImportUI();
+  }
+  if (fileInp) fileInp.addEventListener('change', () => {
+    const f = fileInp.files && fileInp.files[0];
+    if (!f) return;
+    const ext = '.' + ((f.name.split('.').pop() || '').toLowerCase());
+    if (['.obj', '.dxf', '.ifc'].indexOf(ext) < 0) {
+      IMPORT.note = t('That extension is not imported — .obj, .dxf or .ifc, the formats Export 3D writes.');
+      refreshImportUI();
+      return;
+    }
+    if (f.size > IMPORT_MAX_MB * 1048576) {
+      IMPORT.note = t('That file is too large to read in the browser ({} MB) — export a lighter mesh.').replace('{}', (f.size / 1048576).toFixed(1));
+      refreshImportUI();
+      return;
+    }
+    const rd = new FileReader();
+    rd.onload = () => { IMPORT.name = f.name; IMPORT.ext = ext; IMPORT.text = String(rd.result || ''); parseImportNow(); };
+    rd.onerror = () => { IMPORT.note = t('That file could not be read — try exporting it again.'); refreshImportUI(); };
+    rd.readAsText(f);
+  });
+  unitBtns.forEach(b => b.addEventListener('click', () => {
+    unitBtns.forEach(x => x.setAttribute('aria-pressed', 'false'));
+    b.setAttribute('aria-pressed', 'true');
+    IMPORT.unit = +b.dataset.u;
+    parseImportNow();
+  }));
+  upBtns.forEach(b => b.addEventListener('click', () => {
+    upBtns.forEach(x => x.setAttribute('aria-pressed', 'false'));
+    b.setAttribute('aria-pressed', 'true');
+    IMPORT.up = b.dataset.up;
+    parseImportNow();
+  }));
+  if (btnAdopt) btnAdopt.addEventListener('click', () => {
+    if (!IMPORT.tris.length && !IMPORT.flat) return;
+    IMPORT.active = true;
+    const L = clamp(Math.round(IMPORT.L * 2) / 2, 6, 24), D = clamp(Math.round(IMPORT.D * 2) / 2, 4, 16);
+    const fl = clamp(Math.max(1, Math.round(IMPORT.H / 3)), 1, 3);
+    const cl = L !== Math.round(IMPORT.L * 2) / 2 || D !== Math.round(IMPORT.D * 2) / 2;
+    IMPORT.note = t('Adopted — the plan takes {} × {} m, {} floors on Work through the design; the mesh shows in the 3D views.')
+      .replace('{}', fmt(L, 1)).replace('{}', fmt(D, 1)).replace('{}', String(fl)) + (cl ? ' ' + t('(clamped to the plan limits)') : '');
+    refreshImportUI();
+    toast(t('Import adopted — Work through the design to build on it'));
+  });
+  if (btnRemove) btnRemove.addEventListener('click', () => {
+    IMPORT.name = IMPORT.text = null; IMPORT.ext = null;
+    IMPORT.tris = []; IMPORT.show = []; IMPORT.L = IMPORT.D = IMPORT.H = 0; IMPORT.flat = null; IMPORT.active = false;
+    if (fileInp) fileInp.value = '';
+    IMPORT.note = t('Import removed.');
+    refreshImportUI();
+  });
+  refreshImportUI();
+
   go.addEventListener('click', () => {
     const c = readNormals();
     if (!climComplete(c)) { toast('The twelve pairs of normals are not complete'); return; }
@@ -11879,6 +12148,12 @@ function mountApp(site, clim, keepTab, keepModel, keepScroll) {
   if (!(keepModel && MASS)) {   // a language switch keeps the student's model; a new site starts afresh
   SCENE.veg.length = 0; SCENE.walls.length = 0;
   MASS = { L:12, D:8, rot:180, fl:1, fh:3.0, col:null, form:'rect', wing:null, patio:{ on:false, w:4, d:3, cx:0, cy:0 }, balc:[] };
+  if (IMPORT.active && IMPORT.L > 0 && IMPORT.D > 0) {
+    MASS.L = clamp(Math.round(IMPORT.L * 2) / 2, 6, 24);
+    MASS.D = clamp(Math.round(IMPORT.D * 2) / 2, 4, 16);
+    MASS.fl = clamp(Math.max(1, Math.round(IMPORT.H / 3)), 1, 3);
+    MASS.form = 'rect'; MASS.wing = null; MASS.patio.on = false;   // the import sizes the bar; breaks stay parametric
+  }
   ENV.plot = null;
   ROOF = { n:2, th:Math.round(Math.abs(site.lat)), col:null, sol:{ tech:'none', cols:4, rows:2 } };
   /* One entry per local facade (S/N/E/W, matching the Roof tab's convention
@@ -12141,6 +12416,13 @@ Object.assign(STATIC_PT, {
   opNew: 'Construção nova',
   opRenovation: 'Grande intervenção',
   fldOpSub: 'Um edifício novo ainda pode escolher a sua orientação e a sua forma; uma reabilitação tem de tomar ambas como as encontra.',
+  ghImport: 'Modelo importado',
+  fldImportFile: 'Ficheiro do modelo',
+  fldImportSub: 'Um modelo desenhado noutra aplicação, num formato que esta aplicação também exporta: .obj, .dxf ou .ifc. O ficheiro é lido neste navegador e nunca é carregado. A sua dimensão global redimensiona a planta abaixo, e as suas superfícies aparecem como fantasma nas vistas 3D; a planta em si continua rectangular.',
+  fldImportUnit: 'Unidades do ficheiro',
+  fldImportUp: 'Eixo vertical no ficheiro',
+  btnImportAdopt: 'Adoptar como volumetria',
+  btnImportRemove: 'Remover',
   normTitle: 'Normais mensais',
   normBody: 'Köppen–Geiger é calculado, não consultado, pelo que precisa das doze temperaturas médias mensais e dos doze totais mensais de precipitação. Esta aplicação não traz nenhuns: as normais são dados medidos e ela não tem autoridade para os inventar. Tome-os das <i>normais climatológicas</i> do IPMA para a estação mais próxima, de outro serviço nacional, ou de um produto em grelha como o WorldClim, e identifique a fonte para que a exportação a leve consigo. Os quadros preenchem-se sozinhos por esta ordem: a estação do IPMA incorporada a menos de 5 km das coordenadas acima; onde não houver nenhuma, uma mistura das estações mais próximas, ponderada pelo inverso da distância; e, a pedido, normais da web — reanálise para estas coordenadas exactas. Misturar próximas e Buscar na web só se abrem onde nenhuma estação fica a menos de 5 km. Mude as coordenadas e a escolha refaz-se; escreva nos quadros e eles ficam seus.',
   ghSite: 'O local',
@@ -12626,6 +12908,16 @@ Object.assign(PT, {
   "Drag to enlarge the map": "Arraste para ampliar o mapa",
   "Enlarge the map": "Ampliar o mapa",
   "across": "de lado",
+  "{} triangles · {} × {} × {} m": "{} triângulos · {} × {} × {} m",
+  "{} closed outlines · {} × {} m — outline only, no surfaces to show": "{} contornos fechados · {} × {} m — só contorno, sem superfícies para mostrar",
+  "No 3D faces (or closed outlines) found in that file — .obj needs f, .dxf needs 3DFACE or polyface meshes, .ifc needs triangulated facesets.": "Sem faces 3D (ou contornos fechados) nesse ficheiro — .obj precisa de f, .dxf de 3DFACE ou malhas polyface, .ifc de facesets triangulados.",
+  "That extension is not imported — .obj, .dxf or .ifc, the formats Export 3D writes.": "Essa extensão não é importada — .obj, .dxf ou .ifc, os formatos que Exportar 3D escreve.",
+  "That file is too large to read in the browser ({} MB) — export a lighter mesh.": "Esse ficheiro é demasiado grande para ler no navegador ({} MB) — exporte uma malha mais leve.",
+  "That file could not be read — try exporting it again.": "Esse ficheiro não pôde ser lido — tente exportá-lo de novo.",
+  "Adopted — the plan takes {} × {} m, {} floors on Work through the design; the mesh shows in the 3D views.": "Adoptado — a planta toma {} × {} m, {} pisos ao Percorrer o projecto; a malha aparece nas vistas 3D.",
+  "(clamped to the plan limits)": "(limitado aos limites da planta)",
+  "Import removed.": "Importação removida.",
+  "Import adopted — Work through the design to build on it": "Importação adoptada — Percorra o projecto para construir sobre ela",
   "Centre on site": "Centrar no local",
   "Enlarge the chart": "Ampliar o gráfico",
   "Automatic altitude": "Altitude automática",
