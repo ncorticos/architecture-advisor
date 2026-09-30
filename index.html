@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Architecture Advisor — Bioclimatic Design</title>
+<title>Architecture Advisor PT — Bioclimatic Design</title>
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='32' r='32' fill='%23000'/%3E%3Ctext x='32' y='43' font-family='Helvetica, Arial, sans-serif' font-size='26' font-weight='700' fill='%23fff' text-anchor='middle' letter-spacing='-1'%3EAA%3C/text%3E%3C/svg%3E">
 <style>
 :root{
@@ -95,8 +95,10 @@ main{max-width:1680px; margin:0 auto; padding:0 24px 44px}
 /* a phone: narrower margins, and the header keeps the name, the site and the language on screen */
 @media(max-width:1100px){.brand span{display:none}}
 @media(max-width:700px){main{padding:0 14px 36px}.hbar{padding:8px 14px; gap:10px}.tabs-inner{padding:0 14px}
-  .brand{flex:0 1 auto; min-width:0}.brand b{font-size:14px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+  .brand{flex:0 1 auto; min-width:0}.brand b{font-size:clamp(12px,3.45vw,14px); white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
   .filechip .meta,.filechip .loc{display:none}.filechip{gap:8px}.filechip .btn{padding:5px 9px; white-space:nowrap}}
+/* the name, with its PT, keeps whole on the narrower phones: 360 to 420 px */
+@media(max-width:420px){.hbar{gap:8px}.filechip .btn{padding:5px 7px}}
 section.page{display:none; padding-top:18px}
 section.page.on{display:block}
 .pagehead{margin-bottom:14px; max-width:760px}
@@ -529,7 +531,7 @@ details.more[open] > summary{color:var(--ink)}
 
 <header>
   <div class="hbar">
-    <div class="brand"><b>Architecture Advisor</b><span data-t="brandsub">Bioclimatic Design</span></div>
+    <div class="brand"><b>Architecture Advisor PT</b><span data-t="brandsub">Bioclimatic Design</span></div>
     <div class="filechip sitechip" id="sitechip">
       <span class="loc" id="chipLoc"></span>
       <span class="meta" id="chipMeta"></span>
@@ -726,7 +728,7 @@ details.more[open] > summary{color:var(--ink)}
   <div class="foot">
     <div class="foot-top">
       <div>
-        <span class="appname">Architecture Advisor</span><span class="ver" id="footVer">v1.0.0</span>
+        <span class="appname">Architecture Advisor PT</span><span class="ver" id="footVer">v1.0.0</span>
         <p class="tag" data-t="footTag">A bioclimatic design advisor for architecture students, written for the
            decisions that are made before a regulation has anything to say about them.</p>
       </div>
@@ -770,7 +772,7 @@ details.more[open] > summary{color:var(--ink)}
 "use strict";
 
 /* ============================================================================
-   ARCHITECTURE ADVISOR — a single-file bioclimatic design advisor for
+   ARCHITECTURE ADVISOR PT — a single-file bioclimatic design advisor for
    architecture students
    ----------------------------------------------------------------------------
    The companion to Construction Advisor, and its opposite in method.
@@ -799,8 +801,8 @@ details.more[open] > summary{color:var(--ink)}
 
 /* ------------------------------------------------------------ 0. IDENTITY -- */
 const APP = {
-  name:        'Architecture Advisor',
-  version:     '1.100.0',
+  name:        'Architecture Advisor PT',
+  version:     '1.101.0',
   author:      'Nuno Dinis Cortiços',
   institution: 'Lisbon School of Architecture, Universidade de Lisboa',
   builtWith:   'Claude Opus 5 (Anthropic)',
@@ -10537,7 +10539,7 @@ function exportModel() {
 }
 
 const cadNum = v => (Math.abs(v) < 5e-7 ? 0 : v).toFixed(6).replace(/\.?0+$/, '') || '0';
-const cadStem = () => slugify(sitePrefix() + 'architecture-advisor') || 'architecture-advisor';
+const cadStem = () => slugify(sitePrefix() + 'architecture-advisor-pt') || 'architecture-advisor-pt';
 
 /** DXF, AutoCAD R12 flavour: one 3DFACE per triangle or quad, on layers. */
 function toDXF(els) {
