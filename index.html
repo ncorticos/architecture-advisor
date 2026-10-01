@@ -6720,12 +6720,22 @@ function buildRoof(host) {
    * roof, which has no pitch to judge.
    */
   const pitchNow = () => {
-    if (RF.n === 0) return null;
+    const M = roofModel(G, RF);
+    const cp = collectPlane(M);
+    let th = RF.th;
+    if (cp) th = cp.pieces.reduce((p, q) => q.area > p.area ? q : p, cp.pieces[0]).f.th;
+    else {
+      let best = null;
+      M.pieces.forEach(pc => { if (pc.f.th > 0 && (!best || pc.area > best.area)) best = pc; });
+      if (!best) return null;   // nowhere a pitch to judge
+      th = best.f.th;
+    }
+    if (!(th > 0)) return null;
     const own = RF.sol && RF.sol.tech !== 'none', tech = own ? RF.sol.tech : 'pv';
     const opt = solarOptimum(S, tech, slopeAz(), C.t);
-    const hm = horizontalMonths(S), tp = tiltedYear(hm.H, lat, RF.th, slopeAz());
+    const hm = horizontalMonths(S), tp = tiltedYear(hm.H, lat, th, slopeAz());
     const y = solarYield(tech, tp.mon, lat, C.t);
-    return { pct:Math.round(100 * (opt.y > 0 ? y / opt.y : 0)), opt, plane:tp.year, tech, own, measured:hm.measured };
+    return { pct:Math.round(100 * (opt.y > 0 ? y / opt.y : 0)), opt, plane:tp.year, tech, own, measured:hm.measured, th };
   };
   /** Everything the page says about the field: what fits, its area, the sun
       on its plane and the year's output. */
@@ -6734,7 +6744,8 @@ function buildRoof(host) {
     if (!sol || sol.tech === 'none') return null;
     const opt = solarOptimum(S, sol.tech, slopeAz(), C.t);
     const fld = solarField(G, RF, lat, opt.tilt);
-    const tilt = RF.n === 0 ? opt.tilt : RF.th;
+    const cpl = collectPlane(roofModel(G, RF));
+    const tilt = cpl ? cpl.pieces.reduce((p, q) => q.area > p.area ? q : p, cpl.pieces[0]).f.th : (RF.n === 0 ? opt.tilt : RF.th);
     const hm = horizontalMonths(S), tp = tiltedYear(hm.H, lat, tilt, slopeAz());
     const perM2 = solarYield(sol.tech, tp.mon, lat, C.t);
     const md = SOLAR_TECH[sol.tech], n = fld && fld.fits ? fld.c * fld.r : 0, area = n * md.w * md.h;
@@ -6946,10 +6957,10 @@ function buildRoof(host) {
     refreshSolar();
     const pn = pitchNow();
     if (!pn) { pillRoof.className = 'pill empty'; pillRoof.textContent = t('Flat — no pitch to judge; racked collectors take the best pitch'); return; }
-    const ni = nearestIdeal(RF.th), facing = COMPASS8[Math.round(slopeAz() / 45) % 8];
+    const ni = nearestIdeal(pn.th), facing = COMPASS8[Math.round(slopeAz() / 45) % 8];
     const none = !collectPlane(roofModel(G, RF)) ? ' — ' + t('no slope faces the main facade: the ridges run front to back') : '';
     pillRoof.className = 'pill ' + (pn.pct >= 97 ? 'ok' : pn.pct >= 90 ? 'empty' : 'bad');
-    pillRoof.textContent = t('Slope facing') + ' ' + facing + ', ' + fmt(RF.th, 0) + '° — ' + t('nearest the ' + ni.k + ' ideal') + ' (' + fmt(ni.a, 0) + '°) · '
+    pillRoof.textContent = t('Slope facing') + ' ' + facing + ', ' + fmt(pn.th, 0) + '° — ' + t('nearest the ' + ni.k + ' ideal') + ' (' + fmt(ni.a, 0) + '°) · '
       + t('best pitch here') + ' ' + pn.opt.tilt + '°' + none;
   }
   /* The shared orbit camera (see camAxes), in the plan's own frame: it
@@ -6967,9 +6978,11 @@ function buildRoof(host) {
     let pcs = cp ? cp.pieces : null;
     if (!pcs) {
       const byKey = {};
-      M.pieces.forEach(pc => (byKey[pc.key] = byKey[pc.key] || []).push(pc));
+      M.pieces.forEach(pc => { if (pc.f.th > 0) (byKey[pc.key] = byKey[pc.key] || []).push(pc); });
+      const keys = Object.keys(byKey);
+      if (!keys.length) return null;   // pitched parts but no plane to stand the gauge on
       const area = k => byKey[k].reduce((a, pc) => a + pc.area, 0);
-      pcs = byKey[Object.keys(byKey).reduce((p, q) => !p || area(q) > area(p) ? q : p, null)];
+      pcs = byKey[keys.reduce((p, q) => !p || area(q) > area(p) ? q : p, null)];
     }
     const f = pcs[0].f;
     let top = null;
@@ -7137,7 +7150,7 @@ function buildRoof(host) {
         const O = proj(gg.ex, gg.ey, H0);
         [{ a:idealW, tag:'winter' }, { a:idealS, tag:'summer' }, { a:idealB, tag:'year' }].forEach(gd => {
           const p1 = proj(gg.x, gg.y, H0 + gg.run * Math.tan(gd.a * RAD));
-          const hit = Math.abs(RF.th - gd.a) < 0.6;
+          const hit = Math.abs((gg.th || RF.th) - gd.a) < 0.6;
           if (hit) hitTag = gd.tag;
           if (hit) stroke(ctx, '#16A34A', 2.6); else stroke(ctx, '#16A34A', 1.4, [5, 4]);
           seg(ctx, O[0], O[1], p1[0], p1[1]); desk.line(O[0], O[1], p1[0], p1[1]);
@@ -7155,7 +7168,8 @@ function buildRoof(host) {
       // the readout: the roof's geometry, and the field's size
       const ff = formFactor(G, RF), ca = collectArea(M);
       const rf = FM(narrow ? 9 : 11), ry = narrow ? 112 : 12;
-      const readoutOf = full => 'θ ' + fmt(RF.n === 0 ? 0 : RF.th, 0) + '° · ' + t('roof') + ' ' + fmt(M.roofArea, 0) + ' m²'
+      const pnR = pitchNow();
+      const readoutOf = full => (pnR ? 'θ ' + fmt(pnR.th, 0) + '° · ' : t('Flat') + ' · ') + t('roof') + ' ' + fmt(M.roofArea, 0) + ' m²'
         + (ca > 0 && full ? ' · ' + t('slope facing the main facade') + ' ' + fmt(ca, 0) + ' m²' : '')
         + ' · ' + t('ridge') + ' ' + fmt(M.ridge, 1) + ' m · FF ' + fmt(ff.ff, 2) + (hitTag && full ? ' · = ' + t(hitTag) + ' ideal' : '');
       // the long form while it clears the badges on the right, the short one where the model is narrower
