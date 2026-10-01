@@ -3797,14 +3797,35 @@ function zoomCtl(key, redraw) {
   const wrap = el('span', { class:'zoomctl' });
   const show = el('button', { class:'btn small', text:lab(), title:'Reset the model size', 'aria-label':'Reset the model size',
     onclick:() => { MODEL_ZOOM[key] = 1; zoomSave(); show.textContent = lab(); redraw(); } });
-  const step = f => { MODEL_ZOOM[key] = Math.round(clamp(zoomOf(key) * f, 0.5, 2.5) * 100) / 100;
-    zoomSave(); show.textContent = lab(); redraw(); };
+  ZOOMERS[key] = { show, redraw };
+  const step = f => { modelZoom(key, f); };
   wrap.appendChild(el('button', { class:'btn small', text:'−', title:'Smaller model', 'aria-label':'Smaller model', onclick:() => step(1 / 1.25) }));
   wrap.appendChild(show);
   wrap.appendChild(el('button', { class:'btn small', text:'+', title:'Larger model', 'aria-label':'Larger model', onclick:() => step(1.25) }));
   return wrap;
 }
 const zoomSave = () => { try { localStorage.setItem('arca-model-zoom', JSON.stringify(MODEL_ZOOM)); } catch (e) {} };
+const ZOOMERS = {};
+function modelZoom(key, f) {
+  MODEL_ZOOM[key] = Math.round(clamp(zoomOf(key) * f, 0.5, 2.5) * 100) / 100;
+  zoomSave();
+  const z = ZOOMERS[key];
+  if (z) {
+    if (z.show) z.show.textContent = Math.round(zoomOf(key) * 100) + '%';
+    if (z.redraw) z.redraw();
+  }
+  return MODEL_ZOOM[key];
+}
+/** Pinch on a trackpad, or Ctrl/Cmd + scroll with a mouse: the model grows
+    under the pointer while the page stays put. A plain wheel keeps scrolling
+    the page, as everywhere else. */
+function zoomGesture(canvas, key) {
+  canvas.addEventListener('wheel', ev => {
+    if (!ev.ctrlKey && !ev.metaKey) return;
+    ev.preventDefault();
+    modelZoom(key, Math.exp(-ev.deltaY * (ev.deltaMode === 1 ? 0.03 : 0.008)));
+  }, { passive:false });
+}
 /** An oblique view keeps its height; a plan or an elevation goes back to
     the corner view's when a turn to a side is asked for. */
 const camMidEl = cam => cam.el >= 5 && cam.el <= 80 ? cam.el : ISO_EL;
@@ -6450,6 +6471,7 @@ function buildSite(host) {
   };
   cv.addEventListener('pointerup', endDrag);
   cv.addEventListener('pointercancel', endDrag);
+  zoomGesture(cv, 'site');
   refreshLab();
   setDay(355);   // bounds the hour slider to the December day and starts at its noon
 }
@@ -7141,6 +7163,7 @@ function buildRoof(host) {
   const endDrag = () => { orbit.end(); rdrag = fdrag = false; if (ddiv >= 0) { ddiv = -1; buildRoofUI(); roofDraw(); } rcv.style.cursor = 'default'; };
   rcv.addEventListener('pointerup', endDrag);
   rcv.addEventListener('pointercancel', endDrag);
+  zoomGesture(rcv, 'roof');
 }
 
 function buildOpenings(host) {
@@ -7875,6 +7898,7 @@ function buildOpenings(host) {
   const endDrag = () => { orbit.end(); drag = null; ocv.style.cursor = 'default'; };
   ocv.addEventListener('pointerup', endDrag);
   ocv.addEventListener('pointercancel', endDrag);
+  zoomGesture(ocv, 'openings');
 }
 
  /* --------------------------------------------------------------- 9. VENTILATION -- */
@@ -10678,6 +10702,7 @@ function buildVentilation(host) {
   };
   cv.addEventListener('pointerup', endDragV);
   cv.addEventListener('pointercancel', endDragV);
+  zoomGesture(cv, 'vent');
   cv.addEventListener('mouseleave', () => { hideTip(); if (ghost) { ghost = null; draw(); } });
   /* Keys, as in CAD: Esc drops the armed tool (or the selection), Delete
      removes the selected item — never while typing in a field. */
