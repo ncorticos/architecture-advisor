@@ -3180,7 +3180,9 @@ function roofModel(G, RF) {
   const zones = zones0.map(z => ({ n:z.n, th:z.n === 0 ? 0 : z.th, t:Math.tan((z.n === 0 ? 0 : z.th) * RAD),
     a0:S0 + clamp(z.f0, 0, 1) * SL, a1:S0 + clamp(z.f1, 0, 1) * SL }));
   const parKey = RF.par && RF.par.on ? '|par' + (+RF.par.h || 0.6).toFixed(2) : '';
-  const key = pl.key + '|' + H0 + '|' + axis + '|' + zones0.map(z => [z.f0, z.f1, z.n, z.th].join(',')).join(';') + parKey;
+  const bei = RF.bei && RF.bei.on ? clamp(+RF.bei.d || 0, 0, 1) : 0;
+  const beiKey = bei > 0 ? '|bei' + bei.toFixed(2) : '';
+  const key = pl.key + '|' + H0 + '|' + axis + '|' + zones0.map(z => [z.f0, z.f1, z.n, z.th].join(',')).join(';') + parKey + beiKey;
   if (ROOF_CACHE.key === key) return ROOF_CACHE.val;
   /* each maximal rectangle cut into strips, one per zone it meets — a flat
      açoteia over one part, a pitched roof over the next */
@@ -3230,6 +3232,28 @@ function roofModel(G, RF) {
     return [sd.y0, sd.y1, sd.x0, sd.x1];
   };
   strips.forEach(s => { s.BF = facesOf(s); });
+  /* the beirado: each strip's rectangle grows past the wall on its free
+     sides only — never across a wing junction or a division seam — while
+     the planes keep the anchors facesOf gave them, so ridges stay put
+     and only the eaves run out, down their own slope */
+  const crossCovered = (s, side) => {
+    const r = s.r, e = 1e-6;
+    return pl.boxes.some(q => {
+      if (q === s.box) return false;
+      const ox = Math.min(r[2], q[2]) - Math.max(r[0], q[0]) > e, oy = Math.min(r[3], q[3]) - Math.max(r[1], q[1]) > e;
+      if (!ox || !oy) return false;
+      return side === 'x0' ? q[0] <= r[0] + e : side === 'x1' ? q[2] >= r[2] - e : side === 'y0' ? q[1] <= r[1] + e : q[3] >= r[3] - e;
+    });
+  };
+  strips.forEach(s => {
+    if (!(bei > 0)) return;
+    const e0 = axis === 'x' ? 'x0' : 'y0', e1 = axis === 'x' ? 'x1' : 'y1';
+    const c0 = axis === 'x' ? 'y0' : 'x0', c1 = axis === 'x' ? 'y1' : 'x1';
+    const g = { x0:0, x1:0, y0:0, y1:0 };
+    g[e0] = endCovered(s, e0) ? 0 : bei; g[e1] = endCovered(s, e1) ? 0 : bei;
+    g[c0] = crossCovered(s, c0) ? 0 : bei; g[c1] = crossCovered(s, c1) ? 0 : bei;
+    s.r = [s.r[0] - g.x0, s.r[1] - g.y0, s.r[2] + g.x1, s.r[3] + g.y1];
+  });
   /** Height above the eaves, in metres — across zones the higher surface
       wins — and the face it stands on. */
   const at = (x, y) => {
@@ -7094,6 +7118,23 @@ function buildRoof(host) {
     } else parHCtl = null;
   }
   buildParUI();
+  rail.appendChild(el('div', { class:'gh', text:'Beirado' }));
+  const beiBox = rail.appendChild(el('div'));
+  let beiDCtl = null;
+  function buildBeiUI() {
+    beiBox.innerHTML = '';
+    const on = !!(RF.bei && RF.bei.on);
+    const tgl = segCtl(null, [{ value:0, label:'Off' }, { value:1, label:'On' }], on ? 1 : 0, v => {
+      RF.bei = { on:v === 1, d:RF.bei && isFinite(+RF.bei.d) ? +RF.bei.d : 0.15 };
+      buildBeiUI(); roofDraw();
+    });
+    beiBox.appendChild(tgl);
+    if (on) {
+      beiDCtl = rangeCtl('Projection', 0, 1, 0.05, +RF.bei.d || 0.15, v => { RF.bei.d = v; roofDraw(); }, v => fmt(v, 2) + ' m');
+      beiBox.appendChild(beiDCtl);
+    } else beiDCtl = null;
+  }
+  buildBeiUI();
   rail.appendChild(el('div', { class:'gh', text:'Chimney' }));
   const chimBox = rail.appendChild(el('div'));
   let chimXCtl = null, chimYCtl = null;
@@ -7475,7 +7516,7 @@ if (F.chim || F.par) { const p = pathOf(F.pts); ctx.fillStyle = F.fill; ctx.fill
       return csvRows([['Parameter', 'Value'],
       ['Roof (largest part)', ['flat', 'shed', 'gable', 'hip'][RF.n]], ['Pitch (°)', RF.n === 0 ? 0 : RF.th],
       ['Roof parts', RF.zones.map((z, i) => 'ABC'[i] + ':' + ['flat', 'shed', 'gable', 'hip'][z.n] + (z.n === 0 ? '' : ' ' + z.th + '°')).join(' | ')],
-      ['Parapet', RF.par && RF.par.on ? fmt(RF.par.h, 2) + ' m' : 'none'],
+      ['Parapet', RF.par && RF.par.on ? fmt(RF.par.h, 2) + ' m' : 'none'],       ['Beirado', RF.bei && RF.bei.on ? fmt(RF.bei.d, 2) + ' m' : 'none'],
       ['Chimney', RF.chim && RF.chim.on ? CHIMNEY_FAM[RF.chim.fam].name + ' at ' + fmt(RF.chim.x, 1) + ', ' + fmt(RF.chim.y, 1) + ' m · ' + fmt(chimEffH(RF.chim), 2) + ' m above roof' : 'none'],
       ['Plan form (from Site)', (G.form || 'rect') + (G.patio && G.patio.on && G.patio.ok !== false ? ' + patio' : '')],
       ['Winter solar ideal (°)', +idealW.toFixed(0)],
@@ -12181,7 +12222,7 @@ function toDecisionsJSON() {
         planArea:+planModel(MASS).area.toFixed(1), wallColour:colourOf(fin) },
       roof:{ type:['flat', 'shed', 'gable', 'hip'][ROOF.n], pitch:ROOF.n === 0 ? 0 : ROOF.th,
         zones:(ROOF.zones || []).map((z, i) => ({ part:'ABC'[i], type:['flat', 'shed', 'gable', 'hip'][z.n], pitch:z.n === 0 ? 0 : z.th, from:+z.f0.toFixed(3), to:+z.f1.toFixed(3) })), roofColour:colourOf(rfin),
-        parapet:ROOF.par && ROOF.par.on ? { height:+ROOF.par.h.toFixed(2) } : null,
+        parapet:ROOF.par && ROOF.par.on ? { height:+ROOF.par.h.toFixed(2) } : null,         beirado:ROOF.bei && ROOF.bei.on ? { projection:+ROOF.bei.d.toFixed(2) } : null,
         chimney:ROOF.chim && ROOF.chim.on ? { family:ROOF.chim.fam, x:+ROOF.chim.x.toFixed(2), y:+ROOF.chim.y.toFixed(2), heightAboveRoof:isFinite(+ROOF.chim.h) ? +ROOF.chim.h : null } : null, roofColour:colourOf(rfin),
         solar:ROOF.sol && ROOF.sol.tech !== 'none' ? { technology:ROOF.sol.tech === 'pv' ? 'photovoltaic panels' : 'flat-plate thermal collectors', columns:ROOF.sol.cols, rows:ROOF.sol.rows } : null },
       openings:OPEN, sunspace:SUNSP, roofWindows:RWIN,
@@ -12270,7 +12311,7 @@ function applyStudy(o) {
   ROOF.th = ROOF.n === 0 ? 0 : clamp(Math.round(fin(R0.th, 30)), 5, 75);
   ROOF.col = typeof R0.col === 'string' ? R0.col : null;
   ROOF.sol = { tech:['none', 'pv', 'thermal'].indexOf(R0.sol && R0.sol.tech) >= 0 ? R0.sol.tech : 'none',
-    cols:clamp(Math.round(fin(R0.sol && R0.sol.cols, 4)), 1, 12), rows:clamp(Math.round(fin(R0.sol && R0.sol.rows, 2)), 1, 12) };
+    cols:clamp(Math.round(fin(R0.sol && R0.sol.cols, 4)), 1, 12), rows:clamp(Math.round(fin(R0.sol && R0.sol.rows, 2)), 1, 12) };   ROOF.bei = { on:!!(R0.bei && R0.bei.on), d:clamp(fin(R0.bei && R0.bei.d, 0.15), 0, 1) };
   if (Array.isArray(R0.zones) && R0.zones.length && R0.zones.length <= 3) {
     const zs = R0.zones.filter(z => z && [0, 1, 2, 3].indexOf(z.n) >= 0 && isFinite(+z.f0) && isFinite(+z.f1) && +z.f1 > +z.f0);
     ROOF.zones = zs.length ? zs.map(z => ({ f0:+z.f0, f1:+z.f1, n:z.n, th:z.n === 0 ? 0 : clamp(Math.round(fin(z.th, 30)), 5, 75) })) : undefined;
@@ -13529,7 +13570,7 @@ function mountApp(site, clim, keepTab, keepModel, keepScroll) {
     MASS.form = 'rect'; MASS.wing = null; MASS.patio.on = false;   // the import sizes the bar; breaks stay parametric
   }
   ENV.plot = null;
-  ROOF = { n:2, th:Math.round(Math.abs(site.lat)), col:null, sol:{ tech:'none', cols:4, rows:2 }, par:{ on:false, h:0.6 }, chim:null };
+  ROOF = { n:2, th:Math.round(Math.abs(site.lat)), col:null, sol:{ tech:'none', cols:4, rows:2 }, par:{ on:false, h:0.6 }, bei:{ on:false, d:0.15 }, chim:null };
   /* One entry per local facade (S/N/E/W, matching the Roof tab's convention
      of true-south regardless of the plan's chosen rotation), each holding
      the window and its shading devices. wwr is a fraction of that facade's
@@ -14450,6 +14491,7 @@ Object.assign(PT, {
   "Off": "Não",
   "On": "Sim",
   "Parapet": "Platibanda",
+  "Beirado": "Beirado", "Projection": "Projeção",
   "Height": "Altura",
   "Chimney": "Chaminé",
   "+ Add chimney": "+ Acrescentar chaminé",
