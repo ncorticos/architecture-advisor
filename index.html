@@ -693,41 +693,7 @@ details.more[open] > summary{color:var(--ink)}
               <span class="sub" data-t="fldOpSub">A new building can still choose its orientation and its form; a renovation has to take both as found.</span>
             </div>
           </div>
-          <div class="gh" data-t="ghImport">Imported model</div>
-          <div class="sbox">
-            <div class="fld">
-              <label for="inpModelFile" data-t="fldImportFile">Model file</label>
-              <input type="file" id="inpModelFile" accept=".obj,.dxf,.ifc">
-              <span class="sub" data-t="fldImportSub">A model drawn in another app, in a format this application also exports: .obj, .dxf or .ifc. The file is read in this browser and never uploaded. Its overall size reshapes the plan below, and its surfaces show as a ghost in the 3D views; the plan itself stays rectangular.</span>
-            </div>
-            <div class="fld">
-              <label data-t="fldImportUnit">File units</label>
-              <div class="seg" id="segImportUnit" role="group" aria-label="File units">
-                <button type="button" data-u="1" aria-pressed="true">m</button>
-                <button type="button" data-u="0.01" aria-pressed="false">cm</button>
-                <button type="button" data-u="0.001" aria-pressed="false">mm</button>
-              </div>
-            </div>
-            <div class="fld">
-              <label data-t="fldImportUp">Up axis in the file</label>
-              <div class="seg" id="segImportUp" role="group" aria-label="Up axis in the file">
-                <button type="button" data-up="Y" aria-pressed="true">Y</button>
-                <button type="button" data-up="Z" aria-pressed="false">Z</button>
-              </div>
-            </div>
-            <span class="fieldstatus" id="importStatus"></span>
-            <div class="srcrow">
-              <button type="button" class="btn solid" id="btnImportAdopt" data-t="btnImportAdopt" disabled>Adopt as the massing</button>
-              <button type="button" class="btn" id="btnImportRemove" data-t="btnImportRemove" disabled>Remove</button>
-            </div>
-            <div class="fld">
-              <label for="inpStudyFile" data-t="fldStudyFile">Study file</label>
-              <input type="file" id="inpStudyFile" accept=".json,application/json">
-              <span class="sub" data-t="fldStudySub">A study saved from this app — restores the site, the normals and every decision, and opens the design where it stopped.</span>
-            </div>
-          </div>
         </div>
-
 
         <div class="s-norm panel normals" id="normalsBlock">
           <div class="panel-head"><div class="panel-title">
@@ -789,6 +755,39 @@ details.more[open] > summary{color:var(--ink)}
         <div class="s-sce" id="sceBlock"></div>
 
         <div class="s-side">
+          <div class="gh" data-t="ghImport">Imported model</div>
+          <div class="sbox">
+            <div class="fld">
+              <label for="inpModelFile" data-t="fldImportFile">Model file</label>
+              <input type="file" id="inpModelFile" accept=".obj,.dxf,.ifc">
+              <span class="sub" data-t="fldImportSub">A model drawn in another app, in a format this application also exports: .obj, .dxf or .ifc. The file is read in this browser and never uploaded. Its overall size reshapes the plan below, and its surfaces show as a ghost in the 3D views; the plan itself stays rectangular.</span>
+            </div>
+            <div class="fld">
+              <label data-t="fldImportUnit">File units</label>
+              <div class="seg" id="segImportUnit" role="group" aria-label="File units">
+                <button type="button" data-u="1" aria-pressed="true">m</button>
+                <button type="button" data-u="0.01" aria-pressed="false">cm</button>
+                <button type="button" data-u="0.001" aria-pressed="false">mm</button>
+              </div>
+            </div>
+            <div class="fld">
+              <label data-t="fldImportUp">Up axis in the file</label>
+              <div class="seg" id="segImportUp" role="group" aria-label="Up axis in the file">
+                <button type="button" data-up="Y" aria-pressed="true">Y</button>
+                <button type="button" data-up="Z" aria-pressed="false">Z</button>
+              </div>
+            </div>
+            <span class="fieldstatus" id="importStatus"></span>
+            <div class="srcrow">
+              <button type="button" class="btn solid" id="btnImportAdopt" data-t="btnImportAdopt" disabled>Adopt as the massing</button>
+              <button type="button" class="btn" id="btnImportRemove" data-t="btnImportRemove" disabled>Remove</button>
+            </div>
+            <div class="fld">
+              <label for="inpStudyFile" data-t="fldStudyFile">Study file</label>
+              <input type="file" id="inpStudyFile" accept=".json,application/json">
+              <span class="sub" data-t="fldStudySub">A study saved from this app — restores the site, the normals and every decision, and opens the design where it stopped.</span>
+            </div>
+          </div>
         <div class="s-clim">
           <div class="gh" data-t="ghClimate">The climate they make</div>
           <div class="sbox climbox" id="setupClimoWrap">
