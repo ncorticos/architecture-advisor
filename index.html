@@ -6685,7 +6685,7 @@ function buildRoof(host) {
       plane (or, without one, of the largest pitched plane) — the west end of
       a level ridge — and the eave point straight down its fall. */
   const gaugeOf = M => {
-    if (RF.n === 0 || !M.pieces.length) return null;
+    if ((!M.zones.some(z => z.n !== 0)) || !M.pieces.length) return null;
     const cp = collectPlane(M);
     let pcs = cp ? cp.pieces : null;
     if (!pcs) {
