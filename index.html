@@ -7068,7 +7068,7 @@ function buildRoof(host) {
       faces.sort((p, q) => depth(q) - depth(p)).forEach(F => {
         if (F.balc) { desk.path(F.pts.map(P3), true); balcFace(ctx, F.balc, P3); return; }
         if (F.import) { const p = pathOf(F.pts); ctx.fillStyle = F.fill; ctx.fill(); return; }
-        if (F.chim || F.par) { const p = pathOf(F.pts); ctx.fillStyle = F.fill; ctx.fill(); stroke(ctx, CH.ink, 1.2); ctx.stroke(); return; }
+if (F.chim || F.par) { const p = pathOf(F.pts); ctx.fillStyle = F.fill; ctx.fill(); stroke(ctx, CH.ink, 1.2); ctx.stroke(); return; }
         const p = pathOf(F.pts);
         ctx.fillStyle = F.fill; ctx.fill();
         if (F.pc) {
@@ -7611,8 +7611,22 @@ function buildOpenings(host) {
     return 100;
   }
   const overallScore = () => FACES.reduce((s, f) => s + facadeScore(f), 0) / FACES.length;
+  /** Window shape, 0–100: tall glass for deep light, wide glass for even
+      light and room for heating below. Depth from the head — daylight
+      reaches roughly twice the head height (Lechner) — against the room
+      depth this side faces; spread from the mean width against a generous
+      2.4 m bay. A teaching score, like the WWR fit. */
+  function shapeScore(f) {
+    const ws = winsOf(f);
+    if (!ws.length) return null;
+    const w = ws.reduce((a, x) => a + x.w.w, 0) / ws.length;
+    const H = ws[0].w.rows[0].head;
+    const depth = (f === 'S' || f === 'N') ? G.D : G.L;
+    return 100 * (clamp(2 * H / Math.max(1, depth), 0, 1) + clamp(w / 2.4, 0, 1)) / 2;
+  }
   SCORES.openings = () => ({ 'WWR fit /100':Math.round(overallScore()),
     'Shading fit /100 by facade':Object.fromEntries(FACES.map(f => [f, shadingScore(f) === null ? null : Math.round(shadingScore(f))])),
+    'Shape fit /100 by facade':Object.fromEntries(FACES.map(f => [f, shapeScore(f) === null ? null : Math.round(shapeScore(f))])),
     'Windows by facade':Object.fromEntries(FACES.map(f => [f + ' (faces ' + COMPASS8_EN[Math.round(faceAz(f) / 45) % 8] + ')', winCount(f)])) });
 
   /* --- the workbench: where the glass goes on the left — the side under
@@ -7629,6 +7643,8 @@ function buildOpenings(host) {
     'WWR bands follow Ching &amp; Shapiro’s classification (low &lt;10%, moderate 10–20%, high 20–30%, very high &gt;30%; p.242) read against Lechner’s orientation guidance — south takes the most glass, north the least of the sunlit faces, and east/west are minimised where the climate leans hot (pp.130–132, 416). The band shown for %1 in this climate is <b>%2–%3%</b>. North is held to 5–10 % and starts at 5 %: it takes almost no winter sun and loses heat all year. That is this app’s bioclimatic choice, not a rule of the SCE — the regulation sets no maximum for north glass; it exempts north-quadrant glazing, and any space whose glazing is at most 5 % of its <i>floor</i> area, from the solar-factor requirement (Portaria n.º 138-I/2021). The RGEU sets the floor instead: every room needs openings of at least 1/10 of its floor area, 1.08 m² at the least (art. 71.º), and the reading for the north side says how many rooms its glass can serve. It is this app’s own synthesis across sources, not a single citable number — treat it as a target to aim for, not a pass/fail test. Each side is judged by the way it really faces once the plan is turned on Site, and its WWR applies to every wall of the plan on that side — a wing’s, a recess’s, a patio’s. On two or three storeys that glass is shared equally between the floors: each wall takes one window per floor, all of one width, the sill and head measured from each floor, the head stopping 0.10 m under the floor above. The WWR fit badge averages this test across the four sides.',
     [t(faceName[curFace]), fmt(wwrLo0 * 100, 0), fmt(wwrHi0 * 100, 0)])); }
 
+  host.appendChild(hint('open-shape',
+    'Tall glass, deep light; wide glass, even light. Daylight reaches roughly twice the window’s head height into the room (Lechner, <i>Heating, Cooling, Lighting</i>), so a higher head lights deeper floor — a 2.1 m head reaches about 4 m in — while a wider window spreads that light sideways and leaves wall below for heating, the radiator’s usual place under the glass. Strip windows that run long and low light a room evenly from end to end (Ching &amp; Shapiro, on window size, placement and daylight uniformity). The Shape fit badge averages the two: depth from the head against the room depth this side faces, spread from the mean window width against a generous 2.4 m bay. Like the WWR fit, it is this application’s own synthesis across sources, not a number from any book — compare sides with it; a tall narrow south window and a long low one can both score well, for different reasons.'));
   const cFace = segCtl(null, FACES.map(f => ({ value:f, label:faceName[f] })), curFace,
     v => { curFace = v; turnTo(v); syncFaceCtls(); refreshOpenings(); });
   /** Turn the camera to the side under study: square to it in an
@@ -8111,12 +8127,13 @@ function buildOpenings(host) {
       };
       fitBadge(0, overallScore(), 'WWR fit /100');
       fitBadge(1, shadingScore(curFace), 'Shading fit /100');
+      fitBadge(2, shapeScore(curFace), 'Shape fit /100');
     },
     csv: () => {
-      const rows = [['Facade side', 'Faces', 'Windows', 'Glass (m²)', 'WWR', 'Sill (m)', 'Head (m)', 'Overhang depth (m)', 'Overhang count', 'Fin depth (m)', 'Fin count', 'Fin side', 'WWR fit (0–100)', 'Shading fit (0–100)']];
-      FACES.forEach(f => { const o = OPEN[f], ws = winsOf(f), sc = shadingScore(f);
+      const rows = [['Facade side', 'Faces', 'Windows', 'Glass (m²)', 'WWR', 'Sill (m)', 'Head (m)', 'Overhang depth (m)', 'Overhang count', 'Fin depth (m)', 'Fin count', 'Fin side', 'WWR fit (0–100)', 'Shading fit (0–100)', 'Shape fit (0–100)']];
+      FACES.forEach(f => { const o = OPEN[f], ws = winsOf(f), sc = shadingScore(f), sh = shapeScore(f);
         rows.push([faceName[f], COMPASS8_EN[Math.round(faceAz(f) / 45) % 8], winCount(f), +ws.reduce((a, x) => a + x.w.area, 0).toFixed(2), fmt(o.wwr, 2), fmt(o.sillZ, 2), fmt(o.headZ, 2),
-          fmt(o.ovD, 2), o.ovN, fmt(o.finD, 2), o.finN, o.finSide, Math.round(facadeScore(f)), sc === null ? '' : Math.round(sc)]); });
+          fmt(o.ovD, 2), o.ovN, fmt(o.finD, 2), o.finN, o.finSide, Math.round(facadeScore(f)), sc === null ? '' : Math.round(sc), sh === null ? '' : Math.round(sh)]); });
       rows.push(['Sunspace', SUNSP.on ? SUNSP.face : 'off', '', '', '', '', '', fmt(SUNSP.depth, 2), '', '', '', '', '', fmt(SUNSP.widthFrac, 2)]);
       rows.push(['Roof window size', RW_SIZES[RWIN.size].label]);
       if (RF.n === 0) rows.push(['Skylights', RWIN.s]);
@@ -13968,6 +13985,7 @@ Object.assign(PT, {
   "Blocks winter sun almost as much as summer — too deep for this climate": "Bloqueia o sol de Inverno quase tanto como o de Verão — demasiado profundo para este clima",
   "WWR fit /100": "Ajuste WWR /100",
   "Shading fit /100": "Ajuste do sombreamento /100",
+  "Shape fit /100": "Ajuste da forma /100",
   "Winter shelter /100": "Abrigo de inverno /100",
   "The two {}–{} scores sit in the corner of the model — winter shelter, summer tunnel — with the Olgyay verdict on the pair below.": "As duas notas {}–{} estão no canto do modelo — abrigo de inverno, túnel de verão — com o veredicto de Olgyay sobre o par abaixo.",
   "Summer tunnel /100": "Túnel de verão /100",
@@ -14340,6 +14358,8 @@ Object.assign(PT_HINT, {
     'Factor de forma FF = envolvente exterior ÷ volume aquecido, em m⁻¹ — paredes até ao beirado, triângulos de empena, vertentes e piso térreo sobre o volume que encerram, uma única zona, tudo exterior. Mais baixo é mais compacto: os abrigos redondos de pastores da Monchique são o extremo vernacular (Gonçalves & Graça). É o mesmo rácio a que o REH chama <i>factor de forma</i>, aqui enunciado como pura geometria sem limites — o Construction Advisor continua daí. A pastilha pinta-o de verde até 0,7 (compacto), âmbar até 1,1 (moderado) e vermelho acima (disperso): faixas didácticas, não limites. Não move a nota de ajuste.',
   'open-wwr':
     'As faixas de WWR seguem a classificação de Ching &amp; Shapiro (baixa &lt;10%, moderada 10–20%, alta 20–30%, muito alta &gt;30%; p.242), lida à luz da orientação de Lechner — o sul recebe mais vidro, o norte o menos das fachadas com sol, e este/oeste são minimizados onde o clima pende para quente (pp.130–132, 416). A faixa mostrada para %1 neste clima é <b>%2–%3%</b>. O norte fica entre 5 e 10 % e começa em 5 %: quase não recebe sol de Inverno e perde calor todo o ano. É uma escolha bioclimática desta aplicação, não uma regra do SCE — o regulamento não fixa máximo para o vidro a norte; dispensa do requisito de factor solar os vãos orientados no quadrante norte e qualquer espaço cujos envidraçados não excedam 5 % da sua área de <i>pavimento</i> (Portaria n.º 138-I/2021). O RGEU fixa antes o mínimo: cada compartimento precisa de vãos com pelo menos 1/10 da sua área, e nunca menos de 1,08 m² (art. 71.º), e a leitura do lado norte diz quantos compartimentos o seu vidro pode servir. É uma síntese própria desta aplicação entre fontes, não um número único citável — trate-a como uma meta a atingir, não um teste de aprovação. Cada lado é avaliado pelo sentido para onde realmente fica virado depois de rodada a planta no Local, e a sua razão vão/parede aplica-se a todas as paredes da planta desse lado — de uma ala, de um recuo, de um pátio. Com dois ou três pisos, esse vidro reparte-se por igual entre eles: cada parede recebe uma janela por piso, todas da mesma largura, com peitoril e padieira medidos a partir de cada piso e a padieira 0,10 m abaixo do piso de cima. A caixa Ajuste WWR faz a média deste teste nos quatro lados.',
+  'open-shape':
+    'Vidro alto, luz funda; vidro largo, luz uniforme. A luz natural alcança cerca do dobro da altura da verga para dentro da sala (Lechner, <i>Heating, Cooling, Lighting</i>), por isso uma verga mais alta ilumina mais fundo — uma verga a 2,1 m chega a cerca de 4 m — enquanto uma janela mais larga espalha essa luz para os lados e deixa parede por baixo para o aquecimento, o lugar habitual do radiador sob o vidro. Janelas em fita, compridas e baixas, iluminam a sala de modo uniforme de ponta a ponta (Ching &amp; Shapiro, sobre dimensão, posição e uniformidade da luz natural). A nota Forma pondera as duas: profundidade a partir da verga contra a profundidade da sala para onde este lado se vira, largura a partir da largura média contra um generoso vão de 2,4 m. Como o ajuste WWR, é uma síntese própria desta aplicação entre fontes, não um número de nenhum livro — compare lados com ela; uma janela a sul alta e estreita e uma comprida e baixa podem ambas sair-se bem, por razões diferentes.',
   'open-shading':
     'Uma pala horizontal corta o sol alto de Verão no vidro virado ao equador, usando a mesma geometria do ângulo de perfil da inclinação do telhado no separador anterior (Olgyay, pp.79–80; Lechner, pp.249–253). O vidro a este e a oeste recebe sol baixo, quase rasante, de manhã e ao fim da tarde, que uma pala mal toca — os brises verticais respondem a isso: a própria tabela de coeficientes de sombreamento de Olgyay dá aos brises verticais fixos nas paredes este/oeste cerca de 0,31 (ou seja, cortando cerca de dois terços do ganho não sombreado), contra cerca de 0,20–0,25 para uma pala contínua a sul e 0,10–0,15 para lâminas horizontais móveis (pp.70–71) — os brises ganham mesmo o seu lugar no sol baixo e oblíquo a este e a oeste, mais a oeste do que a este uma vez somado o calor da tarde. Lechner nota ainda que os dispositivos horizontais continuam a superar os brises mesmo aí, e que os brises servem sobretudo o lado do equador de uma fachada oblíqua (pp.255–259); numa parede virada a sul, um brise só falha no único momento em que o sol fica exactamente perpendicular ao vidro — o meio-dia solar — continuando a cortar o sol oblíquo da manhã e da tarde no resto do dia, pelo que o seu contributo aí também pode ser substancial, cobrindo apenas horas diferentes das de uma pala. Várias lâminas mais rasas ou vários brises mais estreitos cortam o mesmo ângulo que um dispositivo único mais profundo, bloqueando menos a vista — um caixote de ovos é os dois empilhados, não somados (DeKay &amp; Brown, Estratégia 91, pp.248–249). Ambos ficam directamente sobre o vão: uma única pala acompanha a verga, várias lâminas distribuem-se de cima a baixo por todo o envidraçado, e os brises correm da esquerda para a direita ao longo da largura escolhida — nunca flutuando afastados da própria janela. Num clima de aquecimento, uma boa pala discrimina por estação — corta o sol alto de Junho mas ainda deixa entrar o sol baixo de Dezembro que alivia a factura do aquecimento — pelo que a nota de sombreamento abaixo premeia essa diferença e não a profundidade em si: um dispositivo suficientemente profundo para bloquear Verão e Inverno por igual não vale mais do que nenhum.',
   'open-sunspace':
