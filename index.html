@@ -3629,6 +3629,35 @@ const segFace = sg => sg.n[1] < 0 ? 'S' : sg.n[1] > 0 ? 'N' : sg.n[0] > 0 ? 'E' 
  * are the ground floor's; rows lists every floor's; area is the glass
  * drawn on all of them.
  */
+/** Window units, per facade: the facade's glass split into independently
+    switchable windows, tiled side by side along every wall. fracs always sum
+    to 1; a switched-off unit leaves an honest hole (no glass, no gain). */
+function faceUnits(f) {
+  const o = OPEN && OPEN[f];
+  if (!o) return [{ on:true, frac:1 }];
+  if (!Array.isArray(o.units)) o.units = [];
+  o.units = o.units.filter(w => w && isFinite(+w.frac) && +w.frac > 0).slice(0, 4);
+  if (!o.units.length) o.units.push({ on:true, frac:1 });
+  o.units.forEach(w => { w.on = w.on !== false; w.frac = +w.frac; });
+  const s = o.units.reduce((a, w) => a + w.frac, 0) || 1;
+  o.units.forEach(w => { w.frac /= s; });
+  return o.units;
+}
+/** Share of the specified glass actually built (switched-on units). */
+function glassShare(f) {
+  return faceUnits(f).reduce((a, w) => a + (w.on ? w.frac : 0), 0);
+}
+/** Absolute spans of one wall's glass [u0,u1] per unit, in order. */
+function glassSpans(f, u0, u1) {
+  const us = faceUnits(f), out = [];
+  let u = u0;
+  us.forEach((w, i) => {
+    const b = i === us.length - 1 ? u1 : u0 + (u1 - u0) * us.slice(0, i + 1).reduce((a, q) => a + q.frac, 0);
+    out.push({ a:u, b, on:w.on });
+    u = b;
+  });
+  return out;
+}
 function segWindow(sg, G) {
   const f = segFace(sg), o = OPEN && OPEN[f];
   if (!o || !(o.wwr > 0) || sg.len < 1.5) return null;
@@ -7671,7 +7700,7 @@ function buildOpenings(host) {
       energy metric. */
   function facadeScore(f) {
     const [lo, hi] = wwrRange(f);
-    const w = OPEN[f].wwr;
+    const w = OPEN[f].wwr * glassShare(f);
     if (w < lo) return lo > 0 ? clamp(100 * (w / lo), 0, 100) : 100;
     if (w > hi) return clamp(100 * (1 - (w - hi) / hi), 0, 100);
     return 100;
@@ -7685,10 +7714,14 @@ function buildOpenings(host) {
   function shapeScore(f) {
     const ws = winsOf(f);
     if (!ws.length) return null;
-    const w = ws.reduce((a, x) => a + x.w.w, 0) / ws.length;
+    const us = faceUnits(f).filter(u => u.on);
+    if (!us.length) return 0;
+    const Wbar = ws.reduce((a, x) => a + x.w.w, 0) / ws.length;
     const H = ws[0].w.rows[0].head;
     const depth = (f === 'S' || f === 'N') ? G.D : G.L;
-    return 100 * (clamp(2 * H / Math.max(1, depth), 0, 1) + clamp(w / 2.4, 0, 1)) / 2;
+    const one = w => 100 * (clamp(2 * H / Math.max(1, depth), 0, 1) + clamp(w / 2.4, 0, 1)) / 2;
+    const tot = us.reduce((a, u) => a + u.frac, 0) || 1;
+    return us.reduce((a, u) => a + u.frac * one(u.frac * Wbar), 0) / tot;
   }
   SCORES.openings = () => ({ 'WWR fit /100':Math.round(overallScore()),
     'Shading fit /100 by facade':Object.fromEntries(FACES.map(f => [f, shadingScore(f) === null ? null : Math.round(shadingScore(f))])),
@@ -7736,6 +7769,77 @@ function buildOpenings(host) {
   rail.appendChild(el('div', { class:'rgroup' }, [cFace]));
   rail.appendChild(el('div', { class:'gh', text:'Window' }));
   rail.appendChild(controls([cWWR, cSill, cHead]));
+  rail.appendChild(el('div', { class:'gh', text:'Windows' }));
+  const unitBox = rail.appendChild(el('div'));
+  /** One row per window unit of the side under study: its switch, its share
+      of the side's glass, and its own numbers — each playable alone. */
+  function buildUnitUI() {
+    unitBox.innerHTML = '';
+    /* unit objects keep stable identities across reads (faceUnits mutates
+       in place), but the array itself is always re-fetched: handlers below
+       never close over a stale list. */
+    const built = el('div', { class:'hint' });
+    unitBox.appendChild(built);
+    const rows = [];
+    const updateTexts = () => {
+      const us = faceUnits(curFace);
+      if (rows.length !== us.length) { buildUnitUI(); return; }
+      const ws = winsOf(curFace);
+      const Wbar = ws.length ? ws.reduce((a, x) => a + x.w.w, 0) / ws.length : 0;
+      const tot = ws.reduce((a, x) => a + x.w.area, 0);
+      const gs = glassShare(curFace), on = us.filter(u => u.on).length;
+      built.textContent = t('Built') + ' ' + fmt(OPEN[curFace].wwr * gs * 100, 0) + '% ' + t('of wall') + ' · ' + on + '/' + us.length;
+      const H = ws.length ? ws[0].w.rows[0].head : 0, depth = (curFace === 'S' || curFace === 'N') ? G.D : G.L;
+      rows.forEach((r, i) => {
+        const wi = us[i].frac * Wbar;
+        r.m.textContent = fmt(wi, 2) + ' m · ' + fmt(tot * (us[i].on ? us[i].frac : 0), 2) + ' m² · '
+          + (!us[i].on ? '–' : String(Math.round(100 * (clamp(2 * H / Math.max(1, depth), 0, 1) + clamp(wi / 2.4, 0, 1)) / 2)));
+      });
+    };
+    faceUnits(curFace).forEach((u, i) => {
+      const chk = checkCtl('W' + (i + 1), u.on, v => { u.on = v; updateTexts(); refreshOpenings(); });
+      const sh = rangeCtl('Share', 5, 95, 1, Math.round(u.frac * 100), v => {
+        const us = faceUnits(curFace), w = us[i];
+        if (!w) { buildUnitUI(); return; }
+        const oldFrac = w.frac, nw = clamp(v / 100, 0.05, 0.95), rest = 1 - oldFrac;
+        w.frac = nw;
+        if (rest > 1e-9) us.forEach((q, j) => { if (j !== i) q.frac *= (1 - nw) / rest; });
+        const s = us.reduce((a, q) => a + q.frac, 0) || 1;
+        us.forEach(q => { q.frac /= s; });
+        updateTexts(); refreshOpenings();
+      }, v => fmt(v, 0) + '%');
+      if (faceUnits(curFace).length < 2) sh.range.disabled = true;
+      const r = { m:el('div', { class:'hint' }) };
+      const line = el('div', {}, [chk, r.m]);
+      rows.push(r);
+      unitBox.appendChild(line);
+      unitBox.appendChild(sh);
+    });
+    const minus = el('button', { class:'btn small', text:'\u2212', title:t('One window fewer'), 'aria-label':t('One window fewer'), onclick:() => {
+      const us = faceUnits(curFace);
+      if (us.length < 2) return;
+      us.pop();
+      const s = us.reduce((a, q) => a + q.frac, 0) || 1;
+      us.forEach(q => { q.frac /= s; });
+      buildUnitUI(); refreshOpenings();
+    } });
+    const plus = el('button', { class:'btn small', text:'+', title:t('One window more'), 'aria-label':t('One window more'), onclick:() => {
+      const us = faceUnits(curFace);
+      if (us.length > 3) return;
+      let bi = 0;
+      us.forEach((q, j) => { if (q.frac > us[bi].frac) bi = j; });
+      us.splice(bi + 1, 0, { on:us[bi].on, frac:us[bi].frac / 2 });
+      us[bi].frac /= 2;
+      buildUnitUI(); refreshOpenings();
+    } });
+    const nU = faceUnits(curFace).length;
+    if (nU < 2) minus.disabled = true;
+    if (nU > 3) plus.disabled = true;
+    const row = el('div', { class:'srcrow' }, [minus, plus]);
+    unitBox.appendChild(row);
+    updateTexts();
+  }
+  buildUnitUI();
   props.appendChild(el('div', { class:'gh', text:'Shading devices' }));
   props.appendChild(controls([cOvD, cOvN, cFinD, cFinN, cFinSide]));
 
@@ -7858,6 +7962,7 @@ function buildOpenings(host) {
     'This tab sizes glazing and shading the way a first design pass would — geometric rules of thumb, not a simulation. It does not model diffuse or reflected light, glare, internal or solar heat gain, or a real sky, and the shading figure below is averaged over a fixed set of daytime hours on 21 June and 21 December only, not the whole year or an actual weather file. Olgyay himself called his shading coefficients "approximate values" (p.67); Lechner recommends checking any shading design against a physical model (p.251); Ching &amp; Shapiro note that optimal glazing sizing "should be calculated by computer simulation" (p.101). A value outside the coloured range is not forbidden — some briefs need it — but treat it as a flag to justify, not a default.'));
 
   function syncFaceCtls() {
+    buildUnitUI();
     const o = OPEN[curFace];
     syncCtl(cWWR, Math.round(o.wwr * 100), v => fmt(v, 0) + '%');
     syncCtl(cSill, o.sillZ, v => fmt(v, 2) + ' m');
@@ -7910,12 +8015,15 @@ function buildOpenings(host) {
         pts:[onWall(sg, rect.u0, vt), onWall(sg, rect.u1, vt), off(onWall(sg, rect.u1, vt), o.ovD), off(onWall(sg, rect.u0, vt), o.ovD)] }));
       if (o.finN > 0 && o.finD > 0) finPositions(o.finSide, o.finN, rect).forEach(uF => devs.push({ kind:'fin', f:w.f,
         pts:[onWall(sg, uF, rect.v0), off(onWall(sg, uF, rect.v0), o.finD), off(onWall(sg, uF, rect.v1), o.finD), onWall(sg, uF, rect.v1)] }));
-      glass.push([onWall(sg, rect.u0, rect.v0), onWall(sg, rect.u1, rect.v0), onWall(sg, rect.u1, rect.v1), onWall(sg, rect.u0, rect.v1)]);
+      glassSpans(w.f, rect.u0, rect.u1).forEach(sp => {
+        if (!sp.on || sp.b - sp.a < 0.05) return;
+        glass.push([onWall(sg, sp.a, rect.v0), onWall(sg, sp.b, rect.v0), onWall(sg, sp.b, rect.v1), onWall(sg, sp.a, rect.v1)]);
+      });
     });
     return { devs, glass };
   };
-  /** Windows on one side: one per wall per storey. */
-  const winCount = f => winsOf(f).reduce((a, x) => a + x.w.n, 0);
+  /** Windows on one side, as built: switched-on units, one per wall per storey. */
+  const winCount = f => { const nU = faceUnits(f).filter(u => u.on).length; return winsOf(f).reduce((a, x) => a + x.w.n * nU, 0); };
 
   /** Average fraction of the sun a side's own overhang and fins keep off its
       windows across a day, by the profile-angle / wall-solar-azimuth method
@@ -8178,7 +8286,7 @@ function buildOpenings(host) {
       const o = OPEN[curFace];
       const sh = (o.ovD > 0 || o.finD > 0 || balcOnFace(curFace)) ? shadeEffectiveness(curFace, 172).pct : null;
       const nW = winCount(curFace);
-      label(ctx, t(faceName[curFace]) + ' · ' + t('faces') + ' ' + faceDir(curFace) + ' · WWR ' + fmt(o.wwr * 100, 0) + '% · ' + nW + ' ' + t(nW === 1 ? 'window' : 'windows')
+      label(ctx, t(faceName[curFace]) + ' · ' + t('faces') + ' ' + faceDir(curFace) + ' · WWR ' + fmt(o.wwr * glassShare(curFace) * 100, 0) + '% · ' + nW + ' ' + t(nW === 1 ? 'window' : 'windows')
         + (sh !== null ? ' · ' + t('shading') + ' ' + fmt(sh, 0) + '%' : ''),
         8, narrow ? 72 : 12, CH.ink2, FM(narrow ? 9.5 : 11), 'left', 'middle');
       const GREEN = '#16A34A';
@@ -8197,9 +8305,16 @@ function buildOpenings(host) {
     },
     csv: () => {
       const rows = [['Facade side', 'Faces', 'Windows', 'Glass (m²)', 'WWR', 'Sill (m)', 'Head (m)', 'Overhang depth (m)', 'Overhang count', 'Fin depth (m)', 'Fin count', 'Fin side', 'WWR fit (0–100)', 'Shading fit (0–100)', 'Shape fit (0–100)']];
-      FACES.forEach(f => { const o = OPEN[f], ws = winsOf(f), sc = shadingScore(f), sh = shapeScore(f);
-        rows.push([faceName[f], COMPASS8_EN[Math.round(faceAz(f) / 45) % 8], winCount(f), +ws.reduce((a, x) => a + x.w.area, 0).toFixed(2), fmt(o.wwr, 2), fmt(o.sillZ, 2), fmt(o.headZ, 2),
-          fmt(o.ovD, 2), o.ovN, fmt(o.finD, 2), o.finN, o.finSide, Math.round(facadeScore(f)), sc === null ? '' : Math.round(sc), sh === null ? '' : Math.round(sh)]); });
+      FACES.forEach(f => { const o = OPEN[f], ws = winsOf(f), sc = shadingScore(f), sh = shapeScore(f), gs = glassShare(f);
+        const totGlass = ws.reduce((a, x) => a + x.w.area, 0), Wbar = ws.length ? ws.reduce((a, x) => a + x.w.w, 0) / ws.length : 0;
+        rows.push([faceName[f], COMPASS8_EN[Math.round(faceAz(f) / 45) % 8], winCount(f), +(totGlass * gs).toFixed(2), fmt(o.wwr * gs, 2), fmt(o.sillZ, 2), fmt(o.headZ, 2),
+          fmt(o.ovD, 2), o.ovN, fmt(o.finD, 2), o.finN, o.finSide, Math.round(facadeScore(f)), sc === null ? '' : Math.round(sc), sh === null ? '' : Math.round(sh)]);
+        faceUnits(f).forEach((u, i) => {
+          const wi = u.frac * Wbar, r0 = ws.length ? ws[0].w.rows[0] : null;
+          const depth = (f === 'S' || f === 'N') ? G.D : G.L;
+          const shi = !u.on ? '' : Math.round(100 * (clamp(2 * (r0 ? r0.head : 0) / Math.max(1, depth), 0, 1) + clamp(wi / 2.4, 0, 1)) / 2);
+          rows.push([faceName[f] + ' window ' + (i + 1) + ' (' + fmt(wi, 1) + ' m)', u.on ? 'on' : 'off', '', u.on ? +(totGlass * u.frac).toFixed(2) : 0, '', '', '', '', '', '', '', '', '', '', shi]);
+        }); });
       rows.push(['Sunspace', SUNSP.on ? SUNSP.face : 'off', '', '', '', '', '', fmt(SUNSP.depth, 2), '', '', '', '', '', fmt(SUNSP.widthFrac, 2)]);
       rows.push(['Roof window size', RW_SIZES[RWIN.size].label]);
       if (RF.n === 0) rows.push(['Skylights', RWIN.s]);
@@ -11452,15 +11567,20 @@ function exportModel() {
     const mouths = (BSx.holes.get(sg) || []).map(h => { const a0 = ul(h.quad[0]), a1 = ul(h.quad[1]); return [Math.min(a0, a1), Math.max(a0, a1), h.quad[0][2], h.quad[2][2]]; });
     const holes = mouths.slice();
     if (rows.length) {
-      const u0 = wn.uc - wn.w / 2, u1 = wn.uc + wn.w / 2;
+      const u0 = wn.uc - wn.w / 2, u1 = wn.uc + wn.w / 2, units = glassSpans(f, u0, u1);
       rows.forEach(([v0, v1], k) => {
         let pieces = [[u0, u1]];
         mouths.filter(m => m[2] <= v0 + 1e-6 && m[3] >= v1 - 1e-6).forEach(m => {
           pieces = pieces.reduce((acc, [a, b]) => acc.concat([[a, Math.min(b, m[0])], [Math.max(a, m[1]), b]].filter(q => q[1] - q[0] > 0.05)), []);
         });
         pieces.forEach(([a, b], j) => {
-          holes.push([a, b, v0, v1]);
-          windowAndShading(P, n, along, (a + b) / 2, b - a, v0, v1, OPEN[f], f, tag + (rows.length > 1 ? ' floor ' + k : '') + (pieces.length > 1 ? ' ' + String.fromCharCode(97 + j) : ''));
+          units.forEach((sp, i) => {
+            if (!sp.on) return;
+            const c0 = Math.max(a, sp.a), c1 = Math.min(b, sp.b);
+            if (c1 - c0 < 0.05) return;
+            holes.push([c0, c1, v0, v1]);
+            windowAndShading(P, n, along, (c0 + c1) / 2, c1 - c0, v0, v1, OPEN[f], f, tag + (rows.length > 1 ? ' floor ' + k : '') + (pieces.length > 1 ? ' ' + String.fromCharCode(97 + j) : '') + (units.length > 1 ? '·U' + (i + 1) : ''));
+          });
         });
       });
     }
@@ -11815,6 +11935,11 @@ function applyStudy(o) {
     if (isFinite(+s.finD) && +s.finD >= 0) d.finD = Math.min(+s.finD, 2.5);
     if (isFinite(+s.finN)) d.finN = clamp(Math.round(+s.finN), 0, 6);
     if (['left', 'right', 'both'].indexOf(s.finSide) >= 0) d.finSide = s.finSide;
+    if (Array.isArray(s.units) && s.units.length) {
+      const vu = s.units.filter(w => w && isFinite(+w.frac) && +w.frac > 0).slice(0, 4)
+        .map(w => ({ on:w.on !== false, frac:+w.frac }));
+      if (vu.length) { const t = vu.reduce((a, w) => a + w.frac, 0) || 1; vu.forEach(w => { w.frac /= t; }); d.units = vu; }
+    }
   });
   const U0 = o.sunsp || {};
   SUNSP.on = !!U0.on;
@@ -13055,7 +13180,7 @@ function mountApp(site, clim, keepTab, keepModel, keepScroll) {
      of true-south regardless of the plan's chosen rotation), each holding
      the window and its shading devices. wwr is a fraction of that facade's
      own wall area (L or D × the eave height). */
-  const faceDefault = () => ({ wwr:0.20, sillZ:0.9, headZ:2.1, ovD:0, ovN:1, finD:0, finN:0, finSide:'both' });
+  const faceDefault = () => ({ wwr:0.20, sillZ:0.9, headZ:2.1, ovD:0, ovN:1, finD:0, finN:0, finSide:'both', units:[{ on:true, frac:1 }] });
   OPEN = { S: faceDefault(), N: faceDefault(), E: faceDefault(), W: faceDefault() };
   OPEN.S.wwr = 0.35;   // a defensible start, not a recommendation — the badge judges it live
   OPEN.N.wwr = 0.05;   // north starts at the low end of its band
@@ -14074,6 +14199,12 @@ Object.assign(PT, {
   "Blocks winter sun almost as much as summer — too deep for this climate": "Bloqueia o sol de Inverno quase tanto como o de Verão — demasiado profundo para este clima",
   "WWR fit /100": "Ajuste WWR /100",
   "Shading fit /100": "Ajuste do sombreamento /100",
+  "Windows": "Janelas",
+  "Share": "Quota",
+  "Built": "Construído",
+  "of wall": "da parede",
+  "One window fewer": "Menos uma janela",
+  "One window more": "Mais uma janela",
   "Shape fit /100": "Ajuste da forma /100",
   "Winter shelter /100": "Abrigo de inverno /100",
   "The two {}–{} scores sit in the corner of the model — winter shelter, summer tunnel — with the Olgyay verdict on the pair below.": "As duas notas {}–{} estão no canto do modelo — abrigo de inverno, túnel de verão — com o veredicto de Olgyay sobre o par abaixo.",
