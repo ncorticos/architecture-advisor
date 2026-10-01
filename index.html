@@ -719,6 +719,11 @@ details.more[open] > summary{color:var(--ink)}
               <button type="button" class="btn solid" id="btnImportAdopt" data-t="btnImportAdopt" disabled>Adopt as the massing</button>
               <button type="button" class="btn" id="btnImportRemove" data-t="btnImportRemove" disabled>Remove</button>
             </div>
+            <div class="fld">
+              <label for="inpStudyFile" data-t="fldStudyFile">Study file</label>
+              <input type="file" id="inpStudyFile" accept=".json,application/json">
+              <span class="sub" data-t="fldStudySub">A study saved from this app — restores the site, the normals and every decision, and opens the design where it stopped.</span>
+            </div>
           </div>
         </div>
 
@@ -5788,14 +5793,6 @@ function buildSite(host) {
         });
       };
       drawPlan(Hgt);
-      /* the divisions between roof parts, draggable along the longest side */
-      divProj.at = at; divProj.beta = beta;
-      RM.zones.slice(1).forEach((z, k) => {
-        const cx = RM.axis === 'x' ? z.a0 : RM.pl.bbox[0], cy = RM.axis === 'x' ? RM.pl.bbox[1] : z.a0;
-        const a = at(cx, cy, beta, RM.H0), b = at(cx, cy, beta, RM.ridge + 0.5);
-        ctx.save(); ctx.setLineDash([4, 3]); stroke(ctx, '#0D9488', 1.4); seg(ctx, a[0], a[1], b[0], b[1]); ctx.restore();
-        ctx.beginPath(); ctx.arc(a[0], a[1], 5, 0, 6.284); ctx.fillStyle = '#fff'; ctx.fill(); stroke(ctx, '#0D9488', 1.8); ctx.stroke();
-      });
       desk.area(hull(scs.map(p => proj(p[0], p[1], 0)).concat(roofPts.map(q => proj(q[0][0], q[0][1], q[2])))));   // labels keep off the volume
 
       /* The windows, as sized on Windows & Shading: the ones on walls facing
@@ -6790,6 +6787,14 @@ function buildRoof(host) {
         } else { stroke(ctx, CH.ink, 1.4); ctx.stroke(); desk.path(p, true); if (F.sg) balcHoles(ctx, BS.holes.get(F.sg), P3, dep3, sees3); }
       });
 
+      /* the divisions between roof parts, draggable along the longest side */
+      M.zones.slice(1).forEach(z => {
+        const cx = M.axis === 'x' ? z.a0 : bb[0], cy = M.axis === 'x' ? bb[1] : z.a0;
+        const a = proj(cx, cy, H0), b = proj(cx, cy, M.ridge + 0.5);
+        ctx.save(); ctx.setLineDash([4, 3]); stroke(ctx, '#0D9488', 1.4); seg(ctx, a[0], a[1], b[0], b[1]); ctx.restore();
+        ctx.beginPath(); ctx.arc(a[0], a[1], 5, 0, 6.284); ctx.fillStyle = '#fff'; ctx.fill(); stroke(ctx, '#0D9488', 1.8); ctx.stroke();
+      });
+
       /* the collector field: dark-blue PV modules with their cell lines, or
          flat-plate collectors with an aluminium frame and their risers;
          racked rows on a flat roof go down back to front, each on its legs */
@@ -7057,17 +7062,16 @@ function buildRoof(host) {
     roofDraw();
   };
   let rdrag = false, fdrag = false, ddiv = -1;
-  const divProj = { at:null, beta:0 };
   /** Screen point of a division's handle: the cut at the front eaves. */
   const divHandlePos = k => {
-    const M = roofModel(G, RF), bb = M.pl.bbox, z = M.zones[k];
-    if (!z || !divProj.at) return null;
-    const x = M.axis === 'x' ? z.a0 : bb[0], y = M.axis === 'x' ? bb[1] : z.a0;
-    const q = divProj.at(x, y, divProj.beta, M.H0);
+    if (!roofPanel.W) return null;
+    const FR = roofFrame(roofPanel.W, roofPanel.H), M = FR.M, bb = M.pl.bbox, z = M.zones[k];
+    if (!z) return null;
+    const q = projF(FR, M.axis === 'x' ? z.a0 : bb[0], M.axis === 'x' ? bb[1] : z.a0, M.H0);
     return [q[0], q[1]];
   };
   const divHandleAt = (clientX, clientY) => {
-    if (!roofPanel.W || !divProj.at) return -1;
+    if (!roofPanel.W) return -1;
     const M = roofModel(G, RF), r = rcv.getBoundingClientRect();
     for (let k = 1; k < M.zones.length; k++) {
       const q = divHandlePos(k);
@@ -7077,17 +7081,17 @@ function buildRoof(host) {
   };
   /** The division follows the pointer where it meets the eaves plane. */
   const doDivDrag = (clientX, clientY) => {
-    if (ddiv < 0 || !divProj.at) return;
-    const M = roofModel(G, RF), r = rcv.getBoundingClientRect();
-    const px = clientX - r.left, py = clientY - r.top, at = divProj.at, be = divProj.beta, H0 = M.H0;
-    const A = at(0, 0, be, H0), Bx = at(1, 0, be, H0), By = at(0, 1, be, H0);
-    const ux = Bx[0] - A[0], uy = Bx[1] - A[1], vx = By[0] - A[0], vy = By[1] - A[1];
-    const det = ux * vy - uy * vx;
+    if (ddiv < 0 || !roofPanel.W) return;
+    const FR = roofFrame(roofPanel.W, roofPanel.H), A = FR.A, M = FR.M;
+    if (Math.abs(A.se) < 1e-6) return;   // plan view: slide the Division slider instead
+    const r = rcv.getBoundingClientRect();
+    const px = (clientX - r.left - FR.cx) / FR.s, py = (FR.cy - (clientY - r.top)) / FR.s;
+    const h = (py / CAM_K - M.H0 * A.ce) / A.se, qx = px / CAM_K;
+    const det = A.r[0] * A.d[1] - A.r[1] * A.d[0];
     if (Math.abs(det) < 1e-9) return;
-    const qx = px - A[0], qy = py - A[1];
-    const lx = (qx * vy - qy * vx) / det, ly = (ux * qy - uy * qx) / det;
+    const x = (qx * A.d[1] - A.r[1] * h) / det, y = (A.r[0] * h - qx * A.d[0]) / det;
     const bb = M.pl.bbox, s0 = M.axis === 'x' ? bb[0] : bb[1];
-    setDiv(ddiv, (M.axis === 'x' ? lx : ly) - s0);
+    setDiv(ddiv, (M.axis === 'x' ? x : y) - s0);
     roofDraw();
   };
   /** Is the pointer on the collector field's corner point? */
@@ -11292,6 +11296,108 @@ function toggleCadMenu(ev) {
 }
 document.addEventListener('click', ev => { const m = $('#cadMenu'); if (m && !m.contains(ev.target)) m.remove(); });
 
+/* --- save and restore the study: the student leaves and comes back -------
+   Save study writes one JSON file beside Export 3D: the site, the normals
+   and the whole live state, plus the human-readable decisions record. The
+   setup page's import box reads it back and reopens the design where it
+   stopped (the 3D mesh itself is too heavy for a file like this — its size
+   is noted, and the file is re-imported). Nothing is uploaded either way. */
+let STUDY = null;
+function studyJSON() {
+  const S = STATE.site, C = STATE.clim;
+  return JSON.stringify({
+    app:APP.name, kind:'architecture-advisor-study', version:APP.version, exported:new Date().toISOString(),
+    site:{ place:S.place, nuts:S.nuts, lat:S.lat, lon:S.lon, alt:S.alt, use:S.use, operation:S.operation },
+    clim:{ t:C.t.slice(), p:C.p.slice(), source:C.source || '', mode:C.mode || '' },
+    env:{ plot:ENV.plot ? { lat:ENV.plot.lat, lon:ENV.plot.lon } : null, doy:ENV.doy, h:ENV.h,
+      map:ENV.map, view:ENV.view, wide:!!ENV.wide, nb:ENV.nb !== false },
+    mass:MASS, roof:ROOF, open:OPEN, sunsp:SUNSP, rwin:RWIN, veg:SCENE.veg, walls:SCENE.walls,
+    mesh:IMPORT.active ? { name:IMPORT.name, L:+IMPORT.L.toFixed(2), D:+IMPORT.D.toFixed(2), H:+IMPORT.H.toFixed(2) } : null,
+    readout:JSON.parse(toDecisionsJSON())
+  }, null, 2);
+}
+/** The live state back from a study file, clamped into the current plan's
+    limits so an older file cannot break a newer application. Arrays stay the
+    same objects — Ventilation holds them by reference. */
+function applyStudy(o) {
+  const fin = (v, d) => isFinite(+v) ? +v : d;
+  const M0 = o.mass || {};
+  MASS.L = clamp(Math.round(fin(M0.L, 12) * 2) / 2, 6, 24);
+  MASS.D = clamp(Math.round(fin(M0.D, 8) * 2) / 2, 4, 16);
+  MASS.rot = ((fin(M0.rot, 180) % 360) + 360) % 360;
+  MASS.fl = clamp(Math.round(fin(M0.fl, 1)), 1, 3);
+  MASS.fh = clamp(fin(M0.fh, 3.0), 2.4, 4.5);
+  MASS.col = typeof M0.col === 'string' ? M0.col : null;
+  MASS.form = ['rect', 'L', 'T', 'U', 'H'].indexOf(M0.form) >= 0 ? M0.form : 'rect';
+  MASS.wing = MASS.form === 'rect' ? null : (M0.wing && typeof M0.wing === 'object' ? M0.wing : null);
+  MASS.patio = M0.patio && typeof M0.patio === 'object'
+    ? Object.assign({ on:false, w:4, d:3, cx:0, cy:0 }, M0.patio, { on:!!M0.patio.on }) : { on:false, w:4, d:3, cx:0, cy:0 };
+  MASS.balc = Array.isArray(M0.balc) ? M0.balc.filter(b => b && typeof b === 'object') : [];
+  fixWing(MASS); fixPatio(MASS);
+  const R0 = o.roof || {};
+  ROOF.n = [0, 1, 2, 3].indexOf(R0.n) >= 0 ? R0.n : 2;
+  ROOF.th = ROOF.n === 0 ? 0 : clamp(Math.round(fin(R0.th, 30)), 5, 75);
+  ROOF.col = typeof R0.col === 'string' ? R0.col : null;
+  ROOF.sol = { tech:['none', 'pv', 'thermal'].indexOf(R0.sol && R0.sol.tech) >= 0 ? R0.sol.tech : 'none',
+    cols:clamp(Math.round(fin(R0.sol && R0.sol.cols, 4)), 1, 12), rows:clamp(Math.round(fin(R0.sol && R0.sol.rows, 2)), 1, 12) };
+  if (Array.isArray(R0.zones) && R0.zones.length && R0.zones.length <= 3) {
+    const zs = R0.zones.filter(z => z && [0, 1, 2, 3].indexOf(z.n) >= 0 && isFinite(+z.f0) && isFinite(+z.f1) && +z.f1 > +z.f0);
+    ROOF.zones = zs.length ? zs.map(z => ({ f0:+z.f0, f1:+z.f1, n:z.n, th:z.n === 0 ? 0 : clamp(Math.round(fin(z.th, 30)), 5, 75) })) : undefined;
+  } else delete ROOF.zones;
+  ['S', 'N', 'E', 'W'].forEach(f => {
+    const s = o.open && o.open[f];
+    if (!s || typeof s !== 'object') return;
+    const d = OPEN[f];
+    if (isFinite(+s.wwr)) d.wwr = clamp(+s.wwr, 0.02, 0.9);
+    if (isFinite(+s.sillZ)) d.sillZ = +s.sillZ;
+    if (isFinite(+s.headZ)) d.headZ = +s.headZ;
+    if (d.headZ < d.sillZ + 0.3) d.headZ = d.sillZ + 0.3;
+    if (isFinite(+s.ovD) && +s.ovD >= 0) d.ovD = Math.min(+s.ovD, 2.5);
+    if (isFinite(+s.ovN)) d.ovN = clamp(Math.round(+s.ovN), 1, 5);
+    if (isFinite(+s.finD) && +s.finD >= 0) d.finD = Math.min(+s.finD, 2.5);
+    if (isFinite(+s.finN)) d.finN = clamp(Math.round(+s.finN), 0, 6);
+    if (['left', 'right', 'both'].indexOf(s.finSide) >= 0) d.finSide = s.finSide;
+  });
+  const U0 = o.sunsp || {};
+  SUNSP.on = !!U0.on;
+  if (['S', 'N', 'E', 'W'].indexOf(U0.face) >= 0) SUNSP.face = U0.face;
+  if (isFinite(+U0.depth)) SUNSP.depth = clamp(+U0.depth, 1, 5);
+  if (isFinite(+U0.widthFrac)) SUNSP.widthFrac = clamp(+U0.widthFrac, 0.2, 1);
+  const W0 = o.rwin || {};
+  ['s', 'n', 'e', 'w'].forEach(k => { if (isFinite(+W0[k]) && +W0[k] >= 0 && +W0[k] <= 4) RWIN[k] = Math.round(+W0[k]); });
+  ['sF', 'nF', 'eF', 'wF'].forEach(k => { if (isFinite(+W0[k])) RWIN[k] = clamp(+W0[k], 0, 1); });
+  if (typeof W0.size === 'string' && /^\d+x\d+$/.test(W0.size)) RWIN.size = W0.size;
+  SCENE.veg.length = 0;
+  (Array.isArray(o.veg) ? o.veg : []).forEach(v => { if (v && typeof v.type === 'string' && isFinite(+v.x) && isFinite(+v.y)) SCENE.veg.push(v); });
+  SCENE.walls.length = 0;
+  (Array.isArray(o.walls) ? o.walls : []).forEach(w => { if (w && isFinite(+w.x) && isFinite(+w.y) && ['x', 'y'].indexOf(w.along) >= 0) SCENE.walls.push(w); });
+  const E0 = o.env || {};
+  if (E0.plot && isFinite(+E0.plot.lat) && isFinite(+E0.plot.lon)) ENV.plot = { lat:+E0.plot.lat, lon:+E0.plot.lon };
+  if (isFinite(+E0.doy)) ENV.doy = clamp(Math.round(+E0.doy), 1, 365);
+  if (isFinite(+E0.h)) ENV.h = clamp(+E0.h, 0, 24);
+  if (['sat', 'map', 'none'].indexOf(E0.map) >= 0) ENV.map = E0.map;
+  if (['SW', 'SE', 'NE', 'NW', 'Plan'].indexOf(E0.view) >= 0) ENV.view = E0.view;
+  ENV.wide = !!E0.wide; ENV.nb = E0.nb !== false;
+  if (o.mesh) STATE.note = t('Saved with a 3D mesh — re-import the model file to see it again.');
+}
+function toggleSaveMenu(ev) {
+  const old = $('#saveMenu');
+  if (old) { old.remove(); return; }
+  const m = el('div', { class:'cadmenu', id:'saveMenu' });
+  m.appendChild(el('h5', { text:'Save the study, to continue later' }));
+  m.appendChild(el('div', { class:'row' }, [
+    el('button', { class:'btn solid', type:'button', text:'Study (.json)', onclick:() => {
+      download(new Blob([studyJSON()], { type:'application/json;charset=utf-8' }), cadStem() + '-study.json');
+      toast(t('Study saved — re-import it on the setup page to continue')); m.remove(); } }),
+    el('span', { text:'The whole study: site, normals and every decision. Re-import it to carry on where it stopped.' }) ]));
+  m.appendChild(el('div', { class:'row' }, [
+    el('button', { class:'btn solid', type:'button', text:'Decisions (.json)', onclick:() => { cadDownload('json'); m.remove(); } }),
+    el('span', { text:'Every decision and every score, human-readable — the record for the studio.' }) ]));
+  $('#tabsNav').appendChild(m);
+  if (ev) ev.stopPropagation();
+}
+document.addEventListener('click', ev => { const m = $('#saveMenu'); if (m && !m.contains(ev.target)) m.remove(); });
+
 /* --- the setup screen ------------------------------------------------------ */
 const LS_LANG = 'arca-lang', LS_CLIM = 'arca-normals';
 
@@ -12365,6 +12471,46 @@ function initSetup() {
   });
   refreshImportUI();
 
+  const studyInp = $('#inpStudyFile');
+  if (studyInp) studyInp.addEventListener('change', () => {
+    const f = studyInp.files && studyInp.files[0];
+    if (!f) return;
+    const rd = new FileReader();
+    rd.onload = () => {
+      let o = null;
+      try { o = JSON.parse(String(rd.result || '')); } catch (e) { o = null; }
+      if (!o || o.kind !== 'architecture-advisor-study' || !o.site || !o.clim
+          || !Array.isArray(o.clim.t) || !Array.isArray(o.clim.p) || !o.mass) {
+        IMPORT.note = t('That file is not a saved study — open a .json written by Save study.');
+        studyInp.value = '';
+        refreshImportUI();
+        return;
+      }
+      STUDY = o;
+      const S = o.site, C = o.clim, fire = n => { try { n.dispatchEvent(new Event('input', { bubbles:true })); } catch (e) {} };
+      conc.value = S.place || '';
+      if (NUTS_LIST.indexOf(S.nuts) >= 0) sel.value = S.nuts;
+      C.t.forEach((v, i) => { inputs.t[i].value = v === null || v === undefined ? '' : v; fire(inputs.t[i]); });
+      C.p.forEach((v, i) => { inputs.p[i].value = v === null || v === undefined ? '' : v; fire(inputs.p[i]); });
+      srcInp.value = C.source || '';
+      lat.value = S.lat; lon.value = S.lon; fire(lat); fire(lon);
+      alt.value = S.alt; fire(alt); altDirty = false;
+      refresh();
+      if (!climComplete(readNormals())) {
+        IMPORT.note = t('That study’s normals are incomplete — check the boxes before going on.');
+        STUDY = null;
+        refreshImportUI();
+        return;
+      }
+      IMPORT.note = '';
+      refreshImportUI();
+      toast(t('Study restored — opening the design where it stopped.'));
+      go.click();
+    };
+    rd.onerror = () => { IMPORT.note = t('That file could not be read — try saving it again.'); refreshImportUI(); };
+    rd.readAsText(f);
+  });
+
   go.addEventListener('click', () => {
     const c = readNormals();
     if (!climComplete(c)) { toast('The twelve pairs of normals are not complete'); return; }
@@ -12434,6 +12580,11 @@ function mountApp(site, clim, keepTab, keepModel, keepScroll) {
   OPEN = { S: faceDefault(), N: faceDefault(), E: faceDefault(), W: faceDefault() };
   OPEN.S.wwr = 0.35;   // a defensible start, not a recommendation — the badge judges it live
   OPEN.N.wwr = 0.05;   // north starts at the low end of its band
+  if (STUDY) {
+    try { applyStudy(STUDY); }
+    catch (err) { console.error(err); STATE.note = t('That study could not be fully restored — starting from the defaults.'); }
+    STUDY = null;
+  }
   SUNSP = { on:false, face:'S', depth:2.2, widthFrac:0.6 };
   RWIN = { size:'78x140', s:0, n:0, e:0, w:0, sF:0.5, nF:0.5, eF:0.35, wF:0.35, fX:0 };
   }
@@ -12459,6 +12610,7 @@ function mountApp(site, clim, keepTab, keepModel, keepScroll) {
       onclick: () => activate(tab.key) }));
   });
   tl.appendChild(el('button', { class:'tab cadbtn', type:'button', text:'Export 3D ▾', onclick:toggleCadMenu }));
+  tl.appendChild(el('button', { class:'tab cadbtn', type:'button', text:'Save study ▾', onclick:toggleSaveMenu }));
   activate(TABS.some(x => x.key === keepTab) ? keepTab : TABS[0].key);
   if (keepScroll) { window.scrollTo(0, scrollY0); requestAnimationFrame(() => window.scrollTo(0, scrollY0)); setTimeout(() => window.scrollTo(0, scrollY0), 200); }
 
@@ -12693,6 +12845,8 @@ Object.assign(STATIC_PT, {
   fldImportUp: 'Eixo vertical no ficheiro',
   btnImportAdopt: 'Adoptar como volumetria',
   btnImportRemove: 'Remover',
+  fldStudyFile: 'Ficheiro do estudo',
+  fldStudySub: 'Um estudo guardado por esta aplicação — repõe o local, as normais e todas as decisões, e abre o projecto onde ficou.',
   normTitle: 'Normais mensais',
   normBody: 'Köppen–Geiger é calculado, não consultado, pelo que precisa das doze temperaturas médias mensais e dos doze totais mensais de precipitação. Esta aplicação não traz nenhuns: as normais são dados medidos e ela não tem autoridade para os inventar. Tome-os das <i>normais climatológicas</i> do IPMA para a estação mais próxima, de outro serviço nacional, ou de um produto em grelha como o WorldClim, e identifique a fonte para que a exportação a leve consigo. Os quadros preenchem-se sozinhos por esta ordem: a estação do IPMA incorporada a menos de 5 km das coordenadas acima; onde não houver nenhuma, uma mistura das estações mais próximas, ponderada pelo inverso da distância; e, a pedido, normais da web — reanálise para estas coordenadas exactas. Misturar próximas e Buscar na web só se abrem onde nenhuma estação fica a menos de 5 km. Mude as coordenadas e a escolha refaz-se; escreva nos quadros e eles ficam seus.',
   ghSite: 'O local',
@@ -13187,6 +13341,19 @@ Object.assign(PT, {
   "Adopted — the plan takes {} × {} m, {} floors on Work through the design; the mesh shows in the 3D views.": "Adoptado — a planta toma {} × {} m, {} pisos ao Percorrer o projecto; a malha aparece nas vistas 3D.",
   "(clamped to the plan limits)": "(limitado aos limites da planta)",
   "Import removed.": "Importação removida.",
+  "Save study ▾": "Guardar estudo ▾",
+  "Save the study, to continue later": "Guardar o estudo, para continuar mais tarde",
+  "Study (.json)": "Estudo (.json)",
+  "Decisions (.json)": "Decisões (.json)",
+  "The whole study: site, normals and every decision. Re-import it to carry on where it stopped.": "Todo o estudo: local, normais e todas as decisões. Reimporte-o para continuar onde parou.",
+  "Every decision and every score, human-readable — the record for the studio.": "Todas as decisões e notas, legíveis — o registo para o atelier.",
+  "Study saved — re-import it on the setup page to continue": "Estudo guardado — reimporte-o na página inicial para continuar",
+  "That file is not a saved study — open a .json written by Save study.": "Esse ficheiro não é um estudo guardado — abra um .json escrito por Guardar estudo.",
+  "That study’s normals are incomplete — check the boxes before going on.": "As normais desse estudo estão incompletas — verifique os quadros antes de avançar.",
+  "Study restored — opening the design where it stopped.": "Estudo reposto — a abrir o projecto onde ficou.",
+  "That file could not be read — try saving it again.": "Esse ficheiro não pôde ser lido — tente guardá-lo de novo.",
+  "That study could not be fully restored — starting from the defaults.": "Esse estudo não pôde ser totalmente reposto — a começar dos valores base.",
+  "Saved with a 3D mesh — re-import the model file to see it again.": "Guardado com malha 3D — reimporte o ficheiro do modelo para a voltar a ver.",
   "Import adopted — Work through the design to build on it": "Importação adoptada — Percorra o projecto para construir sobre ela",
   "Centre on site": "Centrar no local",
   "Enlarge the chart": "Ampliar o gráfico",
