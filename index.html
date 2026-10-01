@@ -2365,17 +2365,30 @@ Object.assign(SCE_ICON, {
   insular:   ['Island basalt', 'A dark shaft with a washed crown and one pot — the island chimney.']
 });
 
+/** A flat colour shaded by the face's own normal, south-west light — so a
+    chimney reads round instead of one flat sheet. */
+const shadeFill = (hex, n) => {
+  const m = /^#([0-9a-f]{6})$/i.exec(hex || '');
+  if (!m) return hex;
+  const nl = Math.hypot(n[0], n[1], n[2]) || 1;
+  const d = Math.max(0, (n[0] * -0.55 + n[1] * -0.55 + n[2] * 0.62) / nl);
+  const f = 0.72 + 0.28 * d, v = parseInt(m[1], 16);
+  const c = [v >> 16 & 255, v >> 8 & 255, v & 255].map(x => Math.round(clamp(x * f, 0, 255)));
+  return 'rgb(' + c[0] + ',' + c[1] + ',' + c[2] + ')';
+};
+/** Crown height above the roof surface, one rule for geometry and handles. */
+const chimTopH = F => F.h + (F.cap || 0.15) + (F.pots > 0 ? 0.5 : 0.02);
 /** Triangles [{pts:[3], fill, n}] for a chimney of the region's family,
-    standing on the roof surface at (x, y, z0): shaft, cap, pots or open
-    flues, the Algarve's openwork crown. Small enough to paint anywhere. */
+    standing on the roof surface at (x, y, z0): plinth, shaft, cap, pots or
+    open flues, the Algarve's openwork crown. Small enough to paint anywhere. */
 function chimneyFaces(famKey, x, y, z0) {
   const F = CHIMNEY_FAM[famKey] || CHIMNEY_FAM.alentejana;
   const out = [];
   const tri = (a, b, c, fill) => {
     const ux = [b[0] - a[0], b[1] - a[1], b[2] - a[2]], vx = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
     const n = [ux[1] * vx[2] - ux[2] * vx[1], ux[2] * vx[0] - ux[0] * vx[2], ux[0] * vx[1] - ux[1] * vx[0]];
-    const L = Math.hypot(n[0], n[1], n[2]) || 1;
-    out.push({ pts:[a, b, c], fill, n:[n[0] / L, n[1] / L, n[2] / L] });
+    const L = Math.hypot(n[0], n[1], n[2]) || 1, nn = [n[0] / L, n[1] / L, n[2] / L];
+    out.push({ pts:[a, b, c], fill:shadeFill(fill, nn), n:nn });
   };
   const quad = (a, b, c, d, fill) => { tri(a, b, c, fill); tri(a, c, d, fill); };
   const box = (x0, y0, z1, x1, y1, z2, fill) => {
@@ -2396,7 +2409,8 @@ function chimneyFaces(famKey, x, y, z0) {
     for (let k = 1; k < n - 1; k++) tri([P(0)[0], P(0)[1], z2], [P(k)[0], P(k)[1], z2], [P(k + 1)[0], P(k + 1)[1], z2], fill);
   };
   const shaftC = F.colours[0], capC = (famKey === 'nortenha' || famKey === 'beira') ? F.colours[0] : '#EFE9DC', potC = '#C98A5E';
-  const w = F.shaft, h = F.h, skirt = F.skirt ? 0.6 : 0;
+  const w = F.shaft, h = F.h, skirt = F.skirt ? 0.6 : 0, capT = Math.max(0.15, F.cap || 0.15);
+  box(x - w / 2 - 0.12, y - w / 2 - 0.12, z0 - 0.1, x + w / 2 + 0.12, y + w / 2 + 0.12, z0 + 0.3, shaftC);
   box(x - w / 2, y - w / 2, z0 - 0.35, x + w / 2, y + w / 2, z0 + h - skirt, shaftC);
   if (F.band) box(x - w / 2 - 0.015, y - w / 2 - 0.015, z0 + h * 0.35, x + w / 2 + 0.015, y + w / 2 + 0.015, z0 + h * 0.65, '#F4F1EA');
   if (F.skirt) {
@@ -2406,8 +2420,8 @@ function chimneyFaces(famKey, x, y, z0) {
       box(x + sx * (w / 2 - pw) - pw / 2, y + sy * (w / 2 - pw) - pw / 2, z1 + 0.06, x + sx * (w / 2 - pw) + pw / 2, y + sy * (w / 2 - pw) + pw / 2, z0 + h, shaftC));
   }
   if (F.brick) box(x - w / 2 - 0.06, y - w / 2 - 0.06, z0 + h - 0.14, x + w / 2 + 0.06, y + w / 2 + 0.06, z0 + h - 0.07, '#8A4A2E');
-  box(x - w / 2 - 0.08, y - w / 2 - 0.08, z0 + h, x + w / 2 + 0.08, y + w / 2 + 0.08, z0 + h + (F.cap || 0.1), capC);
-  const zt = z0 + h + (F.cap || 0.1);
+  box(x - w / 2 - 0.08, y - w / 2 - 0.08, z0 + h, x + w / 2 + 0.08, y + w / 2 + 0.08, z0 + h + capT, capC);
+  const zt = z0 + h + capT;
   if (F.pots > 0) {
     for (let k = 0; k < F.pots; k++) {
       const px = F.pots === 1 ? x : x - w / 4 + k * (w / 2) / Math.max(1, F.pots - 1);
@@ -2431,7 +2445,7 @@ function parapetFaces(M, h) {
     for (let k = 1; k < pr.length; k++) {
       const a = P(pr[k - 1][0], pr[k - 1][1]), b = P(pr[k][0], pr[k][1]);
       const a2 = [a[0], a[1], a[2] + h], b2 = [b[0], b[1], b[2] + h];
-      out.push({ pts:[a, b, b2], fill:'#E9E5DD', n }, { pts:[a, b2, a2], fill:'#E9E5DD', n });
+      out.push({ pts:[a, b, b2], fill:shadeFill('#E9E5DD', n), n }, { pts:[a, b2, a2], fill:shadeFill('#E9E5DD', n), n });
     }
   });
   return out;
@@ -7063,7 +7077,7 @@ function buildRoof(host) {
           const z = M.zAt(+ch.x, +ch.y);
           if (z !== null) {
             const F = CHIMNEY_FAM[ch.fam] || CHIMNEY_FAM.alentejana;
-            const q = proj(+ch.x, +ch.y, z + F.h + (F.cap || 0.1) + (F.pots > 0 ? 0.5 : 0.02));
+            const q = proj(+ch.x, +ch.y, z + chimTopH(F));
             ctx.beginPath(); ctx.arc(q[0], q[1] - 8, 5, 0, 6.284); ctx.fillStyle = '#14171a'; ctx.fill();
             stroke(ctx, '#fff', 1.6); ctx.stroke();
           }
@@ -7472,7 +7486,7 @@ function buildRoof(host) {
     const z = M.zAt(+ch.x, +ch.y);
     if (z === null) return null;
     const F = CHIMNEY_FAM[ch.fam] || CHIMNEY_FAM.alentejana;
-    return { x:+ch.x, y:+ch.y, z0:z, z1:z + F.h + (F.cap || 0.1) + (F.pots > 0 ? 0.5 : 0.02) };
+    return { x:+ch.x, y:+ch.y, z0:z, z1:z + chimTopH(F) };
   };
   const chimHandleAt = (clientX, clientY) => {
     if (!roofPanel.W) return false;
