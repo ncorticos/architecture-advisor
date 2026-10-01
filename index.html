@@ -7885,6 +7885,8 @@ function buildOpenings(host) {
     v => { OPEN[curFace].ovD = v; refreshOpenings(); }, v => fmt(v, 2) + ' m');
   const cOvN = numCtl('Overhang louvres', 1, 5, 1, OPEN[curFace].ovN,
     v => { OPEN[curFace].ovN = v; refreshOpenings(); }, null);
+  const cOvW = rangeCtl('Overhang extra width', 0, 3, 0.05, OPEN[curFace].ovW || 0,
+    v => { OPEN[curFace].ovW = v; refreshOpenings(); }, v => fmt(v, 2) + ' m');
   const cFinD = rangeCtl('Fin depth', 0, 2.5, 0.05, OPEN[curFace].finD,
     v => { OPEN[curFace].finD = v; refreshOpenings(); }, v => fmt(v, 2) + ' m');
   const cFinN = numCtl('Fins', 0, 6, 1, OPEN[curFace].finN,
@@ -7969,7 +7971,7 @@ function buildOpenings(host) {
   }
   buildUnitUI();
   props.appendChild(el('div', { class:'gh', text:'Shading devices' }));
-  props.appendChild(controls([cOvD, cOvN, cFinD, cFinN, cFinSide]));
+  props.appendChild(controls([cOvD, cOvN, cOvW, cFinD, cFinN, cFinSide]));
 
   const pillWWR = el('span', { class:'pill ok' });
   const pillShade = el('span', { class:'pill ok' });
@@ -8141,8 +8143,9 @@ function buildOpenings(host) {
     w.rows.forEach((r, k) => {
       const floor = r.sill - o.sillZ;
       const rect = { u0:w.uc - w.w / 2, u1:w.uc + w.w / 2, v0:r.sill, v1:Math.min(r.head, h0()) };
+      const eW = (o.ovW || 0) / 2, x0 = Math.max(0, rect.u0 - eW), x1 = Math.min(sg.len, rect.u1 + eW);
       if (o.ovD > 0) ovPositions(o.ovN, rect).forEach(vt => devs.push({ kind:'ov', f:w.f,
-        pts:[onWall(sg, rect.u0, vt), onWall(sg, rect.u1, vt), off(onWall(sg, rect.u1, vt), o.ovD), off(onWall(sg, rect.u0, vt), o.ovD)] }));
+        pts:[onWall(sg, x0, vt), onWall(sg, x1, vt), off(onWall(sg, x1, vt), o.ovD), off(onWall(sg, x0, vt), o.ovD)] }));
       if (o.finN > 0 && o.finD > 0) finPositions(o.finSide, o.finN, rect).forEach(uF => devs.push({ kind:'fin', f:w.f,
         pts:[onWall(sg, uF, rect.v0), off(onWall(sg, uF, rect.v0), o.finD), off(onWall(sg, uF, rect.v1), o.finD), onWall(sg, uF, rect.v1)] }));
       glassSpans(w.f, rect.u0, rect.u1).forEach(sp => {
@@ -8232,8 +8235,12 @@ function buildOpenings(host) {
         let dropB = 0, cov = 0;
         r.ov.forEach(q => { const dq = clamp(q.d * Math.tan(Math.max(0, profile)) - q.gap, 0, r.h); if (dq > dropB) dropB = dq; cov = Math.max(cov, q.cover); });
         if (r.fin.length) dropFin = Math.max(dropFin, r.fin.reduce((acc, q) => acc + clamp(q.d * Math.tan(Math.abs(wsa)) - q.gap, 0, r.w), 0) / 2);
+        /* sun slipping past the overhang's end lights a strip of glass from
+           the side — depth times tan of the wall-solar angle past a flush
+           end; the extra width absorbs it first (one slab deep; fins aside) */
+        const spill = o.ovD > 0 ? Math.min(r.w, Math.max(0, o.ovD * Math.tan(Math.abs(wsa)) - (o.ovW || 0) / 2)) : 0;
         const hLit = cov * Math.max(0, r.h - Math.max(dropOv, dropB)) + (1 - cov) * Math.max(0, r.h - dropOv);
-        glass += r.w * r.h; lit += Math.max(0, r.w - dropFin) * hLit;
+        glass += r.w * r.h; lit += Math.max(0, r.w - spill - dropFin) * hLit + spill * r.h;
       });
       sumUnshaded += glass > 0 ? lit / glass : 0;
       hits++;
@@ -8454,10 +8461,10 @@ function buildOpenings(host) {
       fitBadge(2, shapeScore(curFace), 'Shape fit /100');
     },
     csv: () => {
-      const rows = [['Facade side', 'Faces', 'Windows', 'Glass (m²)', 'WWR', 'Sill (m)', 'Head (m)', 'Overhang depth (m)', 'Overhang count', 'Fin depth (m)', 'Fin count', 'Fin side', 'WWR fit (0–100)', 'Shading fit (0–100)', 'Shape fit (0–100)']];
+      const rows = [['Facade side', 'Faces', 'Windows', 'Glass (m²)', 'WWR', 'Sill (m)', 'Head (m)', 'Overhang depth (m)', 'Overhang count', 'Overhang extra width (m)', 'Fin depth (m)', 'Fin count', 'Fin side', 'WWR fit (0–100)', 'Shading fit (0–100)', 'Shape fit (0–100)']];
       FACES.forEach(f => { const o = OPEN[f], ws = winsOf(f), sc = shadingScore(f), sh = shapeScore(f), fn = facadeNumbers(f);
         rows.push([faceName[f], COMPASS8_EN[Math.round(faceAz(f) / 45) % 8], winCount(f), +fn.built.toFixed(2), fmt(fn.eff, 2), fmt(o.sillZ, 2), fmt(o.headZ, 2),
-          fmt(o.ovD, 2), o.ovN, fmt(o.finD, 2), o.finN, o.finSide, Math.round(facadeScore(f)), sc === null ? '' : Math.round(sc), sh === null ? '' : Math.round(sh)]);
+          fmt(o.ovD, 2), o.ovN, fmt(o.ovW || 0, 2), fmt(o.finD, 2), o.finN, o.finSide, Math.round(facadeScore(f)), sc === null ? '' : Math.round(sc), sh === null ? '' : Math.round(sh)]);
         const H = ws.length ? ws[0].w.rows[0].head : 0, depth = (f === 'S' || f === 'N') ? G.D : G.L;
         fn.per.forEach((q, i) => {
           const on = faceUnits(f)[i] && faceUnits(f)[i].on;
@@ -8659,10 +8666,10 @@ function buildVentilation(host) {
   const reachXY = () => { const bb = planModel(G).bbox; return [Math.max(-bb[0], bb[2]), Math.max(-bb[1], bb[3])]; };
   /* OPEN is global, set by the Openings tab; initialise if null */
   if (!OPEN) OPEN = {
-    S:{wwr:0.25, sillZ:0.9, headZ:2.1, ovD:0, ovN:1, finD:0, finN:0, finSide:'both'},
-    N:{wwr:0.05, sillZ:0.9, headZ:2.1, ovD:0, ovN:1, finD:0, finN:0, finSide:'both'},
-    E:{wwr:0.10, sillZ:0.9, headZ:2.1, ovD:0, ovN:1, finD:0, finN:0, finSide:'both'},
-    W:{wwr:0.10, sillZ:0.9, headZ:2.1, ovD:0, ovN:1, finD:0, finN:0, finSide:'both'}
+    S:{wwr:0.25, sillZ:0.9, headZ:2.1, ovD:0, ovN:1, ovW:0, finD:0, finN:0, finSide:'both'},
+    N:{wwr:0.05, sillZ:0.9, headZ:2.1, ovD:0, ovN:1, ovW:0, finD:0, finN:0, finSide:'both'},
+    E:{wwr:0.10, sillZ:0.9, headZ:2.1, ovD:0, ovN:1, ovW:0, finD:0, finN:0, finSide:'both'},
+    W:{wwr:0.10, sillZ:0.9, headZ:2.1, ovD:0, ovN:1, ovW:0, finD:0, finN:0, finSide:'both'}
   };
 
   const FACE_NAME = { S:'South', N:'North', E:'East', W:'West' };
@@ -11662,14 +11669,15 @@ function exportModel() {
   /** A window with its shading on a wall: P(u, v) a point on the wall, u
       along it, v up; n its outward normal — the same devices, by the same
       rules, on every wall. */
-  const windowAndShading = (P, n, along, uc, ww, v0, v1, o, f, tag) => {
+  const windowAndShading = (P, n, along, uc, ww, v0, v1, o, f, tag, segLen) => {
     const u0 = uc - ww / 2, u1 = uc + ww / 2;
+    const eW = (o.ovW || 0) / 2, x0 = Math.max(0, u0 - eW), x1 = Math.min(segLen === undefined ? u1 + eW : segLen, u1 + eW);
     const off = (p, d) => [p[0] + n[0] * d, p[1] + n[1] * d, p[2]];
     add('window', tag + ' window', 'AA-GLAZING', [[[P(u0, v0), P(u1, v0), P(u1, v1), P(u0, v1)], n]], { width:ww, height:v1 - v0, wwr:o.wwr, facade:f });
     if (o.ovD > 0) {
       const vs = o.ovN <= 1 ? [v1] : Array.from({ length:o.ovN }, (_, i) => v0 + (v1 - v0) * (i / (o.ovN - 1)));
       vs.forEach((vt, i) => add('shading', tag + (o.ovN > 1 ? ' louvre ' + (i + 1) : ' overhang'), 'AA-SHADING',
-        [[[P(u0, vt), P(u1, vt), off(P(u1, vt), o.ovD), off(P(u0, vt), o.ovD)], up]],
+        [[[P(x0, vt), P(x1, vt), off(P(x1, vt), o.ovD), off(P(x0, vt), o.ovD)], up]],
         { device:o.ovN > 1 ? 'Louvre' : 'Overhang', depth:o.ovD }));
     }
     if (o.finN > 0 && o.finD > 0) {
@@ -11732,7 +11740,7 @@ function exportModel() {
             const w0 = isDoor ? k * G.fh + 0.05 : v0;
             if (v1 - w0 < 0.1) return;
             holes.push([c0, c1, w0, v1]);
-            windowAndShading(P, n, along, (c0 + c1) / 2, c1 - c0, w0, v1, OPEN[f], f, tag + (rows.length > 1 ? ' floor ' + k : '') + (pieces.length > 1 ? ' ' + String.fromCharCode(97 + j) : '') + (units.length > 1 ? '·U' + (i + 1) : '') + (isDoor ? ' door' : ''));
+            windowAndShading(P, n, along, (c0 + c1) / 2, c1 - c0, w0, v1, OPEN[f], f, tag + (rows.length > 1 ? ' floor ' + k : '') + (pieces.length > 1 ? ' ' + String.fromCharCode(97 + j) : '') + (units.length > 1 ? '·U' + (i + 1) : '') + (isDoor ? ' door' : ''), sg.len);
           });
         });
       });
@@ -12085,6 +12093,7 @@ function applyStudy(o) {
     if (d.headZ < d.sillZ + 0.3) d.headZ = d.sillZ + 0.3;
     if (isFinite(+s.ovD) && +s.ovD >= 0) d.ovD = Math.min(+s.ovD, 2.5);
     if (isFinite(+s.ovN)) d.ovN = clamp(Math.round(+s.ovN), 1, 5);
+    if (isFinite(+s.ovW) && +s.ovW >= 0) d.ovW = Math.min(+s.ovW, 3);
     if (isFinite(+s.finD) && +s.finD >= 0) d.finD = Math.min(+s.finD, 2.5);
     if (isFinite(+s.finN)) d.finN = clamp(Math.round(+s.finN), 0, 6);
     if (['left', 'right', 'both'].indexOf(s.finSide) >= 0) d.finSide = s.finSide;
@@ -13333,7 +13342,7 @@ function mountApp(site, clim, keepTab, keepModel, keepScroll) {
      of true-south regardless of the plan's chosen rotation), each holding
      the window and its shading devices. wwr is a fraction of that facade's
      own wall area (L or D × the eave height). */
-  const faceDefault = () => ({ wwr:0.20, sillZ:0.9, headZ:2.1, ovD:0, ovN:1, finD:0, finN:0, finSide:'both', units:[{ on:true, frac:1 }] });
+  const faceDefault = () => ({ wwr:0.20, sillZ:0.9, headZ:2.1, ovD:0, ovN:1, ovW:0, finD:0, finN:0, finSide:'both', units:[{ on:true, frac:1 }] });
   OPEN = { S: faceDefault(), N: faceDefault(), E: faceDefault(), W: faceDefault() };
   OPEN.S.wwr = 0.35;   // a defensible start, not a recommendation — the badge judges it live
   OPEN.N.wwr = 0.05;   // north starts at the low end of its band
@@ -14346,7 +14355,7 @@ Object.assign(PT, {
   "Horizontal overhangs against the high equator-facing sun; vertical fins against the low east/west sun":
     "Palas horizontais contra o sol alto virado ao equador; brises verticais contra o sol baixo a este/oeste",
   "Overhang depth": "Profundidade da pala",
-  "Overhang louvres": "Lâminas da pala",
+  "Overhang louvres": "Lâminas da pala", "Overhang extra width": "Largura extra da pala",
   "Fin depth": "Profundidade do brise",
   "Fins": "Brises",
   "No shading device on this facade": "Sem dispositivo de sombreamento nesta fachada",
