@@ -2279,8 +2279,176 @@ const SCE_SVG = (() => {
         + '<path d="M50 37Q46 42 44 45" fill="none" stroke="' + COLD + '" stroke-width="1.4"/>' + arrow(43.2, 46.5, 2.05, COLD, 3), [25, 23, 14, 8])
   };
   const svg = s => '<svg viewBox="0 0 64 56" width="64" height="56" aria-hidden="true">' + s + '</svg>';
-  return { B, S, svg };
+  /* the chimneys, in elevation on a hint of roof: the tower whitewashed,
+     brick, granite, schist or basalt after the region it stands in */
+  const BRICK = '#B0603C', STONE = '#9AA0A6', SCHIST = '#8A7A63', BASALT = '#4A4A4E', WASH = '#F4F1EA';
+  const tower = (x, w, y0, y1, fill, stroke) =>
+    '<rect x="' + x + '" y="' + y0 + '" width="' + w + '" height="' + (y1 - y0) + '" fill="' + fill + '" stroke="' + (stroke || INK) + '" stroke-width="1.2"/>';
+  const slab = (x, w, y, fill) =>
+    '<rect x="' + x + '" y="' + y + '" width="' + w + '" height="2.2" fill="' + (fill || WASH) + '" stroke="' + INK + '" stroke-width="1.1"/>';
+  const pot = (x, y, r, fill) =>
+    '<rect x="' + (x - r) + '" y="' + y + '" width="' + (r * 2) + '" height="6" fill="' + (fill || '#C98A5E') + '" stroke="' + INK + '" stroke-width="1"/>';
+  const arch = (x, y, w, h) =>
+    '<path d="M' + x + ' ' + y + 'V' + (y - h + w / 2) + 'A' + (w / 2) + ' ' + (w / 2) + ' 0 0 1 ' + (x + w) + ' ' + (y - h + w / 2) + 'V' + y + 'Z" fill="#fff" stroke="' + INK + '" stroke-width="0.9"/>';
+  const C = {
+    /* the Algarve turret: an openwork crown under the cap, two pots */
+    algarvia: () => g('<path d="M6 48L32 40L58 48"/>')
+      + tower(25, 14, 22, 46, WASH) + arch(27, 40, 4, 9) + arch(33, 40, 4, 9)
+      + '<rect x="27" y="30" width="10" height="2" fill="' + WASH + '" stroke="' + INK + '" stroke-width="0.9"/>'
+      + slab(23, 18, 19.8) + pot(28.5, 13.5, 1.6) + pot(35.5, 13.5, 1.6),
+    /* the Alentejo stack: tall and slender, one pot under a slab */
+    alentejana: () => g('<path d="M6 48L32 40L58 48"/>')
+      + tower(28, 8, 14, 46, WASH) + slab(25.5, 13, 11.8) + pot(32, 5.5, 1.8),
+    /* Lisbon brick: a corbelled head, two clay pots */
+    lisboeta: () => g('<path d="M6 48L32 40L58 48"/>')
+      + tower(27, 10, 20, 46, BRICK) + slab(25, 17.8, 14) + slab(26, 12, 15.6)
+      + pot(29.5, 9.5, 1.7) + pot(34.5, 9.5, 1.7),
+    /* northern granite: a heavy mass, open flues, a single great slab */
+    nortenha: () => g('<path d="M6 48L32 40L58 48"/>')
+      + tower(24, 16, 18, 46, STONE)
+      + '<rect x="28" y="18" width="3.4" height="5" fill="#2b2b2e"/><rect x="33" y="18" width="3.4" height="5" fill="#2b2b2e"/>'
+      + slab(22, 20, 15.8, STONE),
+    /* Beira schist: a stone shaft, slab cap, one pot */
+    beira: () => g('<path d="M6 48L32 40L58 48"/>')
+      + tower(27, 10, 19, 46, SCHIST) + slab(25, 14, 16.8, SCHIST) + pot(32, 10.5, 1.7),
+    /* island basalt: a dark shaft with a washed crown, one pot */
+    insular: () => g('<path d="M6 48L32 40L58 48"/>')
+      + tower(27, 10, 20, 46, BASALT) + tower(27, 10, 20, 27, WASH) + slab(25, 14, 17.8) + pot(32, 11.5, 1.7)
+  };
+  return { B, S, C, svg };
 })();
+/* The chimney survey, as this application teaches it: six families after
+   the houses the Inquérito à Arquitectura Popular em Portugal (1961) and
+   Oliveira & Galhano (1992) record — the Algarve's openwork turret, the
+   Alentejo's tall whitewashed stack, Lisbon brick with its corbelled head,
+   northern granite masses, Beira schist shafts, island basalt — mapped here
+   onto the thirty NUTS III. A teaching simplification, not a census: a
+   valley can carry a neighbour's chimney, and the icons name their family. */
+const CHIMNEY_FAM = {
+  algarvia:  { name:'Algarve turret', shaft:0.7, h:1.7, cap:0.1, pots:2, skewed:false,
+    colours:['#F4F1EA', '#C98A5E'] },
+  alentejana:{ name:'Alentejo stack', shaft:0.5, h:1.9, cap:0.1, pots:1, skewed:false,
+    colours:['#F4F1EA', '#C98A5E'] },
+  lisboeta:  { name:'Lisbon brick', shaft:0.6, h:1.5, cap:0.22, pots:2, brick:true,
+    colours:['#B0603C', '#C98A5E'] },
+  nortenha:  { name:'Northern granite', shaft:0.9, h:1.4, cap:0.16, pots:0, open:true,
+    colours:['#9AA0A6', '#2b2b2e'] },
+  beira:     { name:'Beira schist', shaft:0.7, h:1.5, cap:0.12, pots:1,
+    colours:['#8A7A63', '#C98A5E'] },
+  insular:   { name:'Island basalt', shaft:0.6, h:1.5, cap:0.12, pots:1, band:true,
+    colours:['#4A4A4E', '#F4F1EA'] }
+};
+const CHIMNEY_NUT = {
+  'Algarve':['algarvia'],
+  'Alentejo Litoral':['alentejana'], 'Alentejo Central':['alentejana'],
+  'Baixo Alentejo':['alentejana'], 'Alto Alentejo':['alentejana'],
+  'Lezíria do Tejo':['alentejana'], 'Médio Tejo':['alentejana'], 'Oeste':['alentejana'],
+  'Grande Lisboa':['lisboeta'], 'Península de Setúbal':['lisboeta'],
+  'Minho-Lima':['nortenha'], 'Cávado':['nortenha'], 'Ave':['nortenha'],
+  'Grande Porto':['nortenha'], 'Tâmega':['nortenha'], 'Entre Douro e Vouga':['nortenha'],
+  'Douro':['nortenha'], 'Alto Trás-os-Montes':['nortenha'],
+  'Baixo Vouga':['beira'], 'Baixo Mondego':['beira'], 'Pinhal Litoral':['beira'],
+  'Pinhal Interior Norte':['beira'], 'Pinhal Interior Sul':['beira'], 'Dão-Lafões':['beira'],
+  'Serra da Estrela':['beira'], 'Beira Interior Norte':['beira'], 'Beira Interior Sul':['beira'],
+  'Cova da Beira':['beira'],
+  'RA da Madeira':['insular'], 'RA dos Açores':['insular']
+};
+const chimneyOf = nuts => (CHIMNEY_NUT[nuts] && CHIMNEY_NUT[nuts][0]) || 'alentejana';
+/** Names and sentences for the chimney figures, in the strategy icons' own
+    shape, so sceFig draws them unchanged. */
+Object.assign(SCE_ICON, {
+  algarvia:  ['Algarve turret', 'An openwork crown under the cap, two pots — the Algarve chimney.'],
+  alentejana:['Alentejo stack', 'Tall and slender, one pot under a slab — the Alentejo chimney.'],
+  lisboeta:  ['Lisbon brick', 'A corbelled head with two clay pots — the Lisbon chimney.'],
+  nortenha:  ['Northern granite', 'A heavy mass with open flues under one great slab — the northern chimney.'],
+  beira:     ['Beira schist', 'A stone shaft with a slab cap and one pot — the Beira chimney.'],
+  insular:   ['Island basalt', 'A dark shaft with a washed crown and one pot — the island chimney.']
+});
+
+/** Triangles [{pts:[3], fill, n}] for a chimney of the region's family,
+    standing on the roof surface at (x, y, z0): shaft, cap, pots or open
+    flues, the Algarve's openwork crown. Small enough to paint anywhere. */
+function chimneyFaces(famKey, x, y, z0) {
+  const F = CHIMNEY_FAM[famKey] || CHIMNEY_FAM.alentejana;
+  const out = [];
+  const tri = (a, b, c, fill) => {
+    const ux = [b[0] - a[0], b[1] - a[1], b[2] - a[2]], vx = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
+    const n = [ux[1] * vx[2] - ux[2] * vx[1], ux[2] * vx[0] - ux[0] * vx[2], ux[0] * vx[1] - ux[1] * vx[0]];
+    const L = Math.hypot(n[0], n[1], n[2]) || 1;
+    out.push({ pts:[a, b, c], fill, n:[n[0] / L, n[1] / L, n[2] / L] });
+  };
+  const quad = (a, b, c, d, fill) => { tri(a, b, c, fill); tri(a, c, d, fill); };
+  const box = (x0, y0, z1, x1, y1, z2, fill) => {
+    quad([x0, y0, z1], [x1, y0, z1], [x1, y1, z1], [x0, y1, z1], fill);
+    quad([x0, y0, z2], [x1, y0, z2], [x1, y1, z2], [x0, y1, z2], fill);
+    quad([x0, y0, z1], [x1, y0, z1], [x1, y0, z2], [x0, y0, z2], fill);
+    quad([x0, y1, z1], [x1, y1, z1], [x1, y1, z2], [x0, y1, z2], fill);
+    quad([x0, y0, z1], [x0, y1, z1], [x0, y1, z2], [x0, y0, z2], fill);
+    quad([x1, y0, z1], [x1, y1, z1], [x1, y1, z2], [x1, y0, z2], fill);
+  };
+  const prism = (cx, cy, r, z1, z2, fill, n) => {
+    n = n || 8;
+    const P = k => { const a = k / n * Math.PI * 2; return [cx + r * Math.cos(a), cy + r * Math.sin(a)]; };
+    for (let k = 0; k < n; k++) {
+      const a = P(k), b = P((k + 1) % n);
+      quad([a[0], a[1], z1], [b[0], b[1], z1], [b[0], b[1], z2], [a[0], a[1], z2], fill);
+    }
+    for (let k = 1; k < n - 1; k++) tri([P(0)[0], P(0)[1], z2], [P(k)[0], P(k)[1], z2], [P(k + 1)[0], P(k + 1)[1], z2], fill);
+  };
+  const shaftC = F.colours[0], capC = (famKey === 'nortenha' || famKey === 'beira') ? F.colours[0] : '#EFE9DC', potC = '#C98A5E';
+  const w = F.shaft, h = F.h, skirt = F.skirt ? 0.6 : 0;
+  box(x - w / 2, y - w / 2, z0 - 0.35, x + w / 2, y + w / 2, z0 + h - skirt, shaftC);
+  if (F.band) box(x - w / 2 - 0.015, y - w / 2 - 0.015, z0 + h * 0.35, x + w / 2 + 0.015, y + w / 2 + 0.015, z0 + h * 0.65, '#F4F1EA');
+  if (F.skirt) {
+    const z1 = z0 + h - skirt, pw = 0.09;
+    box(x - w / 2, y - w / 2, z1, x + w / 2, y + w / 2, z1 + 0.06, shaftC);
+    [[-1, -1], [1, -1], [-1, 1], [1, 1]].forEach(([sx, sy]) =>
+      box(x + sx * (w / 2 - pw) - pw / 2, y + sy * (w / 2 - pw) - pw / 2, z1 + 0.06, x + sx * (w / 2 - pw) + pw / 2, y + sy * (w / 2 - pw) + pw / 2, z0 + h, shaftC));
+  }
+  if (F.brick) box(x - w / 2 - 0.06, y - w / 2 - 0.06, z0 + h - 0.14, x + w / 2 + 0.06, y + w / 2 + 0.06, z0 + h - 0.07, '#8A4A2E');
+  box(x - w / 2 - 0.08, y - w / 2 - 0.08, z0 + h, x + w / 2 + 0.08, y + w / 2 + 0.08, z0 + h + (F.cap || 0.1), capC);
+  const zt = z0 + h + (F.cap || 0.1);
+  if (F.pots > 0) {
+    for (let k = 0; k < F.pots; k++) {
+      const px = F.pots === 1 ? x : x - w / 4 + k * (w / 2) / Math.max(1, F.pots - 1);
+      prism(px, y, 0.09, zt, zt + 0.5, potC, 8);
+      tri([px - 0.09, y, zt + 0.5], [px + 0.09, y, zt + 0.5], [px, y + 0.09, zt + 0.5], '#2b2b2e');
+      tri([px - 0.09, y, zt + 0.5], [px, y - 0.09, zt + 0.5], [px + 0.09, y, zt + 0.5], '#2b2b2e');
+    }
+  } else {
+    box(x - w / 4, y - w / 4, zt, x + w / 4, y + w / 4, zt + 0.02, '#2b2b2e');
+  }
+  return out;
+}
+/** The parapet as triangles following each outline wall's own top profile,
+    h metres above it. */
+function parapetFaces(M, h) {
+  const out = [];
+  M.walls.forEach(wl => {
+    const sg = wl.sg, L = sg.len, ux = (sg.b[0] - sg.a[0]) / L, uy = (sg.b[1] - sg.a[1]) / L;
+    const P = (u, z) => [sg.a[0] + ux * u, sg.a[1] + uy * u, z];
+    const pr = wl.prof, n = [sg.n[0], sg.n[1], 0];
+    for (let k = 1; k < pr.length; k++) {
+      const a = P(pr[k - 1][0], pr[k - 1][1]), b = P(pr[k][0], pr[k][1]);
+      const a2 = [a[0], a[1], a[2] + h], b2 = [b[0], b[1], b[2] + h];
+      out.push({ pts:[a, b, b2], fill:'#E9E5DD', n }, { pts:[a, b2, a2], fill:'#E9E5DD', n });
+    }
+  });
+  return out;
+}
+/** Where the chimney first stands: the highest roof surface near the
+    plan's middle, so it starts on a ridge, not in a valley. */
+function placeChimney(M) {
+  const bb = M.pl.bbox, cx = (bb[0] + bb[2]) / 2, cy = (bb[1] + bb[3]) / 2;
+  let best = null;
+  for (let x = bb[0] + 0.4; x <= bb[2] - 0.4; x += 0.4) for (let y = bb[1] + 0.4; y <= bb[3] - 0.4; y += 0.4) {
+    if (!M.pl.inside(x, y)) continue;
+    const z = M.zAt(x, y);
+    if (z === null) continue;
+    if (!best || z > best.z + 1e-6 || (Math.abs(z - best.z) <= 1e-6 && Math.hypot(x - cx, y - cy) < Math.hypot(best.x - cx, best.y - cy))) best = { x, y, z };
+  }
+  return best ? { x:+best.x.toFixed(2), y:+best.y.toFixed(2) } : null;
+}
 
 /**
  * The regional forest programme that governs each region's forest land —
@@ -2932,7 +3100,8 @@ function roofModel(G, RF) {
   const axis = spanX >= spanY ? 'x' : 'y', S0 = axis === 'x' ? bb[0] : bb[1], SL = axis === 'x' ? spanX : spanY;
   const zones = zones0.map(z => ({ n:z.n, th:z.n === 0 ? 0 : z.th, t:Math.tan((z.n === 0 ? 0 : z.th) * RAD),
     a0:S0 + clamp(z.f0, 0, 1) * SL, a1:S0 + clamp(z.f1, 0, 1) * SL }));
-  const key = pl.key + '|' + H0 + '|' + axis + '|' + zones0.map(z => [z.f0, z.f1, z.n, z.th].join(',')).join(';');
+  const parKey = RF.par && RF.par.on ? '|par' + (+RF.par.h || 0.6).toFixed(2) : '';
+  const key = pl.key + '|' + H0 + '|' + axis + '|' + zones0.map(z => [z.f0, z.f1, z.n, z.th].join(',')).join(';') + parKey;
   if (ROOF_CACHE.key === key) return ROOF_CACHE.val;
   /* each maximal rectangle cut into strips, one per zone it meets — a flat
      açoteia over one part, a pitched roof over the next */
@@ -3120,7 +3289,22 @@ function roofModel(G, RF) {
   const topZi = zoneArea.reduce((p, q, k) => q > zoneArea[p] ? k : p, 0);
   const topT = zones[topZi].t, topTh = zones[topZi].th, topN = zones[topZi].n;
   const mixed = new Set(strips.map(s => s.n + ':' + s.th)).size > 1;
-  const val = { key, pl, H0, t:topT, th:topTh, n:topN, pieces, walls, steps, at, zOf, roofArea, roofVol, ridge,
+  /* a parapet: every outline wall carried up by its height — envelope too */
+  let paras = [], paraArea = 0;
+  if (RF.par && RF.par.on) {
+    const ph = clamp(+RF.par.h || 0.6, 0.2, 1.5);
+    walls.forEach(wl => {
+      const sg = wl.sg, L = sg.len, ux = (sg.b[0] - sg.a[0]) / L, uy = (sg.b[1] - sg.a[1]) / L;
+      const P = (u, z) => [sg.a[0] + ux * u, sg.a[1] + uy * u, z];
+      wl.prof.forEach((q, k) => {
+        if (!k) return;
+        const p0 = wl.prof[k - 1];
+        paras.push({ sg, quad:[P(p0[0], p0[1]), P(q[0], q[1]), P(q[0], q[1] + ph), P(p0[0], p0[1] + ph)] });
+      });
+      paraArea += sg.len * ph;
+    });
+  }
+  const val = { key, pl, H0, t:topT, th:topTh, n:topN, pieces, walls, steps, paras, paraArea, at, zOf, roofArea, roofVol, ridge,
     zones:zones.map((z, zi) => ({ n:z.n, th:z.th, area:zoneArea[zi] || 0, a0:z.a0, a1:z.a1 })),
     mixed, axis, flats:strips.filter(s => s.n === 0).map(s => s.r),
     zAt:(x, y) => { const r0 = at(x, y); return r0 ? H0 + r0.d : null; },
@@ -3354,7 +3538,7 @@ function balcHoles(ctx, list, P, depth, sees) {
     ground floor — for any plan and roof, the loggias cut out of it. */
 function formFactor(G, RF) {
   const m = roofModel(G, RF), e = balcEnvelope(G, RF, balcGeo(G));
-  const A = m.wallArea + m.roofArea + m.pl.area + e.dA, V = m.pl.area * m.H0 + m.roofVol + e.dV;
+  const A = m.wallArea + m.roofArea + m.pl.area + (m.paraArea || 0) + e.dA, V = m.pl.area * m.H0 + m.roofVol + e.dV;
   return { H:m.ridge, V, A, ff:A / V };
 }
 /** CFD-style speed ramp for the ventilation streamlines: slow wake blue,
@@ -3588,6 +3772,17 @@ function importNormalize(raw, unit, up) {
 function pushImportFaces(arr, map) {
   if (!IMPORT.active || !IMPORT.show.length) return;
   for (const t of IMPORT.show) arr.push({ pts:map ? t.map(map) : t, fill:IMPFILL, import:true });
+}
+/** The parapet and the chimney into any building painter's face list
+    (plan-local metres; map translates, as the Environmental view does). */
+function pushChimPar(arr, M, map) {
+  if (!M) return;
+  if (RF.par && RF.par.on && M.paras) M.paras.forEach(pp => arr.push({ pts:map ? pp.quad.map(map) : pp.quad, fill:'#E9E5DD', par:1 }));
+  const ch = RF.chim;
+  if (ch && ch.on && isFinite(+ch.x) && isFinite(+ch.y) && M.pl.inside(+ch.x, +ch.y)) {
+    const z = M.zAt(+ch.x, +ch.y);
+    if (z !== null) chimneyFaces(ch.fam, +ch.x, +ch.y, z).forEach(f => arr.push({ pts:map ? f.pts.map(map) : f.pts, fill:f.fill, chim:1 }));
+  }
 }
 
 /**
@@ -4538,8 +4733,10 @@ function buildEnvironment(host) {
     const dep = f2 => f2.pts.reduce((a, q) => a + depthOf(FR, q[0], q[1], q[2]), 0) / f2.pts.length;
     const path3 = pts3 => { ctx.beginPath(); pts3.forEach((q, i) => { const p2 = pt(q[0], q[1], q[2]); i ? ctx.lineTo(p2[0], p2[1]) : ctx.moveTo(p2[0], p2[1]); }); ctx.closePath(); };
     pushImportFaces(faces, wQ);
+    pushChimPar(faces, M, wQ);
     faces.sort((p1, q1) => dep(q1) - dep(p1)).forEach(f2 => {
       if (f2.balc) { balcFace(ctx, f2.balc, P3e); return; }
+      if (f2.chim || f2.par) { path3(f2.pts); ctx.fillStyle = f2.fill; ctx.fill(); stroke(ctx, CH.ink, 1.1); ctx.stroke(); return; }
       if (f2.import) { path3(f2.pts); ctx.fillStyle = f2.fill; ctx.fill(); return; }
       path3(f2.pts);
       if (!(f2.nb && f2.nb.ghost)) { ctx.fillStyle = f2.fill; ctx.fill(); }
@@ -5765,10 +5962,12 @@ function buildSite(host) {
           faces.push({ pc, pts:pc.poly.map(q => [q[0], q[1], RM.zOf(f, q[0], q[1])]) });
         });
         pushImportFaces(faces);
+        pushChimPar(faces, RM);
         faces.sort((p, q) => dep(q.pts) - dep(p.pts) || (p.balc ? 1 : 0) - (q.balc ? 1 : 0)).forEach(fc => {
           const scr = fc.pts.map(q => at(q[0], q[1], beta, q[2]));
           if (fc.balc) { desk.path(scr, true); balcFace(ctx, fc.balc, P3s); return; }
           if (fc.import) { outline(scr, true); ctx.fillStyle = fc.fill; ctx.fill(); return; }
+          if (fc.chim || fc.par) { outline(scr, true); ctx.fillStyle = fc.fill; ctx.fill(); stroke(ctx, CH.ink, 1.2); ctx.stroke(); return; }
           outline(scr, true);
           if (fc.pc) {
             const f = fc.pc.f, kk = ROOF.n === 0 ? 1 : 0.87 + 0.11 * f.b + 0.05 * f.a;
@@ -6648,6 +6847,64 @@ function buildRoof(host) {
     divBox.appendChild(hint('roof-divide', 'One building, several roofs — as Algarve houses set a flat açoteia beside a pitched roof: divide the longest side (up to three parts), give each part its slopes and pitch, and drag the division on the model or above. Badges read the largest part.'));
   }
   buildRoofUI();
+  /* --- parapet and chimney: the roof's edge and its fire -----------------
+     A platibanda runs every outline wall up by its height — envelope, so
+     the form factor follows it. One chimney stands on the roof where it is
+     put, drawn as the region builds them (see the survey in the code); drag
+     its black point along the roof, or set its metres in the rail. */
+  rail.appendChild(el('div', { class:'gh', text:'Parapet' }));
+  const parBox = rail.appendChild(el('div'));
+  let parHCtl = null;
+  function buildParUI() {
+    parBox.innerHTML = '';
+    const on = !!(RF.par && RF.par.on);
+    const tgl = segCtl(null, [{ value:0, label:'Off' }, { value:1, label:'On' }], on ? 1 : 0, v => {
+      RF.par = { on:v === 1, h:RF.par && isFinite(+RF.par.h) ? +RF.par.h : 0.6 };
+      buildParUI(); roofDraw();
+    });
+    parBox.appendChild(tgl);
+    if (on) {
+      parHCtl = rangeCtl('Height', 0.2, 1.5, 0.05, +RF.par.h || 0.6, v => { RF.par.h = v; roofDraw(); }, v => fmt(v, 2) + ' m');
+      parBox.appendChild(parHCtl);
+    } else parHCtl = null;
+  }
+  buildParUI();
+  rail.appendChild(el('div', { class:'gh', text:'Chimney' }));
+  const chimBox = rail.appendChild(el('div'));
+  let chimXCtl = null, chimYCtl = null;
+  const chimSpan = () => {
+    const M = roofModel(G, RF), bb = M.pl.bbox;
+    return { x0:bb[0] + 0.3, x1:bb[2] - 0.3, y0:bb[1] + 0.3, y1:bb[3] - 0.3 };
+  };
+  function buildChimUI() {
+    chimBox.innerHTML = '';
+    chimXCtl = chimYCtl = null;
+    const ch = RF.chim, fam = ch && ch.on ? chimneyOf(STATE.site.nuts) : null;
+    if (!(ch && ch.on)) {
+      chimBox.appendChild(el('button', { class:'btn small', text:'+ Add chimney', title:t('Raise the region’s chimney where the roof is highest'),
+        onclick:() => {
+          const M = roofModel(G, RF), at = placeChimney(M);
+          RF.chim = Object.assign({ on:true, fam:chimneyOf(STATE.site.nuts) }, at || { x:0, y:0 });
+          buildChimUI(); roofDraw();
+        } }));
+      return;
+    }
+    const fig = el('div', { class:'sce-ics' });
+    fig.innerHTML = sceFig(fam, 'C');
+    chimBox.appendChild(fig);
+    const note = el('p', { class:'hint' });
+    note.textContent = t(CHIMNEY_FAM[fam].name) + ' · ' + STATE.site.nuts;
+    chimBox.appendChild(note);
+    const sp = chimSpan();
+    chimXCtl = rangeCtl('Metres from the west face', Math.min(sp.x0, sp.x1), Math.max(sp.x0, sp.x1), 0.1, clamp(ch.x, sp.x0, sp.x1),
+      v => { RF.chim.x = +v.toFixed(2); roofDraw(); }, v => fmt(v, 1) + ' m');
+    chimYCtl = rangeCtl('Metres from the south face', Math.min(sp.y0, sp.y1), Math.max(sp.y0, sp.y1), 0.1, clamp(ch.y, sp.y0, sp.y1),
+      v => { RF.chim.y = +v.toFixed(2); roofDraw(); }, v => fmt(v, 1) + ' m');
+    chimBox.appendChild(chimXCtl); chimBox.appendChild(chimYCtl);
+    chimBox.appendChild(el('button', { class:'btn small', text:'× ' + t('Remove'), title:t('Take the chimney away'),
+      onclick:() => { RF.chim = null; buildChimUI(); roofDraw(); } }));
+  }
+  buildChimUI();
   props.appendChild(el('div', { class:'gh', text:'Roof colour — albedo' }));
   props.appendChild(finishPicker(() => RF.col, k => { RF.col = k; roofDraw(); })).classList.add('fpick');
 
@@ -6780,9 +7037,11 @@ function buildRoof(host) {
       });
       const depth = F => F.pts.reduce((a, q) => a + camDepth(A, q[0], q[1], q[2]), 0) / F.pts.length;
       pushImportFaces(faces);
+      pushChimPar(faces, M);
       faces.sort((p, q) => depth(q) - depth(p)).forEach(F => {
         if (F.balc) { desk.path(F.pts.map(P3), true); balcFace(ctx, F.balc, P3); return; }
         if (F.import) { const p = pathOf(F.pts); ctx.fillStyle = F.fill; ctx.fill(); return; }
+        if (F.chim || F.par) { const p = pathOf(F.pts); ctx.fillStyle = F.fill; ctx.fill(); stroke(ctx, CH.ink, 1.2); ctx.stroke(); return; }
         const p = pathOf(F.pts);
         ctx.fillStyle = F.fill; ctx.fill();
         if (F.pc) {
@@ -6943,6 +7202,8 @@ function buildRoof(host) {
       return csvRows([['Parameter', 'Value'],
       ['Roof (largest part)', ['flat', 'shed', 'gable', 'hip'][RF.n]], ['Pitch (°)', RF.n === 0 ? 0 : RF.th],
       ['Roof parts', RF.zones.map((z, i) => 'ABC'[i] + ':' + ['flat', 'shed', 'gable', 'hip'][z.n] + (z.n === 0 ? '' : ' ' + z.th + '°')).join(' | ')],
+      ['Parapet', RF.par && RF.par.on ? fmt(RF.par.h, 2) + ' m' : 'none'],
+      ['Chimney', RF.chim && RF.chim.on ? CHIMNEY_FAM[RF.chim.fam].name + ' at ' + fmt(RF.chim.x, 1) + ', ' + fmt(RF.chim.y, 1) + ' m' : 'none'],
       ['Plan form (from Site)', (G.form || 'rect') + (G.patio && G.patio.on && G.patio.ok !== false ? ' + patio' : '')],
       ['Winter solar ideal (°)', +idealW.toFixed(0)],
       ['Summer solar ideal (°)', +idealS.toFixed(0)],
@@ -7154,6 +7415,15 @@ function buildRoof(host) {
       rcv.style.cursor = 'grabbing';
       return;
     }
+    if (chimHandleAt(ev.clientX, ev.clientY)) {
+      ev.preventDefault();
+      chdrag = true;
+      const tp = chimTop();
+      chZ = tp ? roofModel(G, RF).zAt(tp.x, tp.y) || 0 : 0;
+      try { rcv.setPointerCapture(ev.pointerId); } catch (err) {}
+      rcv.style.cursor = 'grabbing';
+      return;
+    }
     const dh = divHandleAt(ev.clientX, ev.clientY);
     if (dh >= 0) {
       ev.preventDefault();
@@ -7171,15 +7441,52 @@ function buildRoof(host) {
   rcv.addEventListener('pointermove', ev => {
     if (orbit.move(ev)) { ev.preventDefault(); return; }
     if (fdrag) { ev.preventDefault(); doFieldDrag(ev.clientX, ev.clientY); return; }
+    if (chdrag) { ev.preventDefault(); doChimDrag(ev.clientX, ev.clientY); return; }
     if (ddiv >= 0) { ev.preventDefault(); doDivDrag(ev.clientX, ev.clientY); return; }
     if (!rdrag) {
-      rcv.style.cursor = fieldHandleAt(ev.clientX, ev.clientY) ? 'move' : divHandleAt(ev.clientX, ev.clientY) >= 0 ? 'ew-resize' : nearSlope(ev.clientX, ev.clientY) ? 'ns-resize' : 'grab';
+      rcv.style.cursor = fieldHandleAt(ev.clientX, ev.clientY) ? 'move' : chimHandleAt(ev.clientX, ev.clientY) ? 'grab' : divHandleAt(ev.clientX, ev.clientY) >= 0 ? 'ew-resize' : nearSlope(ev.clientX, ev.clientY) ? 'ns-resize' : 'grab';
       return;
     }
     ev.preventDefault();
     doDrag(ev.clientX, ev.clientY);
   });
-  const endDrag = () => { orbit.end(); rdrag = fdrag = false; if (ddiv >= 0) { ddiv = -1; buildRoofUI(); roofDraw(); } rcv.style.cursor = 'default'; };
+  let chdrag = false, chZ = 0;
+  const chimTop = () => {
+    const ch = RF.chim;
+    if (!ch || !ch.on || !isFinite(+ch.x) || !isFinite(+ch.y)) return null;
+    const M = roofModel(G, RF);
+    if (!M.pl.inside(+ch.x, +ch.y)) return null;
+    const z = M.zAt(+ch.x, +ch.y);
+    if (z === null) return null;
+    const F = CHIMNEY_FAM[ch.fam] || CHIMNEY_FAM.alentejana;
+    return { x:+ch.x, y:+ch.y, z:z + F.h + (F.cap || 0.1) + (F.pots > 0 ? 0.5 : 0.02) };
+  };
+  const chimHandleAt = (clientX, clientY) => {
+    if (!roofPanel.W) return false;
+    const tp = chimTop();
+    if (!tp) return false;
+    const FR = frameNow(), r = rcv.getBoundingClientRect();
+    const q = projF(FR, tp.x, tp.y, tp.z);
+    return Math.hypot(clientX - r.left - q[0], clientY - r.top - q[1]) <= 12;
+  };
+  const doChimDrag = (clientX, clientY) => {
+    if (!chdrag || !roofPanel.W) return;
+    const FR = frameNow(), M = FR.M, r = rcv.getBoundingClientRect();
+    const proj = (x, y, z) => projF(FR, x, y, z);
+    const q = camPick(proj, [0, 0, chZ], [1, 0, 0], [0, 1, 0], clientX - r.left, clientY - r.top);
+    if (!q) return;
+    let nx = q[0], ny = q[1];
+    if (!M.pl.inside(nx, ny)) {   // stay on the roof: walk back toward its middle
+      const bb = M.pl.bbox, cx = (bb[0] + bb[2]) / 2, cy = (bb[1] + bb[3]) / 2;
+      for (let k = 0; k < 200 && !M.pl.inside(nx, ny); k++) { nx += (cx - nx) * 0.05; ny += (cy - ny) * 0.05; }
+      if (!M.pl.inside(nx, ny)) return;
+    }
+    RF.chim.x = +nx.toFixed(2); RF.chim.y = +ny.toFixed(2);
+    if (chimXCtl) syncCtl(chimXCtl, RF.chim.x, v => fmt(v, 1) + ' m');
+    if (chimYCtl) syncCtl(chimYCtl, RF.chim.y, v => fmt(v, 1) + ' m');
+    roofDraw();
+  };
+  const endDrag = () => { orbit.end(); rdrag = fdrag = false; chdrag = false; if (ddiv >= 0) { ddiv = -1; buildRoofUI(); roofDraw(); } rcv.style.cursor = 'default'; };
   rcv.addEventListener('pointerup', endDrag);
   rcv.addEventListener('pointercancel', endDrag);
   zoomGesture(rcv, 'roof');
@@ -7666,9 +7973,12 @@ function buildOpenings(host) {
       });
       const depth = it => it.pts.reduce((a, q) => a + camDepth(A, q[0], q[1], q[2]), 0) / it.pts.length - (it.dev ? 0.01 : 0);
       pushImportFaces(items);
+      pushChimPar(items, M);
+      pushChimPar(items, Mm);
       items.sort((p, q) => depth(q) - depth(p)).forEach(it => {
         if (it.balc) { balcFace(ctx, it.balc, P3); return; }
         if (it.import) { pathOf(it.pts); ctx.fillStyle = it.fill; ctx.fill(); return; }
+        if (it.chim || it.par) { pathOf(it.pts); ctx.fillStyle = it.fill; ctx.fill(); stroke(ctx, CH.ink, 1.2); ctx.stroke(); return; }
         if (it.dev) {
           const act = it.dev.f === curFace, ov = it.dev.kind === 'ov';
           poly(it.pts, ov ? (act ? 'rgba(217,119,6,.35)' : 'rgba(217,119,6,.2)') : (act ? 'rgba(220,38,38,.3)' : 'rgba(220,38,38,.18)'), ov ? '#D97706' : '#DC2626', act ? 1.4 : 1.1);
@@ -9975,6 +10285,7 @@ function buildVentilation(host) {
     items.sort((p1, q1) => depthV(q1) - depthV(p1)).forEach(it => {
       if (it.balc) { balcFace(ctx, it.balc, P3v); return; }
       if (it.import) { pathV(it.pts); ctx.fillStyle = it.fill; ctx.fill(); return; }
+      if (it.chim || it.par) { pathV(it.pts); ctx.fillStyle = it.fill; ctx.fill(); stroke(ctx, CH.ink, 1.2); ctx.stroke(); return; }
       if (it.dev) { poly(it.pts, it.dev.ov ? 'rgba(217,119,6,.22)' : 'rgba(220,38,38,.18)', it.dev.ov ? '#D97706' : '#DC2626', 1.2); return; }
       pathV(it.pts); ctx.fillStyle = it.fill; ctx.fill();
       if (it.pc) {
@@ -11269,6 +11580,8 @@ function toDecisionsJSON() {
         planArea:+planModel(MASS).area.toFixed(1), wallColour:colourOf(fin) },
       roof:{ type:['flat', 'shed', 'gable', 'hip'][ROOF.n], pitch:ROOF.n === 0 ? 0 : ROOF.th,
         zones:(ROOF.zones || []).map((z, i) => ({ part:'ABC'[i], type:['flat', 'shed', 'gable', 'hip'][z.n], pitch:z.n === 0 ? 0 : z.th, from:+z.f0.toFixed(3), to:+z.f1.toFixed(3) })), roofColour:colourOf(rfin),
+        parapet:ROOF.par && ROOF.par.on ? { height:+ROOF.par.h.toFixed(2) } : null,
+        chimney:ROOF.chim && ROOF.chim.on ? { family:ROOF.chim.fam, x:+ROOF.chim.x.toFixed(2), y:+ROOF.chim.y.toFixed(2) } : null, roofColour:colourOf(rfin),
         solar:ROOF.sol && ROOF.sol.tech !== 'none' ? { technology:ROOF.sol.tech === 'pv' ? 'photovoltaic panels' : 'flat-plate thermal collectors', columns:ROOF.sol.cols, rows:ROOF.sol.rows } : null },
       openings:OPEN, sunspace:SUNSP, roofWindows:RWIN,
       planting:SCENE.veg.map(v => { const q = SCENE.plant ? SCENE.plant(v) : null;
@@ -12590,7 +12903,7 @@ function mountApp(site, clim, keepTab, keepModel, keepScroll) {
     MASS.form = 'rect'; MASS.wing = null; MASS.patio.on = false;   // the import sizes the bar; breaks stay parametric
   }
   ENV.plot = null;
-  ROOF = { n:2, th:Math.round(Math.abs(site.lat)), col:null, sol:{ tech:'none', cols:4, rows:2 } };
+  ROOF = { n:2, th:Math.round(Math.abs(site.lat)), col:null, sol:{ tech:'none', cols:4, rows:2 }, par:{ on:false, h:0.6 }, chim:null };
   /* One entry per local facade (S/N/E/W, matching the Roof tab's convention
      of true-south regardless of the plan's chosen rotation), each holding
      the window and its shading devices. wwr is a fraction of that facade's
@@ -13504,6 +13817,28 @@ Object.assign(PT, {
   "Judge the wind exposure — yours to decide": "Avalie a exposição ao vento — a decisão é sua",
   "Exposure judged": "Exposição avaliada",
   "Pitch": "Inclinação",
+  "Off": "Não",
+  "On": "Sim",
+  "Parapet": "Platibanda",
+  "Height": "Altura",
+  "Chimney": "Chaminé",
+  "+ Add chimney": "+ Acrescentar chaminé",
+  "Raise the region’s chimney where the roof is highest": "Levantar a chaminé da região onde a cobertura é mais alta",
+  "Take the chimney away": "Retirar a chaminé",
+  "Metres from the west face": "Metros da fachada oeste",
+  "Metres from the south face": "Metros da fachada sul",
+  "Algarve turret": "Torre algarvia",
+  "Alentejo stack": "Chaminé alentejana",
+  "Lisbon brick": "Chaminé lisboeta",
+  "Northern granite": "Chaminé nortenha",
+  "Beira schist": "Chaminé beirã",
+  "Island basalt": "Chaminé insular",
+  "An openwork crown under the cap, two pots — the Algarve chimney.": "Coroa rendilhada sob a tampa, dois potes — a chaminé algarvia.",
+  "Tall and slender, one pot under a slab — the Alentejo chimney.": "Alta e esguia, um pote sob uma laje — a chaminé alentejana.",
+  "A corbelled head with two clay pots — the Lisbon chimney.": "Cabeça em mísulas com dois potes de barro — a chaminé lisboeta.",
+  "A heavy mass with open flues under one great slab — the northern chimney.": "Maciço pesado com condutas abertas sob uma grande laje — a chaminé nortenha.",
+  "A stone shaft with a slab cap and one pot — the Beira chimney.": "Fuste de pedra com tampa em laje e um pote — a chaminé beirã.",
+  "A dark shaft with a washed crown and one pot — the island chimney.": "Fuste escuro com coroa caiada e um pote — a chaminé insular.",
   "Reset the model size": "Repôr o tamanho do modelo",
   "Smaller model": "Modelo mais pequeno",
   "Larger model": "Modelo maior",
