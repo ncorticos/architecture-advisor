@@ -922,7 +922,7 @@ details.more[open] > summary{color:var(--ink)}
 /* ------------------------------------------------------------ 0. IDENTITY -- */
 const APP = {
   name:        'Architecture Advisor PT',
-  version:     '1.101.0',
+  version:     '1.102.0',
   author:      'Nuno Dinis Cortiços',
   institution: 'Lisbon School of Architecture, Universidade de Lisboa',
   builtWith:   'Claude Opus 5 (Anthropic)',
@@ -2748,7 +2748,7 @@ function radiationFor(site, onReady) {
     .then(() => { rec.pending = false; if (onReady) onReady(); });
   return rec;
 }
-/** Snow days, month by month: days with ≥1 cm of fresh snow 1991–2020
+/** Snow days, month by month: days with ≥0.5 cm of fresh snow 1991–2020
  *  from the ERA5 reanalysis via Open-Meteo, fetched once per site — only the
  *  coordinates leave the browser. Like the web normals, provisional by
  *  definition: reanalysis, not a station observation. Until it arrives (or
@@ -2772,7 +2772,7 @@ function snowFor(site, onReady) {
         if (!(m >= 0 && m < 12) || !isFinite(y) || typeof x !== 'number' || !isFinite(x)) return;
         const k = y * 12 + m;
         (ym[k] = ym[k] || [0, 0])[1]++;
-        if (x >= 1) ym[k][0]++;
+        if (x >= 0.5) ym[k][0]++;
       });
       const acc = Array.from({ length:12 }, () => []);
       Object.keys(ym).forEach(k => { if (ym[k][1] >= 20) acc[k % 12].push(ym[k][0]); });
@@ -3343,16 +3343,23 @@ function roofModel(G, RF) {
   /* a parapet: every outline wall carried up by its height — envelope too */
   let paras = [], paraArea = 0;
   if (RF.par && RF.par.on) {
-    const ph = clamp(+RF.par.h || 0.6, 0.2, 1.5);
+    const ph = clamp(+RF.par.h || 0.6, 0.2, 1.5), pt = 0.2;   // a 20 cm wall: outer face, inner face, cap
     walls.forEach(wl => {
       const sg = wl.sg, L = sg.len, ux = (sg.b[0] - sg.a[0]) / L, uy = (sg.b[1] - sg.a[1]) / L;
+      const nx = sg.n[0], ny = sg.n[1];
       const P = (u, z) => [sg.a[0] + ux * u, sg.a[1] + uy * u, z];
+      const Q = (u, z) => [sg.a[0] + ux * u - nx * pt, sg.a[1] + uy * u - ny * pt, z];
       wl.prof.forEach((q, k) => {
         if (!k) return;
-        const p0 = wl.prof[k - 1];
-        paras.push({ sg, quad:[P(p0[0], p0[1]), P(q[0], q[1]), P(q[0], q[1] + ph), P(p0[0], p0[1] + ph)] });
+        const p0 = wl.prof[k - 1], a = P(p0[0], p0[1]), b = P(q[0], q[1]);
+        const a2 = [a[0], a[1], a[2] + ph], b2 = [b[0], b[1], b[2] + ph];
+        const c = Q(p0[0], p0[1]), d = Q(q[0], q[1]);
+        const c2 = [c[0], c[1], c[2] + ph], d2 = [d[0], d[1], d[2] + ph];
+        paras.push({ sg, quad:[a, b, b2, a2] });
+        paras.push({ sg, quad:[d, c, c2, d2] });
+        paras.push({ sg, quad:[a2, b2, d2, c2] });
       });
-      paraArea += sg.len * ph;
+      paraArea += sg.len * (2 * ph + pt);
     });
   }
   const val = { key, pl, H0, t:topT, th:topTh, n:topN, pieces, walls, steps, paras, paraArea, at, zOf, roofArea, roofVol, ridge,
@@ -3610,7 +3617,7 @@ const opaque = c => {
   return 'rgb(' + [1, 2, 3].map(i => Math.round(+m[i] * a + 255 * (1 - a))).join(',') + ')';
 };
 /** The wall a sunspace stands against: the outermost wall of its
-    orientation, the longest if several — the Windows & Shading model and
+    orientation, the longest if several — the Openings and Shadowing model and
     the CAD export both read it. */
 function sunspaceWall(pl, f) {
   const reach = sg => sg.n[0] * (sg.a[0] + sg.b[0]) / 2 + sg.n[1] * (sg.a[1] + sg.b[1]) / 2;
@@ -3620,7 +3627,7 @@ function sunspaceWall(pl, f) {
 const segFace = sg => sg.n[1] < 0 ? 'S' : sg.n[1] > 0 ? 'N' : sg.n[0] > 0 ? 'E' : 'W';
 /**
  * Windows spread over every wall of the plan: each wall at least 1.5 m long
- * takes the glass its orientation's WWR asks for — the Windows & Shading
+ * takes the glass its orientation's WWR asks for — the Openings and Shadowing
  * settings of the facade it faces like — shared equally between the
  * storeys: one window per floor, centred on the wall, its sill and head
  * set from that floor, as wide as its share needs, up to 92 % of the wall.
@@ -3984,7 +3991,7 @@ const phoneW = w => w < 600 && (window.innerWidth || 1000) <= 700;
     kept within it, so it can stay in view as they scroll. */
 const roomH = () => (window.innerHeight || 900) - ((document.querySelector('header') || {}).offsetHeight || 95) - 16;
 
-/* ---- the orbit camera the models share — Roof, Windows & Shading and
+/* ---- the orbit camera the models share — Roof, Openings and Shadowing and
    Ventilation: orthographic, turning round the plan in the plan's own
    frame. az is where the camera stands, counter-clockwise from the plan's
    +x: 225 is the south-west corner Site and Environmental draw from. el is
@@ -4365,6 +4372,9 @@ function buildEnvironment(host) {
     days.forEach((d, i) => { if (d >= 0.5) ms.push(MON3[i]); });
     return ms.length ? ms.join(' · ') : '—';
   };
+  /* snow on the ground: cover eases toward snowfall while it falls and
+     toward the month's own snow-day share otherwise, melting away above 2 °C */
+  const snowState = { cover:0, last:0, init:false };
   function paintSnow() {
     const rec = snowFor(S, () => { if (host.isConnected) paintSnow(); });
     const yv = snowYear.querySelector('b'), mv = snowWhen.querySelector('b');
@@ -4378,7 +4388,7 @@ function buildEnvironment(host) {
   }
   paintSnow();
   host.appendChild(hint('env-snow',
-    'Like a winter tree where the winter is very strong: where it snows, say so in words — this page draws no snow the eye could miss. Snow days here count ERA5 days with at least 1 cm of fresh snow, 1991–2020, read at these exact coordinates: provisional reanalysis, like the web normals on the setup page, not a station observation — and reanalysis smooths the mountains, so a high site reads fewer snow days than its station. At Manteigas, up in the Serra da Estrela, that is some twenty-five days a year, December to April; in Lisbon, about zero. Where the count is not zero, carry it into the design: snow loads the roof, drifts against the parapet, buries the eaves and can close the road — a cold-climate site earns pitch, cleared access and detailing that survives the thaw.'));
+    'Like a winter tree where the winter is very strong: where it snows, say so in words — this page draws no snow the eye could miss. Snow days here count ERA5 days with at least 0.5 cm of fresh snow, 1991–2020, read at these exact coordinates: provisional reanalysis, like the web normals on the setup page, not a station observation — and reanalysis smooths the mountains, so a high site reads fewer snow days than its station. At Manteigas, up in the Serra da Estrela, that is some twenty-five days a year, December to April; in Lisbon, about zero. Where the count is not zero, carry it into the design: snow loads the roof, drifts against the parapet, buries the eaves and can close the road — a cold-climate site earns pitch, cleared access and detailing that survives the thaw.'));
   const pMax = Math.max(10, Math.ceil(Math.max.apply(null, C.p) / 10) * 10);
   const tLo = Math.min(0, Math.floor(Math.min.apply(null, C.t) / 5) * 5);
   const tHi = Math.ceil(Math.max.apply(null, C.t) / 5) * 5;
@@ -4407,7 +4417,8 @@ function buildEnvironment(host) {
   const monthOf = doy => { let d = doy, m = 0; while (m < 11 && d > MDAYS[m]) { d -= MDAYS[m]; m++; } return m; };
   const weatherOf = doy => {
     const T = atDay(C.t, doy), Pm = Math.max(0, atDay(C.p, doy));
-    return { T, P:Pm, m:monthOf(doy), warm:clamp(T / 28, 0, 1), cloud:clamp(Pm / 150, 0, 1), rain:clamp((Pm - 10) / 140, 0, 1) };
+    return { T, P:Pm, m:monthOf(doy), warm:clamp(T / 28, 0, 1), cloud:clamp(Pm / 150, 0, 1), rain:clamp((Pm - 10) / 140, 0, 1),
+      snow:clamp((0.5 - T) / 2, 0, 1) };
   };
   const normalsLine = m => [LANG === 'pt' ? 'Normais de ' + MONTHS[m] : MONTHS[m] + ' normals', fmt(C.t[m], 1) + ' °C · ' + fmt(C.p[m], 0) + ' mm'];
   /** The sun: bigger, deeper in colour and brighter in its halo the warmer
@@ -4443,6 +4454,12 @@ function buildEnvironment(host) {
   const rnd = (() => { let sd = 20240611; return () => (sd = (sd * 16807) % 2147483647) / 2147483647; })();
   const CLOUDS = Array.from({ length:9 }, () => ({ u:rnd(), v:rnd(), size:0.6 + 0.7 * rnd(), sp:0.6 + 0.8 * rnd(), gy:rnd() }));
   const DROPS = Array.from({ length:180 }, () => ({ u:rnd(), v:rnd(), ph:rnd() * 1.2, sp:0.85 + 0.5 * rnd() }));
+  const SNOWF = Array.from({ length:110 }, () => ({ u:rnd(), v:rnd(), ph:rnd() * 1.2, sp:0.5 + 0.5 * rnd() }));
+  const flake = (ctx, x, y, r, a) => {
+    stroke(ctx, 'rgba(255,255,255,' + a + ')', 1.2);
+    for (let k = 0; k < 3; k++) { const an = k * Math.PI / 3;
+      seg(ctx, x - r * Math.cos(an), y - r * Math.sin(an), x + r * Math.cos(an), y + r * Math.sin(an)); }
+  };
   /* the moving part rides on a transparent canvas over each chart, so the
      model under it is not redrawn thirty times a second */
   const still = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
@@ -4505,10 +4522,50 @@ function buildEnvironment(host) {
       if (sky) cloudPuff(ctx, x, skyTop + R * 0.6 + c.v * Math.max(0, skyBot - skyTop - R * 1.2), R, wx, 0.5 + 0.4 * wx.cloud);
     });
     const top = sky ? skyTop + 0.45 * (skyBot - skyTop) : 0;   // from the clouds down
+    /* snow falls where the month knows it: the temperature mix, or the
+         month's own snow-day share when the mean sits above freezing */
+    const srec0 = SNOW[S.lat.toFixed(2) + ',' + S.lon.toFixed(2)];
+    const dayRate = srec0 && srec0.days ? srec0.days[wx.m] / 30 : 0;
+    const snowFrac = Math.max(wx.snow, dayRate > 0.005 ? clamp(dayRate * 2.5, 0, 0.5) : 0);
+    const snowRate = wx.rain * snowFrac;
+    if (wx.rain > 0.02 || snowRate > 0.005 || snowState.cover > 0.005 || !snowState.init) {
+      const M = roofModel(G, RF);
+      const srec = SNOW[S.lat.toFixed(2) + ',' + S.lon.toFixed(2)];
+      const base = srec && srec.days ? clamp(srec.days[wx.m] / 10, 0, 0.8) : 0;
+      if (!snowState.init && srec && srec.days) { snowState.cover = base; snowState.init = true; }
+      const target = snowRate > 0.02 ? 1 : (wx.T > 2 ? 0 : base);
+      const dt = snowState.last ? Math.min(0.5, Math.max(0, tt - snowState.last)) : 0;
+      snowState.last = tt;
+      snowState.cover += clamp(target - snowState.cover, -0.015 * dt, 0.05 * dt);
+      /* the ground, minus the building's own footprint: darker where the
+         rain wets it, white where the snow lies — raindrops rest on it */
+      const gnd = () => {
+        ctx.beginPath();
+        ctx.ellipse(FR.cx, FR.cy, ex, ey, 0, 0, 6.284);
+        M.pl.boxes.forEach(r => {
+          const c = [[r[0], r[1]], [r[2], r[1]], [r[2], r[3]], [r[0], r[3]]].map(q => {
+            const xp = q[0] * FR.ca - q[1] * FR.sa, yp = q[0] * FR.sa + q[1] * FR.ca;
+            return [FR.cx + xp * FR.s, FR.cy - yp * FR.se * FR.s];
+          });
+          c.forEach((q, i) => i ? ctx.lineTo(q[0], q[1]) : ctx.moveTo(q[0], q[1]));
+          ctx.closePath();
+        });
+      };
+      if (wx.rain > 0.02) { ctx.save(); gnd(); ctx.fillStyle = 'rgba(30,35,45,' + (0.22 * clamp(wx.rain, 0, 1)).toFixed(3) + ')'; ctx.fill('evenodd'); ctx.restore(); }
+      if (snowState.cover > 0.005) { ctx.save(); gnd(); ctx.fillStyle = 'rgba(244,247,250,' + (0.92 * snowState.cover).toFixed(3) + ')'; ctx.fill('evenodd'); ctx.restore(); }
+    }
     DROPS.slice(0, nd).forEach(d => {
       const yv = (d.v * 2 - 1) * 0.9, yEnd = FR.cy + yv * ey, xEnd = FR.cx + (d.u * 2 - 1) * ex * Math.sqrt(1 - yv * yv) * 0.95;
       const q = fall(d, tt, 1.1), len = (7 + 6 * d.sp) * kS;
       if (q <= 1) { const y = top + q * (yEnd - top); drop(ctx, xEnd - (yEnd - y) * 0.14, y, len, 0.5); }
+      else splash(ctx, xEnd, yEnd, (q - 1) / 0.2, FR.se);
+    });
+    /* a little snow mixed with the rain near zero — infrequent by design */
+    const ns = Math.round(SNOWF.length * snowRate * 0.8);
+    SNOWF.slice(0, ns).forEach(f => {
+      const yv = (f.v * 2 - 1) * 0.9, yEnd = FR.cy + yv * ey, xEnd = FR.cx + (f.u * 2 - 1) * ex * Math.sqrt(1 - yv * yv) * 0.95;
+      const q = fall(f, tt, 0.45), sway = Math.sin(tt * 1.7 + f.ph * 6.28) * 6 * kS;
+      if (q <= 1) { const y = top + q * (yEnd - top); flake(ctx, xEnd + sway * q, y, (1.6 + f.sp) * kS, 0.9); }
       else splash(ctx, xEnd, yEnd, (q - 1) / 0.2, FR.se);
     });
   };
@@ -4987,7 +5044,7 @@ function buildEnvironment(host) {
         ['Mean temperature at the day, interpolated (°C)', +wx.T.toFixed(1)], ['Precipitation at the day, interpolated (mm/month)', +wx.P.toFixed(0)],
         ['Sun drawn: warmth 0–1 (0 to 28 °C)', +wx.warm.toFixed(2)], ['Cloud drawn: 0–1 (0 to 150 mm)', +wx.cloud.toFixed(2)], ['Rain drawn: 0–1 (10 to 150 mm)', +wx.rain.toFixed(2)],
         ['Sun altitude (°)', +sp.alt.toFixed(1)], ['Sun azimuth (°)', +sp.azi.toFixed(1)],
-        ['Snow days a year (days ≥1 cm, ERA5 1991–2020)', snowTot], ['Snow source', 'ERA5 1991–2020 via Open-Meteo (provisional reanalysis)'],
+        ['Snow days a year (days ≥0.5 cm, ERA5 1991–2020)', snowTot], ['Snow source', 'ERA5 1991–2020 via Open-Meteo (provisional reanalysis)'],
         ['Sunrise (solar time)', ss ? hm(ss.rise) : ''], ['Sunset (solar time)', ss ? hm(ss.set) : ''], ['Day length (h)', ss ? +(ss.set - ss.rise).toFixed(2) : ''],
         ['Ridge height (m)', +M.ridge.toFixed(2)], ['Ridge shadow length (m)', sp.alt > 0.5 ? +(M.ridge / Math.tan(sp.alt * RAD)).toFixed(2) : ''],
         ['Base map', ENV.map === 'none' ? 'none' : TILE_SRC[ENV.map].attr]);
@@ -5548,10 +5605,10 @@ function buildSite(host) {
   }
   const SUN_DEC = noonSun(355), SUN_JUN = noonSun(172);   // site constants, CSV only
 
-  /* --- the windows, as set on Windows & Shading ----------------------------
+  /* --- the windows, as set on Openings and Shadowing ----------------------------
      Every wall of the outline long enough takes a window — a wing's walls, a
      notch's, a patio's — each sized by the WWR, sill and head its orientation
-     has on Windows & Shading (segWindow), so a broken plan spreads its glass
+     has on Openings and Shadowing (segWindow), so a broken plan spreads its glass
      over the walls it really has. Walls keep their local keys (S faces the
      same way as the main facade, the one the black arrow leaves from); the
      compass name is the way each one really faces once the plan is turned. */
@@ -5696,7 +5753,7 @@ function buildSite(host) {
       they face (ties joined). */
   function refreshWin() {
     const ws = WIN_KEYS.map(f => ({ f, g:glassOf(f) })).filter(o => o.g > 0);
-    if (!ws.length) { pillWin.className = 'pill empty'; pillWin.textContent = t('No windows yet — size them on Windows & Shading'); return; }
+    if (!ws.length) { pillWin.className = 'pill empty'; pillWin.textContent = t('No windows yet — size them on Openings and Shadowing'); return; }
     const amax = Math.max.apply(null, ws.map(o => o.g)), amin = Math.min.apply(null, ws.map(o => o.g));
     const dirs = a => ws.filter(o => Math.abs(o.g - a) <= 0.01 * amax).map(o => faceDir(o.f)).join('/');
     let txt = t('Most glass faces') + ' ' + dirs(amax);
@@ -5732,7 +5789,7 @@ function buildSite(host) {
     syncBalcDirs();
     balcSays();
   }
-  host._refresh = () => { stick(); refreshLab(); };   // the windows may have changed on Windows & Shading
+  host._refresh = () => { stick(); refreshLab(); };   // the windows may have changed on Openings and Shadowing
 
   let labPanel = null;
   const labDraw = () => { if (labPanel) labPanel.draw(); refreshLab(); };
@@ -5824,7 +5881,7 @@ function buildSite(host) {
 
   labPanel = makePanel(stage, {
     title: 'Your plan against the optimum',
-    note: 'Isometric view on a turning plate. Drag open ground to turn the plate — or, with the plate fixed, to turn the building on it; drag the plan to stretch it, the black knob to turn it, the black points to break it; drive the sun from the Sun controls. The windows are the ones sized on Windows & Shading, spread over every wall and every floor, and the roof is the one set on Roof.',
+    note: 'Isometric view on a turning plate. Drag open ground to turn the plate — or, with the plate fixed, to turn the building on it; drag the plan to stretch it, the black knob to turn it, the black points to break it; drive the sun from the Sun controls. The windows are the ones sized on Openings and Shadowing, spread over every wall and every floor, and the roof is the one set on Roof.',
     heightFn: w => phoneW(w) ? Math.round(w * 1.2 + 140) : Math.round(Math.min(w / 1.5, Math.max(460, (window.innerHeight || 900) - 200))),
     render(ctx, W, H) {
       const GREEN = '#16A34A', BLUE = '#2563EB', narrow = phoneW(W);
@@ -6103,9 +6160,9 @@ function buildSite(host) {
       drawPlan(Hgt);
       desk.area(hull(scs.map(p => proj(p[0], p[1], 0)).concat(roofPts.map(q => proj(q[0][0], q[0][1], q[2])))));   // labels keep off the volume
 
-      /* The windows, as sized on Windows & Shading: the ones on walls facing
+      /* The windows, as sized on Openings and Shadowing: the ones on walls facing
          the camera went on with their walls; the ones behind show dashed at
-         their true place, as on Windows & Shading, so no window vanishes
+         their true place, as on Openings and Shadowing, so no window vanishes
          behind the volume. */
       wins.forEach(o => { if (!segSeen(o.sg)) drawWindow(o.sg, o.w, true); });
       drawBoxOutline(Li, Di, OI.az - 180, Hopt, GREEN);   // the optimum over the volume, dashed
@@ -6548,9 +6605,9 @@ function buildSite(host) {
   };
   refreshShade();
   host.appendChild(hint('site-form',
-    'Break the volume with the tools left of the model. <b>L</b> works one end of the bar, <b>T</b> its middle, <b>U</b> both ends of one long side, <b>H</b> both ends on both long sides. <b>Extend</b> adds the wing out past the bar; <b>Carve</b> cuts into it, so the bar itself becomes the letter: the L’s leg sinks into the bar as a notch at its corner, the U’s court is cut in between its legs, the T and the H cut what lies beside their wings. The break’s black point is one continuous reach: drag it outward and the wing grows, back to the facade and the plain bar returns, further in and the recess deepens — it never jumps to the other side. The U has three points: each leg’s inner corner sets that leg’s width and its own reach — out past the bar, or cut back into it, so one leg can be longer than the other — and the point in the middle of the court sets how deep the court goes into the bar; a leg never reaches behind the court’s floor. <b>⇆ Other end</b> and <b>⇅ Other side</b> mirror the break to the opposite end of the bar or to its opposite long side. <b>Open a central patio</b> cuts a courtyard out of the middle; its corner point opens it wider or deeper, always leaving 2 m of building round it and 2 m clear of any recess. Every wall of the outline — a wing’s, a recess’s, a patio’s — takes the window its orientation has on Windows &amp; Shading, so a break redistributes the glass instead of hiding it. A worked plan changes what the badges read. <b>Own shade · winter %</b> is the share of the 21 December sun on the walls that the building takes off itself — every wall sampled every 0.75 m at three heights, the sun every half hour, each sample weighed by how squarely the sun meets it, and counted lost when the ray back to the sun meets any part of the plan (eaves height; pitched roofs shade a little more). The same test on 21 June gives the summer shade in the reading under the model: a break or a patio that shades east and west walls in summer earns it, one that shades the main facade in winter costs it. <b>Form factor</b> is taken from the whole volume — every wall up to the roof’s own profile along it, every roof plane at the pitch set on Roof, the ground floor — so a break or a patio almost always raises it: more envelope for the same volume. The Olgyay fit still reads the bar’s length, depth and turn. Roof, Windows &amp; Shading and Ventilation all work on this volume as drawn, and the CAD export writes it; Ventilation also reads the form for air — how much of the floor it can cross-ventilate, how much of its glass it turns to the winter wind.'));
+    'Break the volume with the tools left of the model. <b>L</b> works one end of the bar, <b>T</b> its middle, <b>U</b> both ends of one long side, <b>H</b> both ends on both long sides. <b>Extend</b> adds the wing out past the bar; <b>Carve</b> cuts into it, so the bar itself becomes the letter: the L’s leg sinks into the bar as a notch at its corner, the U’s court is cut in between its legs, the T and the H cut what lies beside their wings. The break’s black point is one continuous reach: drag it outward and the wing grows, back to the facade and the plain bar returns, further in and the recess deepens — it never jumps to the other side. The U has three points: each leg’s inner corner sets that leg’s width and its own reach — out past the bar, or cut back into it, so one leg can be longer than the other — and the point in the middle of the court sets how deep the court goes into the bar; a leg never reaches behind the court’s floor. <b>⇆ Other end</b> and <b>⇅ Other side</b> mirror the break to the opposite end of the bar or to its opposite long side. <b>Open a central patio</b> cuts a courtyard out of the middle; its corner point opens it wider or deeper, always leaving 2 m of building round it and 2 m clear of any recess. Every wall of the outline — a wing’s, a recess’s, a patio’s — takes the window its orientation has on Openings and Shadowing, so a break redistributes the glass instead of hiding it. A worked plan changes what the badges read. <b>Own shade · winter %</b> is the share of the 21 December sun on the walls that the building takes off itself — every wall sampled every 0.75 m at three heights, the sun every half hour, each sample weighed by how squarely the sun meets it, and counted lost when the ray back to the sun meets any part of the plan (eaves height; pitched roofs shade a little more). The same test on 21 June gives the summer shade in the reading under the model: a break or a patio that shades east and west walls in summer earns it, one that shades the main facade in winter costs it. <b>Form factor</b> is taken from the whole volume — every wall up to the roof’s own profile along it, every roof plane at the pitch set on Roof, the ground floor — so a break or a patio almost always raises it: more envelope for the same volume. The Olgyay fit still reads the bar’s length, depth and turn. Roof, Openings and Shadowing and Ventilation all work on this volume as drawn, and the CAD export writes it; Ventilation also reads the form for air — how much of the floor it can cross-ventilate, how much of its glass it turns to the winter wind.'));
   host.appendChild(hint('site-balc',
-    '<b>Balconies</b>, up to six, each on a wall of the outline. <b>Projecting</b>: a slab at the floor of its storey with a 1.0 m parapet round its free edges — from the first floor up, since on the ground floor it would be a terrace; to the storey below it is an overhang, and Windows &amp; Shading counts it as one over the windows it spans. <b>Recessed</b>: a loggia, the storey’s box cut back from the wall — on the ground floor, a porch. Its window moves to its back wall, and its ceiling and sides shade it: Windows &amp; Shading counts an overhang at the ceiling and a fin at each closed side. The volume changes too: a loggia leaves the heated volume, and its sides, ceiling and floor become envelope where the building continues past them, so the <b>Form factor</b> rises; a projecting balcony leaves both untouched, though its slab is a thermal bridge the form factor does not see. On the model, a balcony’s <b>round point</b> slides it along the wall nearest the pointer — past a corner it moves to the next wall, and near either end it snaps flush into the corner — and its <b>square point</b> sets its width along the wall and its depth off it. In a corner the wall turns away from, a projecting balcony wraps it as an L, as deep on both faces, and a loggia opens onto both. The rail sets the same: projecting or recessed, one floor or all of them, the wall it faces, a side or either corner, width and depth. A loggia keeps at least 1.5 m of building behind it; a projecting balcony keeps 0.3 m clear of any wall it faces. Every 3D view draws them, and the CAD export writes them — slabs, parapets, and each loggia cut into walls, floor and roof.'));
+    '<b>Balconies</b>, up to six, each on a wall of the outline. <b>Projecting</b>: a slab at the floor of its storey with a 1.0 m parapet round its free edges — from the first floor up, since on the ground floor it would be a terrace; to the storey below it is an overhang, and Openings and Shadowing counts it as one over the windows it spans. <b>Recessed</b>: a loggia, the storey’s box cut back from the wall — on the ground floor, a porch. Its window moves to its back wall, and its ceiling and sides shade it: Openings and Shadowing counts an overhang at the ceiling and a fin at each closed side. The volume changes too: a loggia leaves the heated volume, and its sides, ceiling and floor become envelope where the building continues past them, so the <b>Form factor</b> rises; a projecting balcony leaves both untouched, though its slab is a thermal bridge the form factor does not see. On the model, a balcony’s <b>round point</b> slides it along the wall nearest the pointer — past a corner it moves to the next wall, and near either end it snaps flush into the corner — and its <b>square point</b> sets its width along the wall and its depth off it. In a corner the wall turns away from, a projecting balcony wraps it as an L, as deep on both faces, and a loggia opens onto both. The rail sets the same: projecting or recessed, one floor or all of them, the wall it faces, a side or either corner, width and depth. A loggia keeps at least 1.5 m of building behind it; a projecting balcony keeps 0.3 m clear of any wall it faces. Every 3D view draws them, and the CAD export writes them — slabs, parapets, and each loggia cut into walls, floor and roof.'));
   host.appendChild(hint('ori-score',
     'The badge is a didactic index, not an energy prediction: 60 % orientation — full marks on the green normal, zero at 90° off — plus 40 % form — closeness to the 1:X elongation, discounted for square, diagonal and north–south plans. Where the climate asks for a number of storeys (Csa: one; Csb: two) the weights become 50 % orientation, 30 % form and 20 % storeys — full marks on the number asked, 60 above it, none below — so the wrong number cannot reach 100. Two plans can share a score and behave differently; read it with the pills.'));
   host.appendChild(hint('ori-height',
@@ -6565,7 +6622,7 @@ function buildSite(host) {
     'In <b>%1</b> the optimum stands on two storeys, on a squarer plan than the south’s. The compactness a heating-led climate asks for is found in section as well as in plan — the same floor area on two storeys stands on half the footprint, with half the roof and half the ground floor to lose heat through, against more wall: for the 96 m² starting bar, 15 to 20 % less envelope per square metre of floor (3.9 to 3.1 m²/m² under a 41° pitched roof, 3.3 to 2.8 under a flat one). The <b>Form factor</b> divides by volume and counts a pitched roof’s attic as heated, so under a steep roof it can hide that gain; the CSV gives the envelope per floor area. <b>Snap to the optimum for Portugal</b> keeps your floor area and re-cuts it onto two storeys; the green volume shows the optimum at that height. A third storey adds stairs, catches more wind and throws a longer winter shadow on its neighbours, so it earns less than two.',
     [K.code]));
   host.appendChild(hint('site-windows',
-    'The windows on the model are the ones sized on <b>Windows &amp; Shading</b> — the same width, sill and head, each set by its facade’s window-to-wall ratio — so turning the plan here turns them with it. Each blue tag names the way that window really faces once the plan is turned, then its width × height and the facade’s WWR; on Windows &amp; Shading the facades keep the names they have with the main facade to the south. The rule to read them by: <b>the larger the window, the more it should face south; the smaller, the more it faces north</b> (north and south swap below the equator). South glass collects the low winter sun and is the easiest to shade from the high summer sun; north glass gives even, diffuse light but gains almost no winter sun while it loses heat (Lechner; Gonçalves &amp; Graça). <b>Window fit</b> reads it: every window counts as an arrow out of its facade, as long as the glass its WWR asks for, and the fit is 100 when their sum points due south, 50 east or west, 0 north. The sizes change on Windows &amp; Shading; the plan’s turn, here, decides where they look. Windows &amp; Shading draws each window as one strip on the ground floor, no wider than 92 % of its wall — on two or three floors the strips can reach that limit and look alike while their WWR, and the fit, still differ. On a broken plan every wall at least 1.5 m long carries its orientation’s window, sized from its own area, and the tag counts the windows facing that way with their widths; <b>Window fit</b> then adds all the glass of each orientation.'));
+    'The windows on the model are the ones sized on <b>Openings and Shadowing</b> — the same width, sill and head, each set by its facade’s window-to-wall ratio — so turning the plan here turns them with it. Each blue tag names the way that window really faces once the plan is turned, then its width × height and the facade’s WWR; on Openings and Shadowing the facades keep the names they have with the main facade to the south. The rule to read them by: <b>the larger the window, the more it should face south; the smaller, the more it faces north</b> (north and south swap below the equator). South glass collects the low winter sun and is the easiest to shade from the high summer sun; north glass gives even, diffuse light but gains almost no winter sun while it loses heat (Lechner; Gonçalves &amp; Graça). <b>Window fit</b> reads it: every window counts as an arrow out of its facade, as long as the glass its WWR asks for, and the fit is 100 when their sum points due south, 50 east or west, 0 north. The sizes change on Openings and Shadowing; the plan’s turn, here, decides where they look. Openings and Shadowing draws each window as one strip on the ground floor, no wider than 92 % of its wall — on two or three floors the strips can reach that limit and look alike while their WWR, and the fit, still differ. On a broken plan every wall at least 1.5 m long carries its orientation’s window, sized from its own area, and the tag counts the windows facing that way with their widths; <b>Window fit</b> then adds all the glass of each orientation.'));
   host.appendChild(hint('ori-ff',
     'Form factor FF = exterior envelope ÷ heated volume, in m⁻¹ — walls to the eaves, gable triangles, roof planes and ground floor over the volume they enclose, one single zone, everything exterior. Lower is more compact: the round shepherd shelters of Monchique are the vernacular extreme (Gonçalves & Graça). It is the same ratio the REH calls <i>factor de forma</i>, stated here as pure geometry with no limits attached — Construction Advisor takes it from there. The badge paints it green at or below 0.7 (compact), amber to 1.1 (moderate) and red above (dispersed): didactic bands, not limits. It does not move the fit badge.'));
 
@@ -7636,7 +7693,7 @@ function buildOpenings(host) {
   const S = STATE.site, C = STATE.clim;
   const lat = S.lat, lon = S.lon, tz = lon / 15;
   const G = MASS, RF = ROOF;
-  pageHead(host, 'Windows & Shading',
+  pageHead(host, 'Openings and Shadowing',
     'Glazing, overhangs and fins for each facade, sized against the plan fixed on Site and the roof fixed on Roof — this tab cannot change either. Choosing a facade turns the model to face it, so you can drag its window directly; the compass shows which way is which.');
 
   const h0 = () => G.fl * G.fh;   // read live: the tab outlives changes made on Site
@@ -8477,7 +8534,7 @@ function buildVentilation(host) {
   const S = STATE.site, C = STATE.clim;
   const lat = S.lat, lon = S.lon;
   pageHead(host, 'Ventilation',
-    'One model from Site, Roof and Windows & Shading — volume, slopes, true openings and sunspace — with sun shadows and opposite-pair airflow. Altitude thins the air, the eave height drives the stack, terrain and exposure shape the wind.');
+    'One model from Site, Roof and Openings and Shadowing — volume, slopes, true openings and sunspace — with sun shadows and opposite-pair airflow. Altitude thins the air, the eave height drives the stack, terrain and exposure shape the wind.');
   /* ---- the workbench: on the left what the student puts on the ground —
      the tools, the planting, the walls — and the ground itself, its terrain
      and exposure; the model in the middle with the view bar over it; on the
@@ -9364,7 +9421,7 @@ function buildVentilation(host) {
   };
   const eaveWind = () => eaveFor(tunedWind().spd);
   /* ---- the plan's turn from Site. The scene is drawn in the plan's own
-     frame, as on Roof and Windows & Shading — the main facade toward the
+     frame, as on Roof and Openings and Shadowing — the main facade toward the
      lower right — and the planting and walls stand in that frame too; the
      wind and the sun are world directions, carried into it. ---- */
   const betaV = () => (G.rot - 180) * RAD;   // read live: the tab outlives changes made on Site
@@ -9889,7 +9946,7 @@ function buildVentilation(host) {
 
   /* ---- sun controls: day + solar hour drive shadows and sunlit facades ---- */
   host.appendChild(section('Sun for shadows',
-    'The same sun as Site and Windows & Shading. Summer noon shows what the shading must cut and what buoyancy can exhaust; winter shows what the sun still reaches.'));
+    'The same sun as Site and Openings and Shadowing. Summer noon shows what the shading must cut and what buoyancy can exhaust; winter shows what the sun still reaches.'));
   const SUN_DAYS = [{ doy:172, key:'21 Jun' }, { doy:79, key:'20 Mar' }, { doy:355, key:'21 Dec' }];
   const hFmtV = v => fmt(v, 2) + ' h';
   const cH = rangeCtl('Solar time', 0, 24, 0.25, 12, v => { SH.h = v; refresh(); }, hFmtV);
@@ -10475,7 +10532,7 @@ function buildVentilation(host) {
     });
 
     /* ---- the volume from Site under the roof from Roof, with the windows,
-       devices and sunspace from Windows & Shading: every face the camera
+       devices and sunspace from Openings and Shadowing: every face the camera
        sees, back to front; windows in the sun light up, windows on walls
        turned away draw dashed ---- */
     const wallSeen = n => n[0] * AX.c[0] + n[1] * AX.c[1] > 1e-6;
@@ -10616,7 +10673,7 @@ function buildVentilation(host) {
       g2.glass.forEach(gl => poly(gl, 'rgba(37,99,235,.04)', 'rgba(37,99,235,.5)', 1, [5, 4]));
     });
 
-    /* ---- attached sunspace from Windows & Shading (a vented buffer, not an opening) ---- */
+    /* ---- attached sunspace from Openings and Shadowing (a vented buffer, not an opening) ---- */
     if (SUNSP && SUNSP.on) {
       const sg = sunspaceWall(M.pl, SUNSP.face);
       if (sg) {
@@ -10993,7 +11050,7 @@ function buildVentilation(host) {
 
   ventPanel = makePanel(stage, {
     title: 'One model \u2014 site, roof, windows, sun and air',
-    note: 'Volume and eave height from Site, slopes from Roof, openings and sunspace from Windows & Shading, shadows from the same sun on the garden and the house, airflow from the opposite pairs \u2014 pick a tool on the left, click the ground to place; the selection and the view are on the right',
+    note: 'Volume and eave height from Site, slopes from Roof, openings and sunspace from Openings and Shadowing, shadows from the same sun on the garden and the house, airflow from the opposite pairs \u2014 pick a tool on the left, click the ground to place; the selection and the view are on the right',
     heightFn: w => phoneW(w) ? Math.round(w * 0.95 + 80) : Math.round(clamp(Math.min(w * 0.64, roomH() - 262), 340, 660)),
     render: renderVent,
     csv: ventCSV
@@ -11356,7 +11413,7 @@ function buildVentilation(host) {
   setDayV(SH.doy);
   refresh();
   /* Cross-tab liveness: tab sections build once and are only hidden
-     afterwards, so returning from Windows & Shading (or anywhere else)
+     afterwards, so returning from Openings and Shadowing (or anywhere else)
      would leave the score cards behind the current model. activate()
      re-runs this hook on every show. */
   host._refresh = () => { stickV(); refresh(); };
@@ -11370,7 +11427,7 @@ const TABS = [
   { key:'environment', label:'Environmental', build:buildEnvironment },
   { key:'site', label:'Site', build:buildSite },
   { key:'roof', label:'Roof', build:buildRoof },
-  { key:'openings', label:'Windows & Shading', build:buildOpenings },
+  { key:'openings', label:'Openings and Shadowing', build:buildOpenings },
   { key:'ventilation', label:'Ventilation', build:buildVentilation }
 ];
 
@@ -13869,9 +13926,9 @@ Object.assign(PT, {
   "per floor": "por piso",
   "Wind": "Vento",
   "Winter": "Inverno",
-  "One model from Site, Roof and Windows & Shading — volume, slopes, true openings and sunspace — with sun shadows and opposite-pair airflow. Altitude thins the air, the eave height drives the stack, terrain and exposure shape the wind.": "Um só modelo do Local, do Telhado e de Janelas e Sombreamento — volume, águas, vãos reais e estufa — com as sombras do sol e o escoamento entre pares opostos. A altitude rarefaz o ar, a altura do beirado move o efeito chaminé, o terreno e a exposição moldam o vento.",
+  "One model from Site, Roof and Openings and Shadowing — volume, slopes, true openings and sunspace — with sun shadows and opposite-pair airflow. Altitude thins the air, the eave height drives the stack, terrain and exposure shape the wind.": "Um só modelo do Local, do Telhado e de Aberturas e Sombreamento — volume, águas, vãos reais e estufa — com as sombras do sol e o escoamento entre pares opostos. A altitude rarefaz o ar, a altura do beirado move o efeito chaminé, o terreno e a exposição moldam o vento.",
   "Air thins with altitude, so the same wind pushes less; the eave height from Site drives the stack effect. Terrain and exposure modify the {} m reference wind.": "O ar rarefaz-se com a altitude, pelo que o mesmo vento empurra menos; a altura do beirado definida no Local move o efeito chaminé. O terreno e a exposição modificam o vento de referência a {} m.",
-  "The same sun as Site and Windows & Shading. Summer noon shows what the shading must cut and what buoyancy can exhaust; winter shows what the sun still reaches.": "O mesmo sol do Local e de Janelas e Sombreamento. O meio-dia de Verão mostra o que o sombreamento tem de cortar e o que a impulsão pode extrair; o Inverno mostra o que o sol ainda alcança.",
+  "The same sun as Site and Openings and Shadowing. Summer noon shows what the shading must cut and what buoyancy can exhaust; winter shows what the sun still reaches.": "O mesmo sol do Local e de Aberturas e Sombreamento. O meio-dia de Verão mostra o que o sombreamento tem de cortar e o que a impulsão pode extrair; o Inverno mostra o que o sol ainda alcança.",
   "Wind by month — direction and speed": "Vento por mês — direcção e velocidade",
   "Toggle any set of months: a cooling season to test ventilation, deep winter to test gust defense. Monthly winds arrive derived for the site and stay editable per month. The prevailing row below mirrors the set mean; the blue arrows draw it, and both scores average over the set.": "Active qualquer conjunto de meses: uma estação de arrefecimento para testar a ventilação, o pleno Inverno para testar a defesa contra as rajadas. Os ventos mensais chegam derivados para o local e ficam editáveis mês a mês. A linha dominante espelha a média do conjunto; as setas desenham-na, e ambas as avaliações fazem a média sobre o conjunto.",
   "Wind speed at {} m": "Velocidade do vento a {} m",
@@ -13880,7 +13937,7 @@ Object.assign(PT, {
   "Reset tune": "Repor o ajuste",
   "Arm a species, then click open ground around the building — not on it. Click a placed plant to tune its height and density, drag to move it, double-click to remove it. Tall trees shade summer glass; low native bushes shelter the wall base against the wind.": "Arme uma espécie e depois clique em terreno livre à volta do edifício — não sobre ele. Clique numa planta colocada para afinar a altura e a densidade, arraste-a para a mover, faça duplo clique para a remover. As árvores altas sombreiam o vidro de Verão; os arbustos nativos baixos abrigam do vento a base das paredes.",
   "One model — site, roof, windows, sun and air": "Um só modelo — local, telhado, janelas, sol e ar",
-  "Volume and eave height from Site, slopes from Roof, openings and sunspace from Windows & Shading, shadows from the same sun on the garden and the house, airflow from the opposite pairs — pick a tool on the left, click the ground to place; the selection and the view are on the right": "Volume e altura do beirado do Local, águas do Telhado, vãos e estufa de Janelas e Sombreamento, sombras do mesmo sol no jardim e na casa, escoamento dos pares opostos — escolha uma ferramenta à esquerda e clique no terreno para colocar; a selecção e a vista estão à direita",
+  "Volume and eave height from Site, slopes from Roof, openings and sunspace from Openings and Shadowing, shadows from the same sun on the garden and the house, airflow from the opposite pairs — pick a tool on the left, click the ground to place; the selection and the view are on the right": "Volume e altura do beirado do Local, águas do Telhado, vãos e estufa de Aberturas e Sombreamento, sombras do mesmo sol no jardim e na casa, escoamento dos pares opostos — escolha uma ferramenta à esquerda e clique no terreno para colocar; a selecção e a vista estão à direita",
   "’s prevailing wind": " — vento dominante",
   "eave wind": "vento no beirado",
   "wind": "vento",
@@ -14162,7 +14219,7 @@ Object.assign(PT, {
   "ridge": "cumeeira",
 
   /* windows & shading */
-  "Windows & Shading": "Janelas e Sombreamento",
+  "Openings and Shadowing": "Aberturas e Sombreamento",
   "Glazing, overhangs and fins for each facade, sized against the plan fixed on Site and the roof fixed on Roof — this tab cannot change either. Choosing a facade turns the model to face it, so you can drag its window directly; the compass shows which way is which.":
     "Envidraçados, palas e brises para cada fachada, dimensionados a partir da planta fixada em Local e do telhado fixado em Telhado — este separador não altera nenhum dos dois. Escolher uma fachada roda o modelo para a mostrar de frente, para poder arrastar a sua janela directamente; a bússola mostra que direcção é qual.",
   "South": "Sul", "North": "Norte", "East": "Este", "West": "Oeste",
@@ -14345,7 +14402,7 @@ Object.assign(PT, {
   "A plain bar casts no shade on itself — break the volume or open a patio": "Uma barra simples não se sombreia a si própria — quebre o volume ou abra um pátio",
   "No room for a patio: it needs 2 m of building round it and 2 m clear of any recess — widen or deepen the bar": "Sem espaço para um pátio: precisa de 2 m de edifício à volta e 2 m livres de qualquer recuo — alargue ou aprofunde a barra",
   "Drag the black points on the model: a corner stretches the bar, the break’s point sizes a wing or carves a recess (a U has one on each leg and one in the middle of its court), the patio’s point opens it wider or deeper, a balcony’s round point slides it along the walls and round the corners, its square point sizes it.": "Arraste os pontos pretos no modelo: um canto estica a barra, o ponto da quebra dimensiona uma ala ou escava um recuo (um U tem um em cada perna e um no meio do seu pátio), o ponto do pátio abre-o mais largo ou mais fundo, o ponto redondo de uma varanda desliza-a ao longo das paredes e à volta dos cantos, o seu ponto quadrado dimensiona-a.",
-  "Isometric view on a turning plate. Drag open ground to turn the plate — or, with the plate fixed, to turn the building on it; drag the plan to stretch it, the black knob to turn it, the black points to break it; drive the sun from the Sun controls. The windows are the ones sized on Windows & Shading, spread over every wall and every floor, and the roof is the one set on Roof.": "Vista isométrica sobre um prato que roda. Arraste o terreno livre para rodar o prato — ou, com o prato fixo, para rodar o edifício sobre ele; arraste a planta para a esticar, o botão preto para a rodar, os pontos pretos para a quebrar; conduza o sol pelos comandos do Sol. As janelas são as dimensionadas em Janelas e Sombreamento, distribuídas por todas as paredes e todos os pisos, e a cobertura é a definida em Telhado.",
+  "Isometric view on a turning plate. Drag open ground to turn the plate — or, with the plate fixed, to turn the building on it; drag the plan to stretch it, the black knob to turn it, the black points to break it; drive the sun from the Sun controls. The windows are the ones sized on Openings and Shadowing, spread over every wall and every floor, and the roof is the one set on Roof.": "Vista isométrica sobre um prato que roda. Arraste o terreno livre para rodar o prato — ou, com o prato fixo, para rodar o edifício sobre ele; arraste a planta para a esticar, o botão preto para a rodar, os pontos pretos para a quebrar; conduza o sol pelos comandos do Sol. As janelas são as dimensionadas em Aberturas e Sombreamento, distribuídas por todas as paredes e todos os pisos, e a cobertura é a definida em Telhado.",
   "Most glass faces": "Mais vidro virado a",
   "least faces": "menos virado a",
   "windows": "janelas",
@@ -14444,8 +14501,8 @@ Object.assign(PT, {
   "Trees and bushes against the wind and sun": "Árvores e arbustos contra o vento e o sol",
   "Detached walls": "Muros isolados",
   "Ventilation scores — winter defense, summer breeze": "Pontuações de ventilação — defesa de inverno, brisa de verão",
-  "Volume and eave height from Site, slopes from Roof, openings and sunspace from Windows & Shading, shadows from the same sun, airflow from the opposite pairs \u2014 pick a tool on the left, click the ground to place; the selection and the view are on the right":
-    "Volume e altura do beirado do Local, vertentes da Cobertura, vãos e estufa de Janelas e Sombreamento, sombras do mesmo sol no jardim e na casa, escoamento pelos pares opostos \u2014 escolha uma ferramenta à esquerda, clique no terreno para colocar; a selecção e a vista estão à direita",
+  "Volume and eave height from Site, slopes from Roof, openings and sunspace from Openings and Shadowing, shadows from the same sun, airflow from the opposite pairs \u2014 pick a tool on the left, click the ground to place; the selection and the view are on the right":
+    "Volume e altura do beirado do Local, vertentes da Cobertura, vãos e estufa de Aberturas e Sombreamento, sombras do mesmo sol no jardim e na casa, escoamento pelos pares opostos \u2014 escolha uma ferramenta à esquerda, clique no terreno para colocar; a selecção e a vista estão à direita",
   /* planting on Ventilation: the regional palette and its species */
   "Native planting for": "Plantação autóctone para",
   "sources for this region only": "fontes apenas desta região",
@@ -14483,7 +14540,7 @@ Object.assign(PT, {
   "Window fit": "Ajuste vãos",
   "Larger windows face south, smaller ones north": "Janelas maiores a sul, menores a norte",
   "Larger windows face north, smaller ones south": "Janelas maiores a norte, menores a sul",
-  "No windows yet — size them on Windows & Shading": "Ainda sem janelas — dimensione-as em Janelas e Sombreamento",
+  "No windows yet — size them on Openings and Shadowing": "Ainda sem janelas — dimensione-as em Aberturas e Sombreamento",
   "Largest window faces": "Maior janela virada a",
   "smallest faces": "menor virada a",
   "the right way round": "no sentido certo",
@@ -14498,7 +14555,7 @@ Object.assign(PT, {
 /* --- the long captions, keyed by identifier ----------------------------- */
 Object.assign(PT_HINT, {
   'site-balc':
-    '<b>Varandas</b>, até seis, cada uma numa parede do contorno. <b>Saliente</b>: uma laje ao nível do pavimento do seu piso, com uma guarda de 1,0 m à volta das arestas livres — a partir do primeiro andar, porque no rés-do-chão seria um terraço; para o piso de baixo é uma pala, e Janelas e Sombreamento conta-a como tal sobre as janelas que cobre. <b>Reentrante</b>: uma loggia, o volume do piso recuado a partir da parede — no rés-do-chão, um alpendre. A sua janela passa para a parede do fundo, e o tecto e os lados sombreiam-na: Janelas e Sombreamento conta uma pala ao nível do tecto e uma aleta em cada lado fechado. O volume também muda: uma loggia sai do volume aquecido, e os seus lados, tecto e pavimento passam a envolvente onde o edifício continua para lá deles, pelo que o <b>Factor de forma</b> sobe; uma varanda saliente não altera nenhum dos dois, embora a sua laje seja uma ponte térmica que o factor de forma não vê. No modelo, o <b>ponto redondo</b> de uma varanda desliza-a ao longo da parede mais próxima do ponteiro — passado um canto, muda para a parede seguinte, e perto de qualquer dos topos encosta-se ao canto — e o seu <b>ponto quadrado</b> define a largura ao longo da parede e a profundidade para fora dela. Num canto de onde a parede se afasta, uma varanda saliente dobra-o em L, com a mesma profundidade nas duas fachadas, e uma loggia abre-se para ambas. A coluna da esquerda define o mesmo: saliente ou reentrante, um piso ou todos, a parede para onde está virada, um lado ou qualquer dos cantos, largura e profundidade. Uma loggia mantém pelo menos 1,5 m de edifício atrás de si; uma varanda saliente fica a 0,3 m de qualquer parede que tenha em frente. Todas as vistas 3D as desenham, e a exportação CAD escreve-as — lajes, guardas, e cada loggia recortada nas paredes, no pavimento e na cobertura.',
+    '<b>Varandas</b>, até seis, cada uma numa parede do contorno. <b>Saliente</b>: uma laje ao nível do pavimento do seu piso, com uma guarda de 1,0 m à volta das arestas livres — a partir do primeiro andar, porque no rés-do-chão seria um terraço; para o piso de baixo é uma pala, e Aberturas e Sombreamento conta-a como tal sobre as janelas que cobre. <b>Reentrante</b>: uma loggia, o volume do piso recuado a partir da parede — no rés-do-chão, um alpendre. A sua janela passa para a parede do fundo, e o tecto e os lados sombreiam-na: Aberturas e Sombreamento conta uma pala ao nível do tecto e uma aleta em cada lado fechado. O volume também muda: uma loggia sai do volume aquecido, e os seus lados, tecto e pavimento passam a envolvente onde o edifício continua para lá deles, pelo que o <b>Factor de forma</b> sobe; uma varanda saliente não altera nenhum dos dois, embora a sua laje seja uma ponte térmica que o factor de forma não vê. No modelo, o <b>ponto redondo</b> de uma varanda desliza-a ao longo da parede mais próxima do ponteiro — passado um canto, muda para a parede seguinte, e perto de qualquer dos topos encosta-se ao canto — e o seu <b>ponto quadrado</b> define a largura ao longo da parede e a profundidade para fora dela. Num canto de onde a parede se afasta, uma varanda saliente dobra-o em L, com a mesma profundidade nas duas fachadas, e uma loggia abre-se para ambas. A coluna da esquerda define o mesmo: saliente ou reentrante, um piso ou todos, a parede para onde está virada, um lado ou qualquer dos cantos, largura e profundidade. Uma loggia mantém pelo menos 1,5 m de edifício atrás de si; uma varanda saliente fica a 0,3 m de qualquer parede que tenha em frente. Todas as vistas 3D as desenham, e a exportação CAD escreve-as — lajes, guardas, e cada loggia recortada nas paredes, no pavimento e na cobertura.',
   'sce-src':
     'A zona é a do Manual SCE (Despacho n.º 6476-H/2021, §5.3): a região a partir do concelho (Anexo II), os seus valores de referência (Tabelas 9 e 10) corrigidos para a altitude que indicou (Eq. 2), e os limiares das Tabelas 7 e 8. O regulamento não lê nem a estação nem as coordenadas — corrija a altitude para a do edifício, e veja na escala quão perto de uma fronteira ele fica. As intenções e os sistemas passivos são de Gonçalves e Mariz Graça (2004), cujos nomes de zona o regulamento manteve enquanto os limiares por detrás deles mudaram; o entorno leva as mesmas intenções para o lote. Nada disto é uma exigência: os limites estão na Portaria n.º 138-I/2021, e o Construction Advisor dá-os.',
   'roof-solar':
@@ -14508,11 +14565,11 @@ Object.assign(PT_HINT, {
   'vent-scores':
     'O compromisso de Olgyay (1963): manter fora o vento de inverno, deixar passar a brisa de verão — duas classificações em metros por segundo. <b>Inverno</b> lê o vento de Dezembro a Fevereiro (média vectorial dos meses, com o ajuste local), levado à altura do beirado sobre este terreno e exposição, e segue-o até cada parede voltada para ele: em cada ponto dessas paredes é cortado pelo melhor abrigo a montante — uma árvore, uma sebe ou um muro cuja copa ou comprimento atravesse a linha de volta ao vento corta-o mais dentro de 5 das suas alturas e cada vez menos até 20 alturas (12 para um muro cheio, de sotavento mais fundo mas mais curto), segundo os estudos de quebra-ventos de Heisler &amp; DeWalle (1988); folhagem densa corta mais do que folhagem aberta, um muro cheio até 80 %; o sotavento do próprio edifício corta 70 %. A caixa é o vento que resta nas paredes a barlavento: construa obstáculos a montante e ele desce, e o ar contorna a casa. <b>Verão</b> lê o vento de Junho a Agosto impelido através de cada par de lados opostos: Q = C<sub>d</sub> · A · U · √ΔC<sub>p</sub>, com C<sub>d</sub> 0,61, A as áreas que abrem dos dois lados em série (metade de cada área envidraçada), U o vento ao beirado e ΔC<sub>p</sub> 0,9 com o vento ao longo do par, menos à medida que roda para o atravessar. Plantação ou um muro <i>à frente</i> das janelas de entrada bloqueia o escoamento; <i>ao lado</i> do percurso, a menos de 3 m dele, afunila o ar para as aberturas, até +40 % — plante e construa dos lados e mantenha o percurso livre. A caixa é a velocidade do ar que entra pelas janelas de entrada — o caudal sobre a sua área que abre: sobe quando o jardim afunila, e é máxima quando a entrada é menor do que a saída (Givoni); a leitura acrescenta as renovações de ar por hora que o caudal dá à casa. As faixas — um corte de 50 % ou mais lê-se abrigado, 25 % ou menos exposto; 1,0 m/s ou mais nas entradas lê-se como brisa através da casa, abaixo de 0,5 m/s como ar parado — são cortes didácticos desta aplicação. Uma primeira passagem de projecto, não um estudo de vento.',
   'site-form':
-    'Quebre o volume com as ferramentas à esquerda do modelo. O <b>L</b> trabalha uma ponta da barra, o <b>T</b> o meio, o <b>U</b> as duas pontas de um lado comprido, o <b>H</b> as duas pontas dos dois lados compridos. <b>Estender</b> acrescenta a ala para fora da barra; <b>Escavar</b> recorta dentro dela, pelo que é a própria barra que se torna a letra: a perna do L afunda-se na barra como um recorte no seu canto, o pátio do U abre-se entre as suas pernas, o T e o H recortam o que fica ao lado das alas. O ponto preto da quebra é um alcance contínuo: arrastado para fora a ala cresce, de volta à fachada regressa a barra simples, mais para dentro o recuo aprofunda-se — nunca salta para o outro lado. O U tem três pontos: o canto interior de cada perna dá a largura dessa perna e o seu próprio alcance — para fora da barra, ou recuado para dentro dela, pelo que uma perna pode ser mais comprida do que a outra — e o ponto no meio do pátio dá a profundidade a que o pátio entra na barra; uma perna nunca recua para trás do fundo do pátio. <b>⇆ Outra ponta</b> e <b>⇅ Outro lado</b> espelham a quebra para a ponta oposta da barra ou para o seu lado comprido oposto. <b>Abrir um pátio central</b> recorta um pátio no meio; o ponto do seu canto abre-o mais largo ou mais fundo, deixando sempre 2 m de edifício à volta e 2 m livres de qualquer recuo. Todas as paredes do contorno — de uma ala, de um recuo, de um pátio — recebem a janela que a sua orientação tem em Janelas e Sombreamento, pelo que uma quebra redistribui o vidro em vez de o esconder. Uma planta trabalhada muda o que as caixas lêem. <b>Sombra própria · inverno %</b> é a parte do sol de 21 de Dezembro nas paredes que o edifício retira a si próprio — cada parede amostrada a cada 0,75 m em três alturas, o sol a cada meia hora, cada amostra pesada por quão de frente o sol a atinge, e contada como perdida quando o raio de volta ao sol encontra alguma parte da planta (altura do beirado; coberturas inclinadas sombreiam um pouco mais). O mesmo teste a 21 de Junho dá a sombra de verão na leitura por baixo do modelo: uma quebra ou um pátio que sombreia paredes a nascente e a poente no verão ganha com isso, um que sombreia a fachada principal no inverno paga por isso. O <b>factor de forma</b> é tirado de todo o volume — cada parede até ao perfil da própria cobertura, cada plano de cobertura com a inclinação definida em Cobertura, o piso térreo — pelo que uma quebra ou um pátio quase sempre o aumenta: mais envolvente para o mesmo volume. O ajuste a Olgyay continua a ler o comprimento, a profundidade e a rotação da barra. Cobertura, Janelas e Sombreamento e Ventilação trabalham todos sobre este volume tal como está desenhado, e a exportação CAD escreve-o; a Ventilação lê também a forma para o ar — quanto do piso consegue ventilar em cruzado, quanto do seu vidro volta ao vento de inverno.',
+    'Quebre o volume com as ferramentas à esquerda do modelo. O <b>L</b> trabalha uma ponta da barra, o <b>T</b> o meio, o <b>U</b> as duas pontas de um lado comprido, o <b>H</b> as duas pontas dos dois lados compridos. <b>Estender</b> acrescenta a ala para fora da barra; <b>Escavar</b> recorta dentro dela, pelo que é a própria barra que se torna a letra: a perna do L afunda-se na barra como um recorte no seu canto, o pátio do U abre-se entre as suas pernas, o T e o H recortam o que fica ao lado das alas. O ponto preto da quebra é um alcance contínuo: arrastado para fora a ala cresce, de volta à fachada regressa a barra simples, mais para dentro o recuo aprofunda-se — nunca salta para o outro lado. O U tem três pontos: o canto interior de cada perna dá a largura dessa perna e o seu próprio alcance — para fora da barra, ou recuado para dentro dela, pelo que uma perna pode ser mais comprida do que a outra — e o ponto no meio do pátio dá a profundidade a que o pátio entra na barra; uma perna nunca recua para trás do fundo do pátio. <b>⇆ Outra ponta</b> e <b>⇅ Outro lado</b> espelham a quebra para a ponta oposta da barra ou para o seu lado comprido oposto. <b>Abrir um pátio central</b> recorta um pátio no meio; o ponto do seu canto abre-o mais largo ou mais fundo, deixando sempre 2 m de edifício à volta e 2 m livres de qualquer recuo. Todas as paredes do contorno — de uma ala, de um recuo, de um pátio — recebem a janela que a sua orientação tem em Aberturas e Sombreamento, pelo que uma quebra redistribui o vidro em vez de o esconder. Uma planta trabalhada muda o que as caixas lêem. <b>Sombra própria · inverno %</b> é a parte do sol de 21 de Dezembro nas paredes que o edifício retira a si próprio — cada parede amostrada a cada 0,75 m em três alturas, o sol a cada meia hora, cada amostra pesada por quão de frente o sol a atinge, e contada como perdida quando o raio de volta ao sol encontra alguma parte da planta (altura do beirado; coberturas inclinadas sombreiam um pouco mais). O mesmo teste a 21 de Junho dá a sombra de verão na leitura por baixo do modelo: uma quebra ou um pátio que sombreia paredes a nascente e a poente no verão ganha com isso, um que sombreia a fachada principal no inverno paga por isso. O <b>factor de forma</b> é tirado de todo o volume — cada parede até ao perfil da própria cobertura, cada plano de cobertura com a inclinação definida em Cobertura, o piso térreo — pelo que uma quebra ou um pátio quase sempre o aumenta: mais envolvente para o mesmo volume. O ajuste a Olgyay continua a ler o comprimento, a profundidade e a rotação da barra. Cobertura, Aberturas e Sombreamento e Ventilação trabalham todos sobre este volume tal como está desenhado, e a exportação CAD escreve-o; a Ventilação lê também a forma para o ar — quanto do piso consegue ventilar em cruzado, quanto do seu vidro volta ao vento de inverno.',
   'roof-albedo':
     'A cor da cobertura decide quanto do sol a cobertura absorve. Segue as mesmas três classes de cor das paredes no separador Local — clara α 0,4, média 0,5, escura 0,8 (RCCTE, Quadro V.5, retomado no REH pelo Despacho n.º 15793-K/2013) — e o albedo indicado é a parte reflectida, 1 − α. De toda a envolvente, a cobertura é a que recebe mais de frente o sol alto de Verão, pelo que a sua cor pesa na estação de arrefecimento pelo menos tanto como a das paredes; superfícies claras são o conselho corrente para climas quentes (Lechner; Gonçalves &amp; Graça). O <b>Ajuste albedo</b> lê-a exactamente como as paredes, contra o verão deste local — de Junho a Setembro a média é <b>%1 °C</b>, um verão <b>%2</b> — sem peso a 17 °C ou menos e com peso total a 23 °C ou mais; a caixa de baixo dá o próprio albedo. Esta aplicação lê uma telha cerâmica pelo seu tom: uma telha pálida ou envelhecida como vermelho-claro, uma telha carregada como vermelho-escuro. A cobertura toma a cor em todas as vertentes, em todas as vistas 3D.',
   'site-windows':
-    'As janelas do modelo são as dimensionadas em <b>Janelas e Sombreamento</b> — a mesma largura, peitoril e padieira, cada uma dada pela razão vão/parede da sua fachada — pelo que rodar aqui a planta roda-as com ela. Cada etiqueta azul indica para onde essa janela fica realmente virada depois de rodada a planta, depois a largura × altura e a razão vão/parede da fachada; em Janelas e Sombreamento as fachadas mantêm os nomes que têm com a fachada principal a sul. A regra para as ler: <b>quanto maior a janela, mais deve estar virada a sul; quanto menor, mais fica virada a norte</b> (norte e sul trocam abaixo do equador). O vidro a sul recolhe o sol baixo de Inverno e é o mais fácil de sombrear do sol alto de Verão; o vidro a norte dá luz difusa e uniforme, mas quase não recebe sol de Inverno enquanto perde calor (Lechner; Gonçalves &amp; Graça). O <b>Ajuste vãos</b> lê-a: cada janela conta como uma seta que sai da sua fachada, tão longa quanto o vidro que a sua razão vão/parede pede, e o ajuste é 100 quando a soma aponta a sul, 50 a nascente ou poente, 0 a norte. As dimensões mudam-se em Janelas e Sombreamento; a rotação da planta, aqui, decide para onde olham. Janelas e Sombreamento desenha cada janela como uma faixa única no piso térreo, com no máximo 92 % da parede — com dois ou três pisos as faixas podem atingir esse limite e parecer iguais, embora a razão vão/parede, e o ajuste, continuem diferentes. Numa planta quebrada cada parede com pelo menos 1,5 m recebe a janela da sua orientação, dimensionada pela sua própria área, e a etiqueta conta as janelas viradas para esse lado com as suas larguras; o <b>Ajuste vãos</b> soma então todo o vidro de cada orientação.',
+    'As janelas do modelo são as dimensionadas em <b>Aberturas e Sombreamento</b> — a mesma largura, peitoril e padieira, cada uma dada pela razão vão/parede da sua fachada — pelo que rodar aqui a planta roda-as com ela. Cada etiqueta azul indica para onde essa janela fica realmente virada depois de rodada a planta, depois a largura × altura e a razão vão/parede da fachada; em Aberturas e Sombreamento as fachadas mantêm os nomes que têm com a fachada principal a sul. A regra para as ler: <b>quanto maior a janela, mais deve estar virada a sul; quanto menor, mais fica virada a norte</b> (norte e sul trocam abaixo do equador). O vidro a sul recolhe o sol baixo de Inverno e é o mais fácil de sombrear do sol alto de Verão; o vidro a norte dá luz difusa e uniforme, mas quase não recebe sol de Inverno enquanto perde calor (Lechner; Gonçalves &amp; Graça). O <b>Ajuste vãos</b> lê-a: cada janela conta como uma seta que sai da sua fachada, tão longa quanto o vidro que a sua razão vão/parede pede, e o ajuste é 100 quando a soma aponta a sul, 50 a nascente ou poente, 0 a norte. As dimensões mudam-se em Aberturas e Sombreamento; a rotação da planta, aqui, decide para onde olham. Aberturas e Sombreamento desenha cada janela como uma faixa única no piso térreo, com no máximo 92 % da parede — com dois ou três pisos as faixas podem atingir esse limite e parecer iguais, embora a razão vão/parede, e o ajuste, continuem diferentes. Numa planta quebrada cada parede com pelo menos 1,5 m recebe a janela da sua orientação, dimensionada pela sua própria área, e a etiqueta conta as janelas viradas para esse lado com as suas larguras; o <b>Ajuste vãos</b> soma então todo o vidro de cada orientação.',
   'clim-method':
     'A classificação é a de Köppen–Geiger tal como Peel, Finlayson e McMahon (2007) a enunciam — a formalização que escreve cada critério como uma desigualdade e não como uma descrição. Nada aqui foi consultado: o código <b>%1</b> foi calculado a partir das normais que introduziu, e o quadro acima mostra que grandeza decidiu cada letra. O semestre de Verão vai de Abril a Setembro no hemisfério norte e de Outubro a Março no sul, o que é uma convenção da classificação e não uma estação.',
   'clim-threshold':
@@ -14537,7 +14594,7 @@ Object.assign(PT_HINT, {
   'clim-normals':
     'Estes são os doze pares que introduziu, e são todo o conhecimento que esta aplicação tem do clima. Se a estação de onde vêm não for o local — uma estação costeira lida para um vale do interior, uma estação de baixa altitude lida para um local 400 m acima — então todas as páginas seguintes herdam essa diferença. Identifique a estação e o período no campo da página inicial e a exportação levá-los-á consigo, para que a leitura possa ser auditada mais tarde.',
   'env-snow':
-    'Como uma árvore de Inverno onde o Inverno é muito forte: onde neva, diga-se por palavras — esta página não desenha neve que o olhar pudesse perder. Os dias de neve contam aqui dias ERA5 com pelo menos 1 cm de neve fresca, 1991–2020, lidos nestas coordenadas exactas: reanálise provisória, como as normais da web na página inicial, não uma observação de estação — e a reanálise suaviza as montanhas, pelo que um local alto lê menos dias de neve do que a sua estação. Nas Manteigas, lá em cima na Serra da Estrela, são uns vinte e cinco dias por ano, de Dezembro a Abril; em Lisboa, cerca de zero. Onde a conta não for zero, leve-a para o projecto: a neve carrega a cobertura, acumula-se contra a platibanda, enterra os beirados e pode cortar a estrada — um local de clima frio merece inclinação, acessos desimpedidos e detalhe que sobreviva ao degelo.',
+    'Como uma árvore de Inverno onde o Inverno é muito forte: onde neva, diga-se por palavras — esta página não desenha neve que o olhar pudesse perder. Os dias de neve contam aqui dias ERA5 com pelo menos 0,5 cm de neve fresca, 1991–2020, lidos nestas coordenadas exactas: reanálise provisória, como as normais da web na página inicial, não uma observação de estação — e a reanálise suaviza as montanhas, pelo que um local alto lê menos dias de neve do que a sua estação. Nas Manteigas, lá em cima na Serra da Estrela, são uns vinte e cinco dias por ano, de Dezembro a Abril; em Lisboa, cerca de zero. Onde a conta não for zero, leve-a para o projecto: a neve carrega a cobertura, acumula-se contra a platibanda, enterra os beirados e pode cortar a estrada — um local de clima frio merece inclinação, acessos desimpedidos e detalhe que sobreviva ao degelo.',
   'env-weather':
     'O tempo sobre o modelo são as normais deste local lidas no dia escolhido: o valor de cada mês fica a meio do mês e os dias entre eles são interpolados. O sol cresce e aquece de cor com a temperatura média do ar, numa escala de 0 a 28 °C; as nuvens juntam-se com a precipitação, de nenhuma a 0 a um céu coberto a 150 mm por mês, e a chuva cai acima de 10 mm. Sob nuvens a sombra do edifício suaviza-se, porque mais luz é difusa, e a sombra de cada nuvem atravessa o terreno e o edifício por baixo dela. Arraste sobre o climograma para percorrer o ano; o modelo e o diagrama solar acompanham, e o lugar do dia no ano fica marcado no climograma. É uma leitura das normais, não um registo do céu: a precipitação faz as vezes da nebulosidade, que acompanha ao longo do ano português mas não em todo o lado — uma manhã de Verão na costa pode estar cinzenta de nevoeiro marítimo e continuar seca. O separador Telhado lê o sol realmente recebido, a partir da reanálise ERA5.',
   'env-map':
