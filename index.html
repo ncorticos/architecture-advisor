@@ -922,7 +922,7 @@ details.more[open] > summary{color:var(--ink)}
 /* ------------------------------------------------------------ 0. IDENTITY -- */
 const APP = {
   name:        'Architecture Advisor PT',
-  version:     '1.102.0',
+  version:     '1.103.0',
   author:      'Nuno Dinis Cortiços',
   institution: 'Lisbon School of Architecture, Universidade de Lisboa',
   builtWith:   'Claude Opus 5 (Anthropic)',
@@ -2314,7 +2314,10 @@ const SCE_SVG = (() => {
       + tower(27, 10, 19, 46, SCHIST) + slab(25, 14, 16.8, SCHIST) + pot(32, 10.5, 1.7),
     /* island basalt: a dark shaft with a washed crown, one pot */
     insular: () => g('<path d="M6 48L32 40L58 48"/>')
-      + tower(27, 10, 20, 46, BASALT) + tower(27, 10, 20, 27, WASH) + slab(25, 14, 17.8) + pot(32, 11.5, 1.7)
+      + tower(27, 10, 20, 46, BASALT) + tower(27, 10, 20, 27, WASH) + slab(25, 14, 17.8) + pot(32, 11.5, 1.7),
+    /* the plain pot every region also builds */
+    simple: () => g('<path d="M6 48L32 40L58 48"/>')
+      + tower(29, 6, 22, 46, WASH) + slab(27.5, 9, 19.8) + pot(32, 13.5, 1.7)
   };
   return { B, S, C, svg };
 })();
@@ -2337,24 +2340,27 @@ const CHIMNEY_FAM = {
   beira:     { name:'Beira schist', shaft:0.7, h:1.5, cap:0.12, pots:1,
     colours:['#8A7A63', '#C98A5E'] },
   insular:   { name:'Island basalt', shaft:0.6, h:1.5, cap:0.12, pots:1, band:true,
-    colours:['#4A4A4E', '#F4F1EA'] }
+    colours:['#4A4A4E', '#F4F1EA'] },
+  simple:    { name:'Simple pot', shaft:0.45, h:1.2, cap:0.15, pots:1,
+    colours:['#EFE9DC', '#C98A5E'] }
 };
 const CHIMNEY_NUT = {
-  'Algarve':['algarvia'],
-  'Alentejo Litoral':['alentejana'], 'Alentejo Central':['alentejana'],
-  'Baixo Alentejo':['alentejana'], 'Alto Alentejo':['alentejana'],
-  'Lezíria do Tejo':['alentejana'], 'Médio Tejo':['alentejana'], 'Oeste':['alentejana'],
-  'Grande Lisboa':['lisboeta'], 'Península de Setúbal':['lisboeta'],
-  'Minho-Lima':['nortenha'], 'Cávado':['nortenha'], 'Ave':['nortenha'],
-  'Grande Porto':['nortenha'], 'Tâmega':['nortenha'], 'Entre Douro e Vouga':['nortenha'],
-  'Douro':['nortenha'], 'Alto Trás-os-Montes':['nortenha'],
-  'Baixo Vouga':['beira'], 'Baixo Mondego':['beira'], 'Pinhal Litoral':['beira'],
-  'Pinhal Interior Norte':['beira'], 'Pinhal Interior Sul':['beira'], 'Dão-Lafões':['beira'],
-  'Serra da Estrela':['beira'], 'Beira Interior Norte':['beira'], 'Beira Interior Sul':['beira'],
-  'Cova da Beira':['beira'],
-  'RA da Madeira':['insular'], 'RA dos Açores':['insular']
+  'Algarve':['algarvia', 'simple'],
+  'Alentejo Litoral':['alentejana', 'simple'], 'Alentejo Central':['alentejana', 'simple'],
+  'Baixo Alentejo':['alentejana', 'simple'], 'Alto Alentejo':['alentejana', 'simple'],
+  'Lezíria do Tejo':['alentejana', 'simple'], 'Médio Tejo':['alentejana', 'simple'], 'Oeste':['alentejana', 'simple'],
+  'Grande Lisboa':['lisboeta', 'simple'], 'Península de Setúbal':['lisboeta', 'simple'],
+  'Minho-Lima':['nortenha', 'simple'], 'Cávado':['nortenha', 'simple'], 'Ave':['nortenha', 'simple'],
+  'Grande Porto':['nortenha', 'simple'], 'Tâmega':['nortenha', 'simple'], 'Entre Douro e Vouga':['nortenha', 'simple'],
+  'Douro':['nortenha', 'simple'], 'Alto Trás-os-Montes':['nortenha', 'simple'],
+  'Baixo Vouga':['beira', 'simple'], 'Baixo Mondego':['beira', 'simple'], 'Pinhal Litoral':['beira', 'simple'],
+  'Pinhal Interior Norte':['beira', 'simple'], 'Pinhal Interior Sul':['beira', 'simple'], 'Dão-Lafões':['beira', 'simple'],
+  'Serra da Estrela':['beira', 'simple'], 'Beira Interior Norte':['beira', 'simple'], 'Beira Interior Sul':['beira', 'simple'],
+  'Cova da Beira':['beira', 'simple'],
+  'RA da Madeira':['insular', 'simple'], 'RA dos Açores':['insular', 'simple']
 };
 const chimneyOf = nuts => (CHIMNEY_NUT[nuts] && CHIMNEY_NUT[nuts][0]) || 'alentejana';
+const chimneyList = nuts => { const l = CHIMNEY_NUT[nuts] || ['alentejana']; return l.indexOf('simple') >= 0 ? l.slice() : l.concat(['simple']); };
 /** Names and sentences for the chimney figures, in the strategy icons' own
     shape, so sceFig draws them unchanged. */
 Object.assign(SCE_ICON, {
@@ -2363,7 +2369,8 @@ Object.assign(SCE_ICON, {
   lisboeta:  ['Lisbon brick', 'A corbelled head with two clay pots — the Lisbon chimney.'],
   nortenha:  ['Northern granite', 'A heavy mass with open flues under one great slab — the northern chimney.'],
   beira:     ['Beira schist', 'A stone shaft with a slab cap and one pot — the Beira chimney.'],
-  insular:   ['Island basalt', 'A dark shaft with a washed crown and one pot — the island chimney.']
+  insular:   ['Island basalt', 'A dark shaft with a washed crown and one pot — the island chimney.'],
+  simple:    ['Simple pot', 'A plain washed stack with one pot — every region builds one.']
 });
 
 /** A flat colour shaded by the face's own normal, south-west light — so a
@@ -2378,12 +2385,13 @@ const shadeFill = (hex, n) => {
   return 'rgb(' + c[0] + ',' + c[1] + ',' + c[2] + ')';
 };
 /** Crown height above the roof surface, one rule for geometry and handles. */
-const chimTopH = F => F.h + (F.cap || 0.15) + (F.pots > 0 ? 0.5 : 0.02);
+const chimTopH = (F, h) => (h === undefined ? F.h : h) + (F.cap || 0.15) + (F.pots > 0 ? 0.5 : 0.02);
 /** Triangles [{pts:[3], fill, n}] for a chimney of the region's family,
     standing on the roof surface at (x, y, z0): plinth, shaft, cap, pots or
     open flues, the Algarve's openwork crown. Small enough to paint anywhere. */
-function chimneyFaces(famKey, x, y, z0) {
-  const F = CHIMNEY_FAM[famKey] || CHIMNEY_FAM.alentejana;
+function chimneyFaces(famKey, x, y, z0, hEff) {
+  const F0 = CHIMNEY_FAM[famKey] || CHIMNEY_FAM.alentejana;
+  const F = Object.assign({}, F0, { h:(hEff === undefined ? F0.h : hEff) });
   const out = [];
   const tri = (a, b, c, fill) => {
     const ux = [b[0] - a[0], b[1] - a[1], b[2] - a[2]], vx = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
@@ -2450,6 +2458,26 @@ function parapetFaces(M, h) {
     }
   });
   return out;
+}
+/** The chimney's height above its own roof surface: the student's slider,
+    or the family's own measure. */
+function chimEffH(ch) {
+  const F = CHIMNEY_FAM[ch.fam] || CHIMNEY_FAM.alentejana;
+  return isFinite(+ch.h) ? clamp(+ch.h, 0.3, 3) : F.h;
+}
+/** The rule it is judged by: half a metre clear of the ridge on a pitched
+    roof, a metre clear of a flat one. */
+function chimRule(M) {
+  const pitched = M.ridge > M.H0 + 0.2;
+  return pitched ? { ref:M.ridge, need:0.5 } : { ref:M.H0, need:1.0 };
+}
+/** Draw performance 0–100: how far the crown clears what the rule asks. */
+function chimScore(M, ch) {
+  if (!ch || !ch.on) return null;
+  const z = M.zAt(+ch.x, +ch.y);
+  if (z === null) return 0;
+  const r = chimRule(M);
+  return clamp((z + chimEffH(ch) - r.ref) / r.need, 0, 1) * 100;
 }
 /** Where the chimney first stands: the highest roof surface near the
     plan's middle, so it starts on a ridge, not in a valley. */
@@ -3660,7 +3688,7 @@ function glassSpans(f, u0, u1) {
   let u = u0;
   us.forEach((w, i) => {
     const b = i === us.length - 1 ? u1 : u0 + (u1 - u0) * us.slice(0, i + 1).reduce((a, q) => a + q.frac, 0);
-    out.push({ a:u, b, on:w.on });
+    out.push({ a:u, b, on:w.on, ui:i });
     u = b;
   });
   return out;
@@ -3868,7 +3896,7 @@ function pushChimPar(arr, M, map) {
   const ch = ROOF.chim;
   if (ch && ch.on && isFinite(+ch.x) && isFinite(+ch.y) && M.pl.inside(+ch.x, +ch.y)) {
     const z = M.zAt(+ch.x, +ch.y);
-    if (z !== null) chimneyFaces(ch.fam, +ch.x, +ch.y, z).forEach(f => arr.push({ pts:map ? f.pts.map(map) : f.pts, fill:f.fill, chim:1 }));
+    if (z !== null) chimneyFaces(ch.fam, +ch.x, +ch.y, z, chimEffH(ch)).forEach(f => arr.push({ pts:map ? f.pts.map(map) : f.pts, fill:f.fill, chim:1 }));
   }
 }
 
@@ -7075,12 +7103,32 @@ function buildRoof(host) {
         } }));
       return;
     }
+    const styles = chimneyList(STATE.site.nuts);
+    if (styles.length > 1) {
+      const row = el('div', { class:'srcrow' });
+      styles.forEach(k => {
+        const b = el('button', { class:'btn small' + (k === fam ? ' solid' : ''), type:'button', text:t(CHIMNEY_FAM[k].name),
+          title:t(CHIMNEY_FAM[k].name), onclick:() => { RF.chim.fam = k; buildChimUI(); roofDraw(); } });
+        b.setAttribute('aria-pressed', String(k === fam));
+        row.appendChild(b);
+      });
+      chimBox.appendChild(row);
+    }
     const fig = el('div', { class:'sce-ics' });
     fig.innerHTML = sceFig(fam, 'C');
     chimBox.appendChild(fig);
     const note = el('p', { class:'hint' });
     note.textContent = t(CHIMNEY_FAM[fam].name) + ' · ' + STATE.site.nuts;
     chimBox.appendChild(note);
+    const F = CHIMNEY_FAM[fam] || CHIMNEY_FAM.alentejana;
+    const cH = rangeCtl('Height above roof', 0.3, 3.0, 0.05, isFinite(+ch.h) ? +ch.h : F.h,
+      v => { RF.chim.h = +v.toFixed(2); roofDraw(); }, v => fmt(v, 2) + ' m');
+    chimBox.appendChild(cH);
+    chimBox.appendChild(el('button', { class:'btn small', text:'\u2191 ' + t('To the rule'), title:t('Raise the crown exactly to the rule: half a metre over the ridge, a metre over flat'),
+      onclick:() => {
+        const M = roofModel(G, RF), z = M.zAt(+RF.chim.x, +RF.chim.y), r = chimRule(M);
+        if (z !== null) { RF.chim.h = Math.max(0.3, +(r.ref + r.need - z).toFixed(2)); buildChimUI(); roofDraw(); }
+      } }));
     const sp = chimSpan();
     chimXCtl = rangeCtl('Metres from the west face', Math.min(sp.x0, sp.x1), Math.max(sp.x0, sp.x1), 0.1, clamp(ch.x, sp.x0, sp.x1),
       v => { RF.chim.x = +v.toFixed(2); roofDraw(); }, v => fmt(v, 1) + ' m');
@@ -7091,6 +7139,10 @@ function buildRoof(host) {
       onclick:() => { RF.chim = null; buildChimUI(); roofDraw(); } }));
   }
   buildChimUI();
+  host.appendChild(hint('roof-chimney',
+    'One chimney, drawn as the region builds them — pick its style above where the parish builds more than one. It stands where it is put and rises what the slider says; the draw score judges the crown against the rule every chimney answers to: half a metre clear of the ridge on a pitched roof, a metre clear on a flat one, so the wind draws instead of pushing back down. “To the rule” raises it exactly there. A short chimney on the lee slope smokes back into the attic — height first, then position.'));
+  const pillChim = el('span', { class:'pill empty' });
+  props.appendChild(pillChim);
   props.appendChild(el('div', { class:'gh', text:'Roof colour — albedo' }));
   props.appendChild(finishPicker(() => RF.col, k => { RF.col = k; roofDraw(); })).classList.add('fpick');
 
@@ -7116,6 +7168,14 @@ function buildRoof(host) {
   function refreshRoof() {
     refreshRoofCol();
     refreshSolar();
+    {
+      const M = roofModel(G, RF), sc = chimScore(M, RF.chim);
+      if (sc === null) { pillChim.className = 'pill empty'; pillChim.textContent = t('No chimney — add one above'); }
+      else {
+        pillChim.className = 'pill ' + (sc >= 80 ? 'ok' : sc >= 50 ? 'empty' : 'bad');
+        pillChim.textContent = t('Chimney draw') + ' ' + Math.round(sc) + '/100';
+      }
+    }
     const pn = pitchNow();
     if (!pn) { pillRoof.className = 'pill empty'; pillRoof.textContent = t('Flat — no pitch to judge; racked collectors take the best pitch'); return; }
     const ni = nearestIdeal(pn.th), facing = COMPASS8[Math.round(slopeAz() / 45) % 8];
@@ -7251,7 +7311,7 @@ if (F.chim || F.par) { const p = pathOf(F.pts); ctx.fillStyle = F.fill; ctx.fill
           const z = M.zAt(+ch.x, +ch.y);
           if (z !== null) {
             const F = CHIMNEY_FAM[ch.fam] || CHIMNEY_FAM.alentejana;
-            const q = proj(+ch.x, +ch.y, z + chimTopH(F));
+            const q = proj(+ch.x, +ch.y, z + chimTopH(F, chimEffH(ch)));
             ctx.beginPath(); ctx.arc(q[0], q[1] - 8, 5, 0, 6.284); ctx.fillStyle = '#14171a'; ctx.fill();
             stroke(ctx, '#fff', 1.6); ctx.stroke();
           }
@@ -7405,7 +7465,7 @@ if (F.chim || F.par) { const p = pathOf(F.pts); ctx.fillStyle = F.fill; ctx.fill
       ['Roof (largest part)', ['flat', 'shed', 'gable', 'hip'][RF.n]], ['Pitch (°)', RF.n === 0 ? 0 : RF.th],
       ['Roof parts', RF.zones.map((z, i) => 'ABC'[i] + ':' + ['flat', 'shed', 'gable', 'hip'][z.n] + (z.n === 0 ? '' : ' ' + z.th + '°')).join(' | ')],
       ['Parapet', RF.par && RF.par.on ? fmt(RF.par.h, 2) + ' m' : 'none'],
-      ['Chimney', RF.chim && RF.chim.on ? CHIMNEY_FAM[RF.chim.fam].name + ' at ' + fmt(RF.chim.x, 1) + ', ' + fmt(RF.chim.y, 1) + ' m' : 'none'],
+      ['Chimney', RF.chim && RF.chim.on ? CHIMNEY_FAM[RF.chim.fam].name + ' at ' + fmt(RF.chim.x, 1) + ', ' + fmt(RF.chim.y, 1) + ' m · ' + fmt(chimEffH(RF.chim), 2) + ' m above roof' : 'none'],
       ['Plan form (from Site)', (G.form || 'rect') + (G.patio && G.patio.on && G.patio.ok !== false ? ' + patio' : '')],
       ['Winter solar ideal (°)', +idealW.toFixed(0)],
       ['Summer solar ideal (°)', +idealS.toFixed(0)],
@@ -7661,7 +7721,7 @@ if (F.chim || F.par) { const p = pathOf(F.pts); ctx.fillStyle = F.fill; ctx.fill
     const z = M.zAt(+ch.x, +ch.y);
     if (z === null) return null;
     const F = CHIMNEY_FAM[ch.fam] || CHIMNEY_FAM.alentejana;
-    return { x:+ch.x, y:+ch.y, z0:z, z1:z + chimTopH(F) };
+    return { x:+ch.x, y:+ch.y, z0:z, z1:z + chimTopH(F, chimEffH(ch)) };
   };
   const chimHandleAt = (clientX, clientY) => {
     if (!roofPanel.W) return false;
@@ -7766,7 +7826,7 @@ function buildOpenings(host) {
       energy metric. */
   function facadeScore(f) {
     const [lo, hi] = wwrRange(f);
-    const w = OPEN[f].wwr * glassShare(f);
+    const w = facadeNumbers(f).eff;
     if (w < lo) return lo > 0 ? clamp(100 * (w / lo), 0, 100) : 100;
     if (w > hi) return clamp(100 * (1 - (w - hi) / hi), 0, 100);
     return 100;
@@ -7778,16 +7838,16 @@ function buildOpenings(host) {
       depth this side faces; spread from the mean width against a generous
       2.4 m bay. A teaching score, like the WWR fit. */
   function shapeScore(f) {
+    const fn = facadeNumbers(f);
+    if (!fn.wall) return null;
+    const on = fn.per.filter(q => q.on);
+    if (!on.length) return 0;
     const ws = winsOf(f);
-    if (!ws.length) return null;
-    const us = faceUnits(f).filter(u => u.on);
-    if (!us.length) return 0;
-    const Wbar = ws.reduce((a, x) => a + x.w.w, 0) / ws.length;
-    const H = ws[0].w.rows[0].head;
+    const H = ws.length ? ws[0].w.rows[0].head : 0;
     const depth = (f === 'S' || f === 'N') ? G.D : G.L;
     const one = w => 100 * (clamp(2 * H / Math.max(1, depth), 0, 1) + clamp(w / 2.4, 0, 1)) / 2;
-    const tot = us.reduce((a, u) => a + u.frac, 0) || 1;
-    return us.reduce((a, u) => a + u.frac * one(u.frac * Wbar), 0) / tot;
+    const tot = on.reduce((a, q) => a + q.frac, 0) || 1;
+    return on.reduce((a, q) => a + q.frac * one(q.w), 0) / tot;
   }
   SCORES.openings = () => ({ 'WWR fit /100':Math.round(overallScore()),
     'Shading fit /100 by facade':Object.fromEntries(FACES.map(f => [f, shadingScore(f) === null ? null : Math.round(shadingScore(f))])),
@@ -7850,20 +7910,22 @@ function buildOpenings(host) {
     const updateTexts = () => {
       const us = faceUnits(curFace);
       if (rows.length !== us.length) { buildUnitUI(); return; }
-      const ws = winsOf(curFace);
-      const Wbar = ws.length ? ws.reduce((a, x) => a + x.w.w, 0) / ws.length : 0;
-      const tot = ws.reduce((a, x) => a + x.w.area, 0);
-      const gs = glassShare(curFace), on = us.filter(u => u.on).length;
-      built.textContent = t('Built') + ' ' + fmt(OPEN[curFace].wwr * gs * 100, 0) + '% ' + t('of wall') + ' · ' + on + '/' + us.length;
-      const H = ws.length ? ws[0].w.rows[0].head : 0, depth = (curFace === 'S' || curFace === 'N') ? G.D : G.L;
+      const fn = facadeNumbers(curFace);
+      const on = us.filter(u => u.on).length;
+      built.textContent = t('Built') + ' ' + fmt(fn.eff * 100, 0) + '% ' + t('of wall') + ' · ' + on + '/' + us.length;
+      const H = winsOf(curFace).length ? winsOf(curFace)[0].w.rows[0].head : 0;
+      const depth = (curFace === 'S' || curFace === 'N') ? G.D : G.L;
       rows.forEach((r, i) => {
-        const wi = us[i].frac * Wbar;
-        r.m.textContent = fmt(wi, 2) + ' m · ' + fmt(tot * (us[i].on ? us[i].frac : 0), 2) + ' m² · '
-          + (!us[i].on ? '–' : String(Math.round(100 * (clamp(2 * H / Math.max(1, depth), 0, 1) + clamp(wi / 2.4, 0, 1)) / 2)));
+        const q = fn.per[i];
+        r.m.textContent = fmt(q.w, 2) + ' m · ' + fmt(q.area, 2) + ' m² · '
+          + (!us[i].on ? '–' : String(Math.round(100 * (clamp(2 * H / Math.max(1, depth), 0, 1) + clamp(q.w / 2.4, 0, 1)) / 2)))
+          + (us[i].on && us[i].door ? ' · ' + t('door') : '');
       });
     };
     faceUnits(curFace).forEach((u, i) => {
       const chk = checkCtl('W' + (i + 1), u.on, v => { u.on = v; updateTexts(); refreshOpenings(); });
+      const dor = el('button', { class:'btn small' + (u.door ? ' solid' : ''), text:t('door'), title:t('A glazed door instead of a window: drops its sill to the floor'),
+        'aria-pressed':String(!!u.door), onclick:() => { u.door = !u.door; buildUnitUI(); refreshOpenings(); } });
       const sh = rangeCtl('Share', 5, 95, 1, Math.round(u.frac * 100), v => {
         const us = faceUnits(curFace), w = us[i];
         if (!w) { buildUnitUI(); return; }
@@ -7876,7 +7938,7 @@ function buildOpenings(host) {
       }, v => fmt(v, 0) + '%');
       if (faceUnits(curFace).length < 2) sh.range.disabled = true;
       const r = { m:el('div', { class:'hint' }) };
-      const line = el('div', {}, [chk, r.m]);
+      const line = el('div', {}, [chk, dor, r.m]);
       rows.push(r);
       unitBox.appendChild(line);
       unitBox.appendChild(sh);
@@ -8075,7 +8137,9 @@ function buildOpenings(host) {
     const o = OPEN[w.f], n = sg.n;
     const off = (p, d) => [p[0] + n[0] * d, p[1] + n[1] * d, p[2]];
     const devs = [], glass = [];
-    w.rows.forEach(r => {
+    const uus = OPEN[w.f] && OPEN[w.f].units;
+    w.rows.forEach((r, k) => {
+      const floor = r.sill - o.sillZ;
       const rect = { u0:w.uc - w.w / 2, u1:w.uc + w.w / 2, v0:r.sill, v1:Math.min(r.head, h0()) };
       if (o.ovD > 0) ovPositions(o.ovN, rect).forEach(vt => devs.push({ kind:'ov', f:w.f,
         pts:[onWall(sg, rect.u0, vt), onWall(sg, rect.u1, vt), off(onWall(sg, rect.u1, vt), o.ovD), off(onWall(sg, rect.u0, vt), o.ovD)] }));
@@ -8083,13 +8147,33 @@ function buildOpenings(host) {
         pts:[onWall(sg, uF, rect.v0), off(onWall(sg, uF, rect.v0), o.finD), off(onWall(sg, uF, rect.v1), o.finD), onWall(sg, uF, rect.v1)] }));
       glassSpans(w.f, rect.u0, rect.u1).forEach(sp => {
         if (!sp.on || sp.b - sp.a < 0.05) return;
-        glass.push([onWall(sg, sp.a, rect.v0), onWall(sg, sp.b, rect.v0), onWall(sg, sp.b, rect.v1), onWall(sg, sp.a, rect.v1)]);
+        const uu = uus && uus[sp.ui];
+        const v0 = uu && uu.door ? floor + 0.05 : rect.v0;
+        if (rect.v1 - v0 < 0.1) return;
+        glass.push([onWall(sg, sp.a, v0), onWall(sg, sp.b, v0), onWall(sg, sp.b, rect.v1), onWall(sg, sp.a, rect.v1)]);
       });
     });
     return { devs, glass };
   };
   /** Windows on one side, as built: switched-on units, one per wall per storey. */
   const winCount = f => { const nU = faceUnits(f).filter(u => u.on).length; return winsOf(f).reduce((a, x) => a + x.w.n * nU, 0); };
+  /** Built glass per facade and per unit (doors drop to the floor): the one
+      place the totals come from — badges, labels, CSV and export agree. */
+  function facadeNumbers(f) {
+    const ws = winsOf(f), o = OPEN[f], us = faceUnits(f);
+    const wall = ws.reduce((a, x) => a + x.w.glass / (o.wwr || 1), 0);
+    const per = us.map(u => {
+      if (!u.on) return { area:0, w:0, on:false, frac:u.frac, door:!!u.door };
+      let area = 0;
+      ws.forEach(x => { x.w.rows.forEach((r, k) => {
+        const h = u.door ? Math.min(r.head, h0()) - (k * G.fh + 0.05) : Math.min(r.head, h0()) - r.sill;
+        area += u.frac * x.w.w * Math.max(0, h);
+      }); });
+      return { area, w:u.frac * (ws.length ? ws.reduce((a, x) => a + x.w.w, 0) / ws.length : 0), on:true, frac:u.frac, door:!!u.door };
+    });
+    const built = per.reduce((a, q) => a + q.area, 0);
+    return { wall, built, eff:wall > 0 ? built / wall : 0, per };
+  }
 
   /** Average fraction of the sun a side's own overhang and fins keep off its
       windows across a day, by the profile-angle / wall-solar-azimuth method
@@ -8352,7 +8436,7 @@ function buildOpenings(host) {
       const o = OPEN[curFace];
       const sh = (o.ovD > 0 || o.finD > 0 || balcOnFace(curFace)) ? shadeEffectiveness(curFace, 172).pct : null;
       const nW = winCount(curFace);
-      label(ctx, t(faceName[curFace]) + ' · ' + t('faces') + ' ' + faceDir(curFace) + ' · WWR ' + fmt(o.wwr * glassShare(curFace) * 100, 0) + '% · ' + nW + ' ' + t(nW === 1 ? 'window' : 'windows')
+      label(ctx, t(faceName[curFace]) + ' · ' + t('faces') + ' ' + faceDir(curFace) + ' · WWR ' + fmt(facadeNumbers(curFace).eff * 100, 0) + '% · ' + nW + ' ' + t(nW === 1 ? 'window' : 'windows')
         + (sh !== null ? ' · ' + t('shading') + ' ' + fmt(sh, 0) + '%' : ''),
         8, narrow ? 72 : 12, CH.ink2, FM(narrow ? 9.5 : 11), 'left', 'middle');
       const GREEN = '#16A34A';
@@ -8371,15 +8455,15 @@ function buildOpenings(host) {
     },
     csv: () => {
       const rows = [['Facade side', 'Faces', 'Windows', 'Glass (m²)', 'WWR', 'Sill (m)', 'Head (m)', 'Overhang depth (m)', 'Overhang count', 'Fin depth (m)', 'Fin count', 'Fin side', 'WWR fit (0–100)', 'Shading fit (0–100)', 'Shape fit (0–100)']];
-      FACES.forEach(f => { const o = OPEN[f], ws = winsOf(f), sc = shadingScore(f), sh = shapeScore(f), gs = glassShare(f);
-        const totGlass = ws.reduce((a, x) => a + x.w.area, 0), Wbar = ws.length ? ws.reduce((a, x) => a + x.w.w, 0) / ws.length : 0;
-        rows.push([faceName[f], COMPASS8_EN[Math.round(faceAz(f) / 45) % 8], winCount(f), +(totGlass * gs).toFixed(2), fmt(o.wwr * gs, 2), fmt(o.sillZ, 2), fmt(o.headZ, 2),
+      FACES.forEach(f => { const o = OPEN[f], ws = winsOf(f), sc = shadingScore(f), sh = shapeScore(f), fn = facadeNumbers(f);
+        rows.push([faceName[f], COMPASS8_EN[Math.round(faceAz(f) / 45) % 8], winCount(f), +fn.built.toFixed(2), fmt(fn.eff, 2), fmt(o.sillZ, 2), fmt(o.headZ, 2),
           fmt(o.ovD, 2), o.ovN, fmt(o.finD, 2), o.finN, o.finSide, Math.round(facadeScore(f)), sc === null ? '' : Math.round(sc), sh === null ? '' : Math.round(sh)]);
-        faceUnits(f).forEach((u, i) => {
-          const wi = u.frac * Wbar, r0 = ws.length ? ws[0].w.rows[0] : null;
-          const depth = (f === 'S' || f === 'N') ? G.D : G.L;
-          const shi = !u.on ? '' : Math.round(100 * (clamp(2 * (r0 ? r0.head : 0) / Math.max(1, depth), 0, 1) + clamp(wi / 2.4, 0, 1)) / 2);
-          rows.push([faceName[f] + ' window ' + (i + 1) + ' (' + fmt(wi, 1) + ' m)', u.on ? 'on' : 'off', '', u.on ? +(totGlass * u.frac).toFixed(2) : 0, '', '', '', '', '', '', '', '', '', '', shi]);
+        const H = ws.length ? ws[0].w.rows[0].head : 0, depth = (f === 'S' || f === 'N') ? G.D : G.L;
+        fn.per.forEach((q, i) => {
+          const on = faceUnits(f)[i] && faceUnits(f)[i].on;
+          const shi = !on ? '' : Math.round(100 * (clamp(2 * H / Math.max(1, depth), 0, 1) + clamp(q.w / 2.4, 0, 1)) / 2);
+          rows.push([faceName[f] + ' window ' + (i + 1) + ' (' + fmt(q.w, 1) + ' m)' + (q.door && on ? ' · door' : ''), on ? 'on' : 'off', '',
+            +q.area.toFixed(2), '', q.door && on ? '0.05' : fmt(o.sillZ, 2), fmt(o.headZ, 2), '', '', '', '', '', '', '', shi]);
         }); });
       rows.push(['Sunspace', SUNSP.on ? SUNSP.face : 'off', '', '', '', '', '', fmt(SUNSP.depth, 2), '', '', '', '', '', fmt(SUNSP.widthFrac, 2)]);
       rows.push(['Roof window size', RW_SIZES[RWIN.size].label]);
@@ -11644,8 +11728,11 @@ function exportModel() {
             if (!sp.on) return;
             const c0 = Math.max(a, sp.a), c1 = Math.min(b, sp.b);
             if (c1 - c0 < 0.05) return;
-            holes.push([c0, c1, v0, v1]);
-            windowAndShading(P, n, along, (c0 + c1) / 2, c1 - c0, v0, v1, OPEN[f], f, tag + (rows.length > 1 ? ' floor ' + k : '') + (pieces.length > 1 ? ' ' + String.fromCharCode(97 + j) : '') + (units.length > 1 ? '·U' + (i + 1) : ''));
+            const uu = OPEN[f].units[sp.ui], isDoor = !!(uu && uu.door);
+            const w0 = isDoor ? k * G.fh + 0.05 : v0;
+            if (v1 - w0 < 0.1) return;
+            holes.push([c0, c1, w0, v1]);
+            windowAndShading(P, n, along, (c0 + c1) / 2, c1 - c0, w0, v1, OPEN[f], f, tag + (rows.length > 1 ? ' floor ' + k : '') + (pieces.length > 1 ? ' ' + String.fromCharCode(97 + j) : '') + (units.length > 1 ? '·U' + (i + 1) : '') + (isDoor ? ' door' : ''));
           });
         });
       });
@@ -11895,7 +11982,7 @@ function toDecisionsJSON() {
       roof:{ type:['flat', 'shed', 'gable', 'hip'][ROOF.n], pitch:ROOF.n === 0 ? 0 : ROOF.th,
         zones:(ROOF.zones || []).map((z, i) => ({ part:'ABC'[i], type:['flat', 'shed', 'gable', 'hip'][z.n], pitch:z.n === 0 ? 0 : z.th, from:+z.f0.toFixed(3), to:+z.f1.toFixed(3) })), roofColour:colourOf(rfin),
         parapet:ROOF.par && ROOF.par.on ? { height:+ROOF.par.h.toFixed(2) } : null,
-        chimney:ROOF.chim && ROOF.chim.on ? { family:ROOF.chim.fam, x:+ROOF.chim.x.toFixed(2), y:+ROOF.chim.y.toFixed(2) } : null, roofColour:colourOf(rfin),
+        chimney:ROOF.chim && ROOF.chim.on ? { family:ROOF.chim.fam, x:+ROOF.chim.x.toFixed(2), y:+ROOF.chim.y.toFixed(2), heightAboveRoof:isFinite(+ROOF.chim.h) ? +ROOF.chim.h : null } : null, roofColour:colourOf(rfin),
         solar:ROOF.sol && ROOF.sol.tech !== 'none' ? { technology:ROOF.sol.tech === 'pv' ? 'photovoltaic panels' : 'flat-plate thermal collectors', columns:ROOF.sol.cols, rows:ROOF.sol.rows } : null },
       openings:OPEN, sunspace:SUNSP, roofWindows:RWIN,
       planting:SCENE.veg.map(v => { const q = SCENE.plant ? SCENE.plant(v) : null;
@@ -12003,7 +12090,7 @@ function applyStudy(o) {
     if (['left', 'right', 'both'].indexOf(s.finSide) >= 0) d.finSide = s.finSide;
     if (Array.isArray(s.units) && s.units.length) {
       const vu = s.units.filter(w => w && isFinite(+w.frac) && +w.frac > 0).slice(0, 4)
-        .map(w => ({ on:w.on !== false, frac:+w.frac }));
+        .map(w => ({ on:w.on !== false, frac:+w.frac, door:!!w.door }));
       if (vu.length) { const t = vu.reduce((a, w) => a + w.frac, 0) || 1; vu.forEach(w => { w.frac /= t; }); d.units = vu; }
     }
   });
@@ -14167,6 +14254,12 @@ Object.assign(PT, {
   "+ Add chimney": "+ Acrescentar chaminé",
   "Raise the region’s chimney where the roof is highest": "Levantar a chaminé da região onde a cobertura é mais alta",
   "Take the chimney away": "Retirar a chaminé",
+  "Simple pot": "Pote simples",
+  "A plain washed stack with one pot — every region builds one.": "Um simples fuste caiado com um pote — todas as regiões constroem um.",
+  "To the rule": "Para a regra",
+  "Raise the crown exactly to the rule: half a metre over the ridge, a metre over flat": "Subir a coroa exactamente até à regra: meio metro sobre a cumeeira, um metro sobre plana",
+  "No chimney — add one above": "Sem chaminé — acrescente uma acima",
+  "Chimney draw": "Tiragem da chaminé",
   "Metres from the west face": "Metros da fachada oeste",
   "Metres from the south face": "Metros da fachada sul",
   "Algarve turret": "Torre algarvia",
@@ -14271,6 +14364,8 @@ Object.assign(PT, {
   "of wall": "da parede",
   "One window fewer": "Menos uma janela",
   "One window more": "Mais uma janela",
+  "door": "porta",
+  "A glazed door instead of a window: drops its sill to the floor": "Uma porta envidraçada em vez de janela: desce o peitoril até ao chão",
   "Shape fit /100": "Ajuste da forma /100",
   "Winter shelter /100": "Abrigo de inverno /100",
   "The two {}–{} scores sit in the corner of the model — winter shelter, summer tunnel — with the Olgyay verdict on the pair below.": "As duas notas {}–{} estão no canto do modelo — abrigo de inverno, túnel de verão — com o veredicto de Olgyay sobre o par abaixo.",
@@ -14646,6 +14741,8 @@ Object.assign(PT_HINT, {
     'Factor de forma FF = envolvente exterior ÷ volume aquecido, em m⁻¹ — paredes até ao beirado, triângulos de empena, vertentes e piso térreo sobre o volume que encerram, uma única zona, tudo exterior. Mais baixo é mais compacto: os abrigos redondos de pastores da Monchique são o extremo vernacular (Gonçalves & Graça). É o mesmo rácio a que o REH chama <i>factor de forma</i>, aqui enunciado como pura geometria sem limites — o Construction Advisor continua daí. A pastilha pinta-o de verde até 0,7 (compacto), âmbar até 1,1 (moderado) e vermelho acima (disperso): faixas didácticas, não limites. Não move a nota de ajuste.',
   'open-wwr':
     'As faixas de WWR seguem a classificação de Ching &amp; Shapiro (baixa &lt;10%, moderada 10–20%, alta 20–30%, muito alta &gt;30%; p.242), lida à luz da orientação de Lechner — o sul recebe mais vidro, o norte o menos das fachadas com sol, e este/oeste são minimizados onde o clima pende para quente (pp.130–132, 416). A faixa mostrada para %1 neste clima é <b>%2–%3%</b>. O norte fica entre 5 e 10 % e começa em 5 %: quase não recebe sol de Inverno e perde calor todo o ano. É uma escolha bioclimática desta aplicação, não uma regra do SCE — o regulamento não fixa máximo para o vidro a norte; dispensa do requisito de factor solar os vãos orientados no quadrante norte e qualquer espaço cujos envidraçados não excedam 5 % da sua área de <i>pavimento</i> (Portaria n.º 138-I/2021). O RGEU fixa antes o mínimo: cada compartimento precisa de vãos com pelo menos 1/10 da sua área, e nunca menos de 1,08 m² (art. 71.º), e a leitura do lado norte diz quantos compartimentos o seu vidro pode servir. É uma síntese própria desta aplicação entre fontes, não um número único citável — trate-a como uma meta a atingir, não um teste de aprovação. Cada lado é avaliado pelo sentido para onde realmente fica virado depois de rodada a planta no Local, e a sua razão vão/parede aplica-se a todas as paredes da planta desse lado — de uma ala, de um recuo, de um pátio. Com dois ou três pisos, esse vidro reparte-se por igual entre eles: cada parede recebe uma janela por piso, todas da mesma largura, com peitoril e padieira medidos a partir de cada piso e a padieira 0,10 m abaixo do piso de cima. A caixa Ajuste WWR faz a média deste teste nos quatro lados.',
+  'roof-chimney':
+    'Uma chaminé, desenhada como a região as constrói — escolha o estilo acima onde a freguesia constrói mais do que um. Assenta onde a pousar e sobe o que o cursor disser; a nota de tiragem julga a coroa pela regra a que todo o chaminé responde: meio metro acima da cumeeira numa cobertura inclinada, um metro acima numa plana, para o vento puxar em vez de empurrar para baixo. “Para a regra” sobe-a exactamente até lá. Uma chaminé curta na vertente de sotavento enfumaça o sótão — primeiro a altura, depois a posição.',
   'open-shape':
     'Vidro alto, luz funda; vidro largo, luz uniforme. A luz natural alcança cerca do dobro da altura da verga para dentro da sala (Lechner, <i>Heating, Cooling, Lighting</i>), por isso uma verga mais alta ilumina mais fundo — uma verga a 2,1 m chega a cerca de 4 m — enquanto uma janela mais larga espalha essa luz para os lados e deixa parede por baixo para o aquecimento, o lugar habitual do radiador sob o vidro. Janelas em fita, compridas e baixas, iluminam a sala de modo uniforme de ponta a ponta (Ching &amp; Shapiro, sobre dimensão, posição e uniformidade da luz natural). A nota Forma pondera as duas: profundidade a partir da verga contra a profundidade da sala para onde este lado se vira, largura a partir da largura média contra um generoso vão de 2,4 m. Como o ajuste WWR, é uma síntese própria desta aplicação entre fontes, não um número de nenhum livro — compare lados com ela; uma janela a sul alta e estreita e uma comprida e baixa podem ambas sair-se bem, por razões diferentes.',
   'open-shading':
