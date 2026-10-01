@@ -82,6 +82,7 @@ nav.tabs{border-bottom:1px solid var(--line); background:#fff}
 .tab[aria-selected="true"]{color:var(--ink); border-bottom-color:var(--ink); font-weight:600}
 .tab .n{font-family:var(--mono); font-size:10px; color:var(--faint); margin-right:6px}
 .tab.cadbtn{margin-left:auto; color:var(--ink2); font-weight:600}
+.tab.cadbtn + .tab.cadbtn{margin-left:6px}
 .cadmenu{position:absolute; right:24px; z-index:40; background:#fff; border:1px solid var(--line); border-radius:10px;
   box-shadow:0 10px 30px rgba(20,23,26,.12); padding:14px 16px; width:min(440px, calc(100vw - 32px)); margin-top:4px}
 .cadmenu h5{margin:0 0 8px; font-size:12px; color:var(--ink)}
@@ -11282,6 +11283,8 @@ function cadDownload(kind) {
 function toggleCadMenu(ev) {
   const old = $('#cadMenu');
   if (old) { old.remove(); return; }
+  const sv = $('#saveMenu');
+  if (sv) sv.remove();
   const m = el('div', { class:'cadmenu', id:'cadMenu' });
   m.appendChild(el('h5', { text:'Take the model into CAD' }));
   [['IFC', 'ifc', 'Revit, ArchiCAD — open the file directly; walls, windows, roof, shading and trees arrive as typed elements'],
@@ -11383,6 +11386,8 @@ function applyStudy(o) {
 function toggleSaveMenu(ev) {
   const old = $('#saveMenu');
   if (old) { old.remove(); return; }
+  const cm = $('#cadMenu');
+  if (cm) cm.remove();
   const m = el('div', { class:'cadmenu', id:'saveMenu' });
   m.appendChild(el('h5', { text:'Save the study, to continue later' }));
   m.appendChild(el('div', { class:'row' }, [
@@ -12610,7 +12615,7 @@ function mountApp(site, clim, keepTab, keepModel, keepScroll) {
       onclick: () => activate(tab.key) }));
   });
   tl.appendChild(el('button', { class:'tab cadbtn', type:'button', text:'Export 3D ▾', onclick:toggleCadMenu }));
-  tl.appendChild(el('button', { class:'tab cadbtn', type:'button', text:'Save study ▾', onclick:toggleSaveMenu }));
+  tl.appendChild(el('button', { class:'tab cadbtn', id:'tabSave', type:'button', text:'Save study ▾', onclick:toggleSaveMenu }));
   activate(TABS.some(x => x.key === keepTab) ? keepTab : TABS[0].key);
   if (keepScroll) { window.scrollTo(0, scrollY0); requestAnimationFrame(() => window.scrollTo(0, scrollY0)); setTimeout(() => window.scrollTo(0, scrollY0), 200); }
 
