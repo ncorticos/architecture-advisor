@@ -4479,10 +4479,13 @@ function buildEnvironment(host) {
     ctx.beginPath(); ctx.ellipse(x, y, 1.5 + 4.5 * q, (1.5 + 4.5 * q) * flat, 0, 0, 6.284); ctx.stroke();
   };
   const fall = (d, tt, rate) => (d.ph + tt * d.sp * rate) % 1.2;   // 0–1 falling, 1–1.2 splashing
-  /** Showers pass: each drop/flake cycles with its own phase, so the rain
-      rests about 2 s in every 9 and the snow about 3 s in every 12 — rain
-      does not fall all day. */
-  const shower = (tt, ph, period, on) => ((tt * (period / 9) + ph * period) % period) < on;
+  /** Storms pass on a six-second cycle — three seconds of rain or snow,
+      then three of sun: even a winter day is not rain all day. Every
+      drop and flake shares the same phase, so the whole sky clears
+      together and the sun comes out between showers; the ramps keep
+      the change from popping. */
+  const stormEnv = tt => { const c = tt % 6; return c < 3 ? clamp(Math.min(c / 0.5, (3 - c) / 0.5), 0, 1) : 0; };
+  const stormOn = tt => stormEnv(tt) > 0;
   const rnd = (() => { let sd = 20240611; return () => (sd = (sd * 16807) % 2147483647) / 2147483647; })();
   const CLOUDS = Array.from({ length:9 }, () => ({ u:rnd(), v:rnd(), size:0.6 + 0.7 * rnd(), sp:0.6 + 0.8 * rnd(), gy:rnd() }));
   const DROPS = Array.from({ length:180 }, () => ({ u:rnd(), v:rnd(), ph:rnd() * 1.2, sp:0.85 + 0.5 * rnd() }));
@@ -4528,7 +4531,7 @@ function buildEnvironment(host) {
     if (!nd) return;
     const P = climRect(W, H), xc = P.sx(monthPos(ENV.doy)) + 5, bw = P.w / 12;
     DROPS.slice(0, nd).forEach(d => {
-      if (!shower(tt, d.ph, 9, 7)) return;
+      if (!stormOn(tt)) return;
       const xEnd = xc + (d.u - 0.5) * bw * 1.3, yEnd = P.y + P.h, top = 22, q = fall(d, tt, 0.9);
       if (q <= 1) { const y = top + q * (yEnd - top); drop(ctx, xEnd - (yEnd - y) * 0.08, y, 5 + 3 * d.sp, 0.5); }
       else splash(ctx, xEnd, yEnd, (q - 1) / 0.2, 0.35);
@@ -4539,12 +4542,13 @@ function buildEnvironment(host) {
   const drawWeatherEnv = (ctx, W, H, tt) => {
     const FR = envPanel && envPanel.data.FR, wx = weatherOf(ENV.doy);
     if (!FR) return;
+    const env = stormEnv(tt);
     const n = Math.round(CLOUDS.length * wx.cloud), nd = Math.round(DROPS.length * wx.rain);
     const ex = FR.Rg * FR.s, ey = ex * FR.se, kS = clamp(W / 700, 0.6, 1.25);
     const skyTop = ENV.plot ? 58 : 74, skyBot = FR.cy - ey - 4, sky = !FR.plan && skyBot - skyTop > 36;
     CLOUDS.slice(0, n).forEach(c => {
-      const R = (12 + 12 * c.size) * kS, x = ((c.u + tt * c.sp * 0.018) % 1) * (W + 4 * R) - 2 * R;
-      const gy = FR.cy + (c.gy * 1.5 - 0.75) * ey, a = 0.1 + 0.16 * wx.cloud;
+      const R = (12 + 12 * c.size) * kS * (0.7 + 0.3 * env), x = ((c.u + tt * c.sp * 0.018) % 1) * (W + 4 * R) - 2 * R;
+      const gy = FR.cy + (c.gy * 1.5 - 0.75) * ey, a = (0.1 + 0.16 * wx.cloud) * (0.35 + 0.65 * env);
       ctx.save();
       ctx.beginPath(); ctx.ellipse(FR.cx, FR.cy, ex, ey, 0, 0, 6.284); ctx.clip();
       ctx.translate(x, gy); ctx.scale(1, FR.se);
@@ -4552,7 +4556,7 @@ function buildEnvironment(host) {
       sg.addColorStop(0, 'rgba(20,23,26,' + a.toFixed(3) + ')'); sg.addColorStop(0.6, 'rgba(20,23,26,' + (a * 0.6).toFixed(3) + ')'); sg.addColorStop(1, 'rgba(20,23,26,0)');
       ctx.fillStyle = sg; ctx.beginPath(); ctx.arc(0, 0, R * 1.7, 0, 6.284); ctx.fill();
       ctx.restore();
-      if (sky) cloudPuff(ctx, x, skyTop + R * 0.6 + c.v * Math.max(0, skyBot - skyTop - R * 1.2), R, wx, 0.5 + 0.4 * wx.cloud);
+      if (sky) cloudPuff(ctx, x, skyTop + R * 0.6 + c.v * Math.max(0, skyBot - skyTop - R * 1.2), R, wx, (0.5 + 0.4 * wx.cloud) * (0.35 + 0.65 * env));
     });
     const top = sky ? skyTop + 0.45 * (skyBot - skyTop) : 0;   // from the clouds down
     /* snow falls where the month knows it: the temperature mix, or the
@@ -4589,7 +4593,7 @@ function buildEnvironment(host) {
       if (snowState.cover > 0.005) { ctx.save(); gnd(); ctx.fillStyle = 'rgba(244,247,250,' + (0.92 * snowState.cover).toFixed(3) + ')'; ctx.fill('evenodd'); ctx.restore(); }
     }
     DROPS.slice(0, nd).forEach(d => {
-      if (!shower(tt, d.ph, 9, 7)) return;
+      if (!stormOn(tt)) return;
       const yv = (d.v * 2 - 1) * 0.9, yEnd = FR.cy + yv * ey, xEnd = FR.cx + (d.u * 2 - 1) * ex * Math.sqrt(1 - yv * yv) * 0.95;
       const q = fall(d, tt, 1.1), len = (7 + 6 * d.sp) * kS;
       if (q <= 1) { const y = top + q * (yEnd - top); drop(ctx, xEnd - (yEnd - y) * 0.14, y, len, 0.5); }
@@ -4598,7 +4602,7 @@ function buildEnvironment(host) {
     /* a little snow mixed with the rain near zero — infrequent by design */
     const ns = Math.round(SNOWF.length * snowRate * 0.8);
     SNOWF.slice(0, ns).forEach(f => {
-      if (!shower(tt, f.ph, 12, 9)) return;
+      if (!stormOn(tt)) return;
       const yv = (f.v * 2 - 1) * 0.9, yEnd = FR.cy + yv * ey, xEnd = FR.cx + (f.u * 2 - 1) * ex * Math.sqrt(1 - yv * yv) * 0.95;
       const q = fall(f, tt, 0.45), sway = Math.sin(tt * 1.7 + f.ph * 6.28) * 6 * kS;
       if (q <= 1) { const y = top + q * (yEnd - top); flake(ctx, xEnd + sway * q, y, (1.6 + f.sp) * kS, 0.9); }
@@ -4620,7 +4624,7 @@ function buildEnvironment(host) {
       cloudPuff(ctx, x, P.y + R * 0.8 + c.v * Math.max(0, bandB - P.y - R * 1.2), R, wx, 0.5 + 0.4 * wx.cloud);
     });
     DROPS.slice(0, nd).forEach(d => {
-      if (!shower(tt, d.ph, 9, 7)) return;
+      if (!stormOn(tt)) return;
       const xEnd = P.x + d.u * P.w, yEnd = P.y + P.h, top = P.y + (bandB - P.y) * 0.6, q = fall(d, tt, 1.3);
       if (q <= 1) { const y = top + q * (yEnd - top); drop(ctx, xEnd - (yEnd - y) * 0.14, y, 6 + 4 * d.sp, 0.45); }
       else splash(ctx, xEnd, yEnd, (q - 1) / 0.2, 0.35);
