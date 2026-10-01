@@ -385,9 +385,9 @@ footer{border-top:1px solid var(--line); margin-top:26px; background:var(--wash)
 .climkey i.kp{background:#bcd2ea}
 .climkey i.kt{height:2px; background:#D97706; margin-left:6px}
 .setup .cta{display:flex; flex-direction:column; align-items:stretch; gap:8px; margin:0 0 6px}
-.s-go{grid-column:1/-1; display:flex; align-items:stretch; gap:12px; flex-wrap:wrap; margin-top:12px; flex:1 1 100%}
-.s-go .zonechip{flex:0 0 auto; align-self:center}
-.s-go .btn{flex:1 1 280px; padding:13px 14px; font-size:14.5px}
+.s-go{grid-column:1/-1; display:flex; flex-direction:column; align-items:center; gap:10px; margin-top:14px; flex:1 1 100%}
+.s-go .zonechip{flex:0 0 auto}
+.s-go .btn{width:min(640px,100%); padding:16px 14px; font-size:16.5px}
 .setup .cta .zonechip{justify-content:center}
 .setup .cta .btn{padding:10px 14px; font-size:13.5px}
 /* a tablet: the site and the normals side by side, the climate and the notes
@@ -831,10 +831,10 @@ details.more[open] > summary{color:var(--ink)}
           </div>
           <p class="note" data-t="privacyNote">Nothing is uploaded; your work stays in this browser. What leaves it, only to fill something in: the coordinates, to two elevation services when you press Look up and to Open-Meteo when you press Fetch web normals; the map area, to Esri and OpenStreetMap for the tiles; the plot’s position, to OpenStreetMap’s Overpass servers for the neighbouring buildings and, once you move the plot, to Open-Meteo for the ground’s height and to Nominatim for its municipality; an address you search for, to OpenStreetMap’s Nominatim.</p>
         </div>
+        </div>
         <div class="s-go">
           <span class="zonechip" id="zonePreview">—</span>
           <button class="btn solid" id="btnGo" data-t="btnGo">Work through the design</button>
-        </div>
         </div>
       </div>
     </div>
@@ -3777,8 +3777,8 @@ function pushImportFaces(arr, map) {
     (plan-local metres; map translates, as the Environmental view does). */
 function pushChimPar(arr, M, map) {
   if (!M) return;
-  if (RF.par && RF.par.on && M.paras) M.paras.forEach(pp => arr.push({ pts:map ? pp.quad.map(map) : pp.quad, fill:'#E9E5DD', par:1 }));
-  const ch = RF.chim;
+  if (ROOF.par && ROOF.par.on && M.paras) M.paras.forEach(pp => arr.push({ pts:map ? pp.quad.map(map) : pp.quad, fill:'#E9E5DD', par:1 }));
+  const ch = ROOF.chim;
   if (ch && ch.on && isFinite(+ch.x) && isFinite(+ch.y) && M.pl.inside(+ch.x, +ch.y)) {
     const z = M.zAt(+ch.x, +ch.y);
     if (z !== null) chimneyFaces(ch.fam, +ch.x, +ch.y, z).forEach(f => arr.push({ pts:map ? f.pts.map(map) : f.pts, fill:f.fill, chim:1 }));
@@ -7056,6 +7056,19 @@ function buildRoof(host) {
         } else { stroke(ctx, CH.ink, 1.4); ctx.stroke(); desk.path(p, true); if (F.sg) balcHoles(ctx, BS.holes.get(F.sg), P3, dep3, sees3); }
       });
 
+      /* the chimney's crown, dragged along the roof */
+      {
+        const ch = RF.chim;
+        if (ch && ch.on && isFinite(+ch.x) && isFinite(+ch.y) && M.pl.inside(+ch.x, +ch.y)) {
+          const z = M.zAt(+ch.x, +ch.y);
+          if (z !== null) {
+            const F = CHIMNEY_FAM[ch.fam] || CHIMNEY_FAM.alentejana;
+            const q = proj(+ch.x, +ch.y, z + F.h + (F.cap || 0.1) + (F.pots > 0 ? 0.5 : 0.02));
+            ctx.beginPath(); ctx.arc(q[0], q[1] - 8, 5, 0, 6.284); ctx.fillStyle = '#14171a'; ctx.fill();
+            stroke(ctx, '#fff', 1.6); ctx.stroke();
+          }
+        }
+      }
       /* the divisions between roof parts, draggable along the longest side */
       M.zones.slice(1).forEach(z => {
         const cx = M.axis === 'x' ? z.a0 : bb[0], cy = M.axis === 'x' ? bb[1] : z.a0;
@@ -7418,8 +7431,8 @@ function buildRoof(host) {
     if (chimHandleAt(ev.clientX, ev.clientY)) {
       ev.preventDefault();
       chdrag = true;
-      const tp = chimTop();
-      chZ = tp ? roofModel(G, RF).zAt(tp.x, tp.y) || 0 : 0;
+      const tp = chimGeo();
+      chZ = tp ? tp.z0 : 0;
       try { rcv.setPointerCapture(ev.pointerId); } catch (err) {}
       rcv.style.cursor = 'grabbing';
       return;
@@ -7444,14 +7457,14 @@ function buildRoof(host) {
     if (chdrag) { ev.preventDefault(); doChimDrag(ev.clientX, ev.clientY); return; }
     if (ddiv >= 0) { ev.preventDefault(); doDivDrag(ev.clientX, ev.clientY); return; }
     if (!rdrag) {
-      rcv.style.cursor = fieldHandleAt(ev.clientX, ev.clientY) ? 'move' : chimHandleAt(ev.clientX, ev.clientY) ? 'grab' : divHandleAt(ev.clientX, ev.clientY) >= 0 ? 'ew-resize' : nearSlope(ev.clientX, ev.clientY) ? 'ns-resize' : 'grab';
+      rcv.style.cursor = fieldHandleAt(ev.clientX, ev.clientY) ? 'move' : chimHandleAt(ev.clientX, ev.clientY) ? 'move' : divHandleAt(ev.clientX, ev.clientY) >= 0 ? 'ew-resize' : nearSlope(ev.clientX, ev.clientY) ? 'ns-resize' : 'grab';
       return;
     }
     ev.preventDefault();
     doDrag(ev.clientX, ev.clientY);
   });
   let chdrag = false, chZ = 0;
-  const chimTop = () => {
+  const chimGeo = () => {
     const ch = RF.chim;
     if (!ch || !ch.on || !isFinite(+ch.x) || !isFinite(+ch.y)) return null;
     const M = roofModel(G, RF);
@@ -7459,15 +7472,19 @@ function buildRoof(host) {
     const z = M.zAt(+ch.x, +ch.y);
     if (z === null) return null;
     const F = CHIMNEY_FAM[ch.fam] || CHIMNEY_FAM.alentejana;
-    return { x:+ch.x, y:+ch.y, z:z + F.h + (F.cap || 0.1) + (F.pots > 0 ? 0.5 : 0.02) };
+    return { x:+ch.x, y:+ch.y, z0:z, z1:z + F.h + (F.cap || 0.1) + (F.pots > 0 ? 0.5 : 0.02) };
   };
   const chimHandleAt = (clientX, clientY) => {
     if (!roofPanel.W) return false;
-    const tp = chimTop();
+    const tp = chimGeo();
     if (!tp) return false;
     const FR = frameNow(), r = rcv.getBoundingClientRect();
-    const q = projF(FR, tp.x, tp.y, tp.z);
-    return Math.hypot(clientX - r.left - q[0], clientY - r.top - q[1]) <= 12;
+    const a = projF(FR, tp.x, tp.y, tp.z0), b = projF(FR, tp.x, tp.y, tp.z1);
+    const px = clientX - r.left, py = clientY - r.top;
+    const dx = b[0] - a[0], dy = b[1] - a[1], L2 = dx * dx + dy * dy || 1;
+    const u = Math.min(1, Math.max(0, ((px - a[0]) * dx + (py - a[1]) * dy) / L2));
+    if (Math.hypot(px - (a[0] + u * dx), py - (a[1] + u * dy)) <= 14) return true;
+    return Math.hypot(px - b[0], py - (b[1] - 8)) <= 12;   // its floating dot
   };
   const doChimDrag = (clientX, clientY) => {
     if (!chdrag || !roofPanel.W) return;
@@ -7973,7 +7990,6 @@ function buildOpenings(host) {
       });
       const depth = it => it.pts.reduce((a, q) => a + camDepth(A, q[0], q[1], q[2]), 0) / it.pts.length - (it.dev ? 0.01 : 0);
       pushImportFaces(items);
-      pushChimPar(items, M);
       pushChimPar(items, Mm);
       items.sort((p, q) => depth(q) - depth(p)).forEach(it => {
         if (it.balc) { balcFace(ctx, it.balc, P3); return; }
@@ -10282,6 +10298,7 @@ function buildVentilation(host) {
     const depthV = it => it.pts.reduce((a2, q) => a2 + camDepth(q[0], q[1], q[2]), 0) / it.pts.length - (it.dev ? 0.01 : 0);
     const pathV = pts3 => { ctx.beginPath(); pts3.forEach((q, i) => { const p2 = proj(q[0], q[1], q[2]); i ? ctx.lineTo(p2[0], p2[1]) : ctx.moveTo(p2[0], p2[1]); }); ctx.closePath(); };
     pushImportFaces(items);
+    pushChimPar(items, M);
     items.sort((p1, q1) => depthV(q1) - depthV(p1)).forEach(it => {
       if (it.balc) { balcFace(ctx, it.balc, P3v); return; }
       if (it.import) { pathV(it.pts); ctx.fillStyle = it.fill; ctx.fill(); return; }
