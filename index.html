@@ -4570,11 +4570,14 @@ function buildEnvironment(host) {
       const srec = SNOW[S.lat.toFixed(2) + ',' + S.lon.toFixed(2)];
       const base = srec && srec.days ? clamp(srec.days[wx.m] / 10, 0, 0.8) : 0;
       if (!snowState.init && srec && srec.days) { snowState.cover = base; snowState.init = true; }
-      const target = snowRate > 0.02 ? 1 : (wx.T > 2 ? 0 : base);
+      /* snow lies while the storm passes and lets go in the sun gap:
+         it builds toward a thin cover the ground shows through, then
+         melts clear inside the three sunny seconds */
+      const target = env <= 0 ? 0 : (snowRate > 0.02 ? 0.55 : (wx.T > 2 ? 0 : base));
       const dt = snowState.last ? Math.min(0.5, Math.max(0, tt - snowState.last)) : 0;
       snowState.last = tt;
       const dc = target - snowState.cover;
-      snowState.cover += dc > 0 ? Math.min(dc, 0.05 * dt) : Math.max(dc, -0.2 * dt);
+      snowState.cover += dc > 0 ? Math.min(dc, 0.15 * dt) : Math.max(dc, -0.25 * dt);
       /* the ground, minus the building's own footprint: darker where the
          rain wets it, white where the snow lies — raindrops rest on it */
       const gnd = () => {
@@ -4589,7 +4592,7 @@ function buildEnvironment(host) {
           ctx.closePath();
         });
       };
-      if (wx.rain > 0.02) { ctx.save(); gnd(); ctx.fillStyle = 'rgba(30,35,45,' + (0.22 * clamp(wx.rain, 0, 1)).toFixed(3) + ')'; ctx.fill('evenodd'); ctx.restore(); }
+      if (wx.rain > 0.02) { ctx.save(); gnd(); ctx.fillStyle = 'rgba(30,35,45,' + (0.22 * clamp(wx.rain, 0, 1) * (0.15 + 0.85 * env)).toFixed(3) + ')'; ctx.fill('evenodd'); ctx.restore(); }
       if (snowState.cover > 0.005) { ctx.save(); gnd(); ctx.fillStyle = 'rgba(244,247,250,' + (0.92 * snowState.cover).toFixed(3) + ')'; ctx.fill('evenodd'); ctx.restore(); }
     }
     DROPS.slice(0, nd).forEach(d => {
@@ -4600,7 +4603,7 @@ function buildEnvironment(host) {
       else splash(ctx, xEnd, yEnd, (q - 1) / 0.2, FR.se);
     });
     /* a little snow mixed with the rain near zero — infrequent by design */
-    const ns = Math.round(SNOWF.length * snowRate * 0.8);
+    const ns = Math.round(SNOWF.length * snowRate * 1.5);
     SNOWF.slice(0, ns).forEach(f => {
       if (!stormOn(tt)) return;
       const yv = (f.v * 2 - 1) * 0.9, yEnd = FR.cy + yv * ey, xEnd = FR.cx + (f.u * 2 - 1) * ex * Math.sqrt(1 - yv * yv) * 0.95;
