@@ -384,6 +384,9 @@ footer{border-top:1px solid var(--line); margin-top:26px; background:var(--wash)
 .climkey i.kp{background:#bcd2ea}
 .climkey i.kt{height:2px; background:#D97706; margin-left:6px}
 .setup .cta{display:flex; flex-direction:column; align-items:stretch; gap:8px; margin:0 0 6px}
+.s-go{grid-column:1/-1; display:flex; align-items:stretch; gap:12px; flex-wrap:wrap; margin-top:12px; flex:1 1 100%}
+.s-go .zonechip{flex:0 0 auto; align-self:center}
+.s-go .btn{flex:1 1 280px; padding:13px 14px; font-size:14.5px}
 .setup .cta .zonechip{justify-content:center}
 .setup .cta .btn{padding:10px 14px; font-size:13.5px}
 /* a tablet: the site and the normals side by side, the climate and the notes
@@ -799,10 +802,7 @@ details.more[open] > summary{color:var(--ink)}
             </div>
           </div>
         </div>
-        <div class="s-cta cta">
-          <span class="zonechip" id="zonePreview">—</span>
-          <button class="btn solid" id="btnGo" data-t="btnGo">Work through the design</button>
-        </div>
+
         <div class="s-about">
           <div class="explain">
             <div>
@@ -825,6 +825,10 @@ details.more[open] > summary{color:var(--ink)}
             </div>
           </div>
           <p class="note" data-t="privacyNote">Nothing is uploaded; your work stays in this browser. What leaves it, only to fill something in: the coordinates, to two elevation services when you press Look up and to Open-Meteo when you press Fetch web normals; the map area, to Esri and OpenStreetMap for the tiles; the plot’s position, to OpenStreetMap’s Overpass servers for the neighbouring buildings and, once you move the plot, to Open-Meteo for the ground’s height and to Nominatim for its municipality; an address you search for, to OpenStreetMap’s Nominatim.</p>
+        </div>
+        <div class="s-go">
+          <span class="zonechip" id="zonePreview">—</span>
+          <button class="btn solid" id="btnGo" data-t="btnGo">Work through the design</button>
         </div>
         </div>
       </div>
