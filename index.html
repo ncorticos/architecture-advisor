@@ -8550,7 +8550,16 @@ function buildOpenings(host) {
     if (!sg || !segSeen(sg)) return null;
     const w = segWindow(sg, G);
     if (!w) return null;
-    return { sg, w, top:onWall(sg, w.uc + w.w / 2, Math.min(w.head, h0())), sill:onWall(sg, w.uc + w.w / 2, w.sill) };
+    /* the band dots ride a window, not the band's old end: the selected
+       one, else the last laid — the band end only when no glass is left */
+    const us = faceUnits(curFace);
+    const fi = OPEN[curFace].sel >= 0 ? OPEN[curFace].sel : us.length - 1;
+    let uEnd = w.uc + w.w / 2;
+    if (fi >= 0 && us[fi]) {
+      const sp = glassSpans(curFace, w.uc - w.w / 2, w.uc + w.w / 2, sg.len).filter(s => s.ui === fi)[0];
+      if (sp && sp.b - sp.a > 0.05) uEnd = sp.b;
+    }
+    return { sg, w, top:onWall(sg, uEnd, Math.min(w.head, h0())), sill:onWall(sg, uEnd, w.sill) };
   }
   /** The screen point back to the wall's own plane: along it (u) and up (z);
       null where the wall is seen edge-on. */
