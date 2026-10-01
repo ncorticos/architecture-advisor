@@ -6637,6 +6637,15 @@ function buildRoof(host) {
       } });
     if (!canSplit) add.disabled = true;
     divBox.appendChild(add);
+    if (M.zones.length > 1) divBox.appendChild(el('button', { class:'btn small', text:'\u21c4 ' + t('Invert'),
+      title:t('Swap every part’s type and pitch with its mirror image'), onclick:() => {
+        const zs = RF.zones, n = zs.length;
+        for (let i = 0; i < Math.floor(n / 2); i++) {
+          const a = zs[i], b = zs[n - 1 - i], nn = a.n, tt = a.th;
+          a.n = b.n; a.th = b.th; b.n = nn; b.th = tt;
+        }
+        syncRoofTop(); buildRoofUI(); roofDraw();
+      } }));
     divBox.appendChild(hint('roof-divide', 'One building, several roofs — as Algarve houses set a flat açoteia beside a pitched roof: divide the longest side (up to three parts), give each part its slopes and pitch, and drag the division on the model or above. Badges read the largest part.'));
   }
   buildRoofUI();
@@ -6728,6 +6737,7 @@ function buildRoof(host) {
     heightFn: w => phoneW(w) ? Math.round(w * 0.95 + 150) : Math.round(Math.max(300, Math.min(w / 1.55, roomH() - 252))),
     render(ctx, W, H) {
       const FR = roofFrame(W, H), narrow = phoneW(W), M = FR.M, pl = M.pl, H0 = FR.H0, bb = pl.bbox;
+      lastRoofFR = { FR, W, H };
       const desk = labelDesk(ctx, W, H);   // numbers are placed last, beside their lines
       const proj = (x, y, z) => projF(FR, x, y, z);
       const pathOf = pts3 => {
@@ -6793,7 +6803,7 @@ function buildRoof(host) {
         const cx = M.axis === 'x' ? z.a0 : bb[0], cy = M.axis === 'x' ? bb[1] : z.a0;
         const a = proj(cx, cy, H0), b = proj(cx, cy, M.ridge + 0.5);
         ctx.save(); ctx.setLineDash([4, 3]); stroke(ctx, '#0D9488', 1.4); seg(ctx, a[0], a[1], b[0], b[1]); ctx.restore();
-        ctx.beginPath(); ctx.arc(a[0], a[1], 5, 0, 6.284); ctx.fillStyle = '#fff'; ctx.fill(); stroke(ctx, '#0D9488', 1.8); ctx.stroke();
+        ctx.beginPath(); ctx.arc(a[0], a[1], 6.5, 0, 6.284); ctx.fillStyle = '#fff'; ctx.fill(); stroke(ctx, '#0D9488', 2); ctx.stroke();
       });
 
       /* the collector field: dark-blue PV modules with their cell lines, or
@@ -7063,10 +7073,17 @@ function buildRoof(host) {
     roofDraw();
   };
   let rdrag = false, fdrag = false, ddiv = -1;
+  let lastRoofFR = null;
+  /** The frame on screen: the one the last draw used, so handles sit exactly
+      on their dots even while the layout settles. */
+  const frameNow = () => {
+    if (lastRoofFR && lastRoofFR.W === roofPanel.W && lastRoofFR.H === roofPanel.H) return lastRoofFR.FR;
+    return roofFrame(roofPanel.W, roofPanel.H);
+  };
   /** Screen point of a division's handle: the cut at the front eaves. */
   const divHandlePos = k => {
     if (!roofPanel.W) return null;
-    const FR = roofFrame(roofPanel.W, roofPanel.H), M = FR.M, bb = M.pl.bbox, z = M.zones[k];
+    const FR = frameNow(), M = FR.M, bb = M.pl.bbox, z = M.zones[k];
     if (!z) return null;
     const q = projF(FR, M.axis === 'x' ? z.a0 : bb[0], M.axis === 'x' ? bb[1] : z.a0, M.H0);
     return [q[0], q[1]];
@@ -7076,23 +7093,21 @@ function buildRoof(host) {
     const M = roofModel(G, RF), r = rcv.getBoundingClientRect();
     for (let k = 1; k < M.zones.length; k++) {
       const q = divHandlePos(k);
-      if (q && Math.hypot(clientX - r.left - q[0], clientY - r.top - q[1]) <= 12) return k;
+      if (q && Math.hypot(clientX - r.left - q[0], clientY - r.top - q[1]) <= 16) return k;
     }
     return -1;
   };
   /** The division follows the pointer where it meets the eaves plane. */
   const doDivDrag = (clientX, clientY) => {
     if (ddiv < 0 || !roofPanel.W) return;
-    const FR = roofFrame(roofPanel.W, roofPanel.H), A = FR.A, M = FR.M;
-    if (Math.abs(A.se) < 1e-6) return;   // plan view: slide the Division slider instead
+    const FR = frameNow(), M = FR.M;
     const r = rcv.getBoundingClientRect();
-    const px = (clientX - r.left - FR.cx) / FR.s, py = (FR.cy - (clientY - r.top)) / FR.s;
-    const h = (py / CAM_K - M.H0 * A.ce) / A.se, qx = px / CAM_K;
-    const det = A.r[0] * A.d[1] - A.r[1] * A.d[0];
-    if (Math.abs(det) < 1e-9) return;
-    const x = (qx * A.d[1] - A.r[1] * h) / det, y = (A.r[0] * h - qx * A.d[0]) / det;
+    const proj = (x, y, z) => projF(FR, x, y, z);
+    const q = camPick(proj, [0, 0, M.H0], M.axis === 'x' ? [1, 0, 0] : [0, 1, 0], M.axis === 'x' ? [0, 1, 0] : [1, 0, 0],
+      clientX - r.left, clientY - r.top);
+    if (!q) return;   // edge-on view: slide the Division slider instead
     const bb = M.pl.bbox, s0 = M.axis === 'x' ? bb[0] : bb[1];
-    setDiv(ddiv, (M.axis === 'x' ? x : y) - s0);
+    setDiv(ddiv, q[0] - s0);
     roofDraw();
   };
   /** Is the pointer on the collector field's corner point? */
@@ -13498,6 +13513,8 @@ Object.assign(PT, {
   "Part": "Parte",
   "Division": "Divisão",
   "Divide the largest part": "Dividir a parte maior",
+  "Invert": "Inverter",
+  "Swap every part’s type and pitch with its mirror image": "Troca o tipo e a inclinação de cada parte com a sua imagem espelhada",
   "Merge this part into its neighbour": "Unir esta parte à vizinha",
   "Split the widest part in two at its middle — set each side below": "Divide a parte mais larga em duas a meio — defina cada lado abaixo",
   "along the length": "ao longo do comprimento",
