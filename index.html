@@ -2315,6 +2315,15 @@ const SCE_SVG = (() => {
     /* island basalt: a dark shaft with a washed crown, one pot */
     insular: () => g('<path d="M6 48L32 40L58 48"/>')
       + tower(27, 10, 20, 46, BASALT) + tower(27, 10, 20, 27, WASH) + slab(25, 14, 17.8) + pot(32, 11.5, 1.7),
+    /* the Monchique balloon: a conical volume closed by a clay cylinder */
+    balao: () => g('<path d="M6 48L32 40L58 48"/>')
+      + tower(26, 12, 32, 46, WASH)
+      + '<polygon points="26,32 38,32 34,16 30,16" fill="' + WASH + '" stroke="' + INK + '" stroke-width="1.2"/>'
+      + '<rect x="30" y="10" width="4" height="6" fill="' + WASH + '" stroke="' + INK + '" stroke-width="1"/>'
+      + slab(27.5, 9, 7.8),
+    /* the Cacela chest: a long low arca with small flues */
+    arca: () => g('<path d="M6 48L32 40L58 48"/>')
+      + tower(18, 28, 34, 46, WASH) + slab(16, 32, 31.8) + pot(26, 25.5, 1.4) + pot(38, 25.5, 1.4),
     /* the plain pot every region also builds */
     simple: () => g('<path d="M6 48L32 40L58 48"/>')
       + tower(29, 6, 22, 46, WASH) + slab(27.5, 9, 19.8) + pot(32, 13.5, 1.7)
@@ -2323,7 +2332,9 @@ const SCE_SVG = (() => {
 })();
 /* The chimney survey, as this application teaches it: six families after
    the houses the Inquérito à Arquitectura Popular em Portugal (1961) and
-   Oliveira & Galhano (1992) record — the Algarve's openwork turret, the
+   Oliveira & Galhano (1992) record — the Algarve's openwork turret, and
+   after the UAlg survey two more Algarve crowns, Monchique's balloon
+   (a conical volume closed by a cylinder) and Cacela's long low chest — the
    Alentejo's tall whitewashed stack, Lisbon brick with its corbelled head,
    northern granite masses, Beira schist shafts, island basalt — mapped here
    onto the thirty NUTS III. A teaching simplification, not a census: a
@@ -2341,11 +2352,16 @@ const CHIMNEY_FAM = {
     colours:['#8A7A63', '#C98A5E'] },
   insular:   { name:'Island basalt', shaft:0.6, h:1.5, cap:0.12, pots:1, band:true,
     colours:['#4A4A4E', '#F4F1EA'] },
+  balao:     { name:'Monchique balloon', shaft:0.8, h:1.0, cap:0.12, pots:0,
+    cone:{ r:0.55, h:0.7 }, drum:{ r:0.3, h:0.35 }, top:1.05,
+    colours:['#F4F1EA', '#C98A5E'] },
+  arca:      { name:'Cacela chest', shaft:0.55, h:1.05, cap:0.1, pots:2, long:1.9,
+    colours:['#F4F1EA', '#C98A5E'] },
   simple:    { name:'Simple pot', shaft:0.45, h:1.2, cap:0.15, pots:1,
     colours:['#EFE9DC', '#C98A5E'] }
 };
 const CHIMNEY_NUT = {
-  'Algarve':['algarvia', 'simple'],
+  'Algarve':['algarvia', 'balao', 'arca', 'simple'],
   'Alentejo Litoral':['alentejana', 'simple'], 'Alentejo Central':['alentejana', 'simple'],
   'Baixo Alentejo':['alentejana', 'simple'], 'Alto Alentejo':['alentejana', 'simple'],
   'Lezíria do Tejo':['alentejana', 'simple'], 'Médio Tejo':['alentejana', 'simple'], 'Oeste':['alentejana', 'simple'],
@@ -2370,6 +2386,8 @@ Object.assign(SCE_ICON, {
   nortenha:  ['Northern granite', 'A heavy mass with open flues under one great slab — the northern chimney.'],
   beira:     ['Beira schist', 'A stone shaft with a slab cap and one pot — the Beira chimney.'],
   insular:   ['Island basalt', 'A dark shaft with a washed crown and one pot — the island chimney.'],
+  balao:     ['Monchique balloon', 'A conical volume closed by a clay cylinder — the Monchique balloon.'],
+  arca:      ['Cacela chest', 'A long low chest with small flues — the Cacela arca.'],
   simple:    ['Simple pot', 'A plain washed stack with one pot — every region builds one.']
 });
 
@@ -2385,7 +2403,7 @@ const shadeFill = (hex, n) => {
   return 'rgb(' + c[0] + ',' + c[1] + ',' + c[2] + ')';
 };
 /** Crown height above the roof surface, one rule for geometry and handles. */
-const chimTopH = (F, h) => (h === undefined ? F.h : h) + (F.cap || 0.15) + (F.pots > 0 ? 0.5 : 0.02);
+const chimTopH = (F, h) => (h === undefined ? F.h : h) + (F.cap || 0.15) + (F.pots > 0 ? 0.5 : 0.02) + (F.top || 0);
 /** Triangles [{pts:[3], fill, n}] for a chimney of the region's family,
     standing on the roof surface at (x, y, z0): plinth, shaft, cap, pots or
     open flues, the Algarve's openwork crown. Small enough to paint anywhere. */
@@ -2418,9 +2436,24 @@ function chimneyFaces(famKey, x, y, z0, hEff) {
     for (let k = 1; k < n - 1; k++) tri([P(0)[0], P(0)[1], z2], [P(k)[0], P(k)[1], z2], [P(k + 1)[0], P(k + 1)[1], z2], fill);
   };
   const shaftC = F.colours[0], capC = (famKey === 'nortenha' || famKey === 'beira') ? F.colours[0] : '#EFE9DC', potC = '#C98A5E';
-  const w = F.shaft, h = F.h, skirt = F.skirt ? 0.6 : 0, capT = Math.max(0.15, F.cap || 0.15);
+  const w = F.shaft, h = F.h, sw = F.long ? w * F.long : w, skirt = F.skirt ? 0.6 : 0, capT = Math.max(0.15, F.cap || 0.15);
+  const coneFrustum = (cx, cy, r0, r1, z1, z2, fill, n) => {
+    n = n || 10;
+    const P = (r, k) => { const t = k / n * Math.PI * 2; return [cx + r * Math.cos(t), cy + r * Math.sin(t)]; };
+    for (let k = 0; k < n; k++) {
+      const a0 = P(r0, k), b0 = P(r0, (k + 1) % n), a1 = P(r1, k), b1 = P(r1, (k + 1) % n);
+      quad([a0[0], a0[1], z1], [b0[0], b0[1], z1], [b1[0], b1[1], z2], [a1[0], a1[1], z2], fill);
+    }
+  };
   box(x - w / 2 - 0.12, y - w / 2 - 0.12, z0 - 0.1, x + w / 2 + 0.12, y + w / 2 + 0.12, z0 + 0.3, shaftC);
-  box(x - w / 2, y - w / 2, z0 - 0.35, x + w / 2, y + w / 2, z0 + h - skirt, shaftC);
+  box(x - sw / 2, y - w / 2, z0 - 0.35, x + sw / 2, y + w / 2, z0 + h - skirt, shaftC);
+  if (F.cone) {
+    const cb = z0 + h, ch = F.cone.h, dr = F.drum.r;
+    coneFrustum(x, y, F.cone.r, dr + 0.07, cb, cb + ch, shaftC);
+    prism(x, y, dr, cb + ch, cb + ch + F.drum.h, shaftC, 10);
+    box(x - dr - 0.1, y - dr - 0.1, cb + ch + F.drum.h, x + dr + 0.1, y + dr + 0.1, cb + ch + F.drum.h + capT, capC);
+    return out;
+  }
   if (F.band) box(x - w / 2 - 0.015, y - w / 2 - 0.015, z0 + h * 0.35, x + w / 2 + 0.015, y + w / 2 + 0.015, z0 + h * 0.65, '#F4F1EA');
   if (F.skirt) {
     const z1 = z0 + h - skirt, pw = 0.09;
@@ -2429,11 +2462,11 @@ function chimneyFaces(famKey, x, y, z0, hEff) {
       box(x + sx * (w / 2 - pw) - pw / 2, y + sy * (w / 2 - pw) - pw / 2, z1 + 0.06, x + sx * (w / 2 - pw) + pw / 2, y + sy * (w / 2 - pw) + pw / 2, z0 + h, shaftC));
   }
   if (F.brick) box(x - w / 2 - 0.06, y - w / 2 - 0.06, z0 + h - 0.14, x + w / 2 + 0.06, y + w / 2 + 0.06, z0 + h - 0.07, '#8A4A2E');
-  box(x - w / 2 - 0.08, y - w / 2 - 0.08, z0 + h, x + w / 2 + 0.08, y + w / 2 + 0.08, z0 + h + capT, capC);
+  box(x - sw / 2 - 0.08, y - w / 2 - 0.08, z0 + h, x + sw / 2 + 0.08, y + w / 2 + 0.08, z0 + h + capT, capC);
   const zt = z0 + h + capT;
   if (F.pots > 0) {
     for (let k = 0; k < F.pots; k++) {
-      const px = F.pots === 1 ? x : x - w / 4 + k * (w / 2) / Math.max(1, F.pots - 1);
+      const px = F.pots === 1 ? x : x - sw / 4 + k * (sw / 2) / Math.max(1, F.pots - 1);
       prism(px, y, 0.09, zt, zt + 0.5, potC, 8);
       tri([px - 0.09, y, zt + 0.5], [px + 0.09, y, zt + 0.5], [px, y + 0.09, zt + 0.5], '#2b2b2e');
       tri([px - 0.09, y, zt + 0.5], [px, y - 0.09, zt + 0.5], [px + 0.09, y, zt + 0.5], '#2b2b2e');
@@ -14557,12 +14590,16 @@ Object.assign(PT, {
   "Northern granite": "Chaminé nortenha",
   "Beira schist": "Chaminé beirã",
   "Island basalt": "Chaminé insular",
+  "Monchique balloon": "Balão de Monchique",
+  "Cacela chest": "Arca de Cacela",
   "An openwork crown under the cap, two pots — the Algarve chimney.": "Coroa rendilhada sob a tampa, dois potes — a chaminé algarvia.",
   "Tall and slender, one pot under a slab — the Alentejo chimney.": "Alta e esguia, um pote sob uma laje — a chaminé alentejana.",
   "A corbelled head with two clay pots — the Lisbon chimney.": "Cabeça em mísulas com dois potes de barro — a chaminé lisboeta.",
   "A heavy mass with open flues under one great slab — the northern chimney.": "Maciço pesado com condutas abertas sob uma grande laje — a chaminé nortenha.",
   "A stone shaft with a slab cap and one pot — the Beira chimney.": "Fuste de pedra com tampa em laje e um pote — a chaminé beirã.",
   "A dark shaft with a washed crown and one pot — the island chimney.": "Fuste escuro com coroa caiada e um pote — a chaminé insular.",
+  "A conical volume closed by a clay cylinder — the Monchique balloon.": "Um volume cónico rematado por um cilindro de barro — o balão de Monchique.",
+  "A long low chest with small flues — the Cacela arca.": "Uma arca baixa e comprida com pequenas saídas — a arca de Cacela.",
   "Reset the model size": "Repôr o tamanho do modelo",
   "Smaller model": "Modelo mais pequeno",
   "Larger model": "Modelo maior",
