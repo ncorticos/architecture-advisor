@@ -8670,12 +8670,17 @@ function buildOpenings(host) {
        one, else the last laid — the band end only when no glass is left */
     const us = faceUnits(curFace);
     const fi = OPEN[curFace].sel >= 0 ? OPEN[curFace].sel : us.length - 1;
-    let uEnd = w.uc + w.w / 2;
-    if (fi >= 0 && us[fi]) {
+    const wv1 = Math.min(w.head, h0());
+    let uEnd = w.uc + w.w / 2, vT = wv1, vS = w.sill;
+    if (fi >= 0 && us[fi] && us[fi].on) {
       const sp = glassSpans(curFace, w.uc - w.w / 2, w.uc + w.w / 2, sg.len).filter(s => s.ui === fi)[0];
-      if (sp && sp.b - sp.a > 0.05) uEnd = sp.b;
+      if (sp && sp.b - sp.a > 0.05) {
+        uEnd = sp.b;
+        if (us[fi].door) { vS = 0.05; }
+        else { const vv = shiftRow(w.sill, wv1, 0, G.fh, us[fi].up); vS = vv[0]; vT = vv[1]; }
+      }
     }
-    return { sg, w, top:onWall(sg, uEnd, Math.min(w.head, h0())), sill:onWall(sg, uEnd, w.sill) };
+    return { sg, w, top:onWall(sg, uEnd, vT), sill:onWall(sg, uEnd, vS) };
   }
   /** The screen point back to the wall's own plane: along it (u) and up (z);
       null where the wall is seen edge-on. */
