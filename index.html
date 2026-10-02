@@ -2300,9 +2300,9 @@ const SCE_SVG = (() => {
     /* the Alentejo stack: tall and slender, one pot under a slab */
     alentejana: () => g('<path d="M6 48L32 40L58 48"/>')
       + tower(28, 8, 14, 46, WASH) + slab(25.5, 13, 11.8) + pot(32, 5.5, 1.8),
-    /* Lisbon brick: a corbelled head, two clay pots */
+    /* Lisbon whitewash: a washed stack, corbelled head, two clay pots */
     lisboeta: () => g('<path d="M6 48L32 40L58 48"/>')
-      + tower(27, 10, 20, 46, BRICK) + slab(25, 17.8, 14) + slab(26, 12, 15.6)
+      + tower(26.5, 11, 20, 46, WASH) + slab(25, 17.8, 14) + slab(26, 12, 15.6)
       + pot(29.5, 9.5, 1.7) + pot(34.5, 9.5, 1.7),
     /* northern granite: a heavy mass, open flues, a single great slab */
     nortenha: () => g('<path d="M6 48L32 40L58 48"/>')
@@ -2335,7 +2335,7 @@ const SCE_SVG = (() => {
    Oliveira & Galhano (1992) record — the Algarve's openwork turret, and
    after the UAlg survey two more Algarve crowns, Monchique's balloon
    (a conical volume closed by a cylinder) and Cacela's long low chest — the
-   Alentejo's tall whitewashed stack, Lisbon brick with its corbelled head,
+   Alentejo's tall whitewashed stack, Lisbon whitewash,
    northern granite masses, Beira schist shafts, island basalt — mapped here
    onto the thirty NUTS III. A teaching simplification, not a census: a
    valley can carry a neighbour's chimney, and the icons name their family. */
@@ -2344,8 +2344,8 @@ const CHIMNEY_FAM = {
     colours:['#F4F1EA', '#C98A5E'] },
   alentejana:{ name:'Alentejo stack', shaft:0.5, h:1.9, cap:0.1, pots:1, skewed:false,
     colours:['#F4F1EA', '#C98A5E'] },
-  lisboeta:  { name:'Lisbon brick', shaft:0.6, h:1.5, cap:0.22, pots:2, brick:true,
-    colours:['#B0603C', '#C98A5E'] },
+  lisboeta:  { name:'Lisbon whitewash', shaft:0.65, h:1.5, cap:0.18, pots:2,
+    colours:['#F4F1EA', '#C98A5E'] },
   nortenha:  { name:'Northern granite', shaft:0.9, h:1.4, cap:0.16, pots:0, open:true,
     colours:['#9AA0A6', '#2b2b2e'] },
   beira:     { name:'Beira schist', shaft:0.7, h:1.5, cap:0.12, pots:1,
@@ -2382,7 +2382,7 @@ const chimneyList = nuts => { const l = CHIMNEY_NUT[nuts] || ['alentejana']; ret
 Object.assign(SCE_ICON, {
   algarvia:  ['Algarve turret', 'An openwork crown under the cap, two pots — the Algarve chimney.'],
   alentejana:['Alentejo stack', 'Tall and slender, one pot under a slab — the Alentejo chimney.'],
-  lisboeta:  ['Lisbon brick', 'A corbelled head with two clay pots — the Lisbon chimney.'],
+  lisboeta:  ['Lisbon whitewash', 'A whitewashed stack with two clay pots — the Lisbon chimney.'],
   nortenha:  ['Northern granite', 'A heavy mass with open flues under one great slab — the northern chimney.'],
   beira:     ['Beira schist', 'A stone shaft with a slab cap and one pot — the Beira chimney.'],
   insular:   ['Island basalt', 'A dark shaft with a washed crown and one pot — the island chimney.'],
@@ -14591,7 +14591,7 @@ Object.assign(PT, {
   "Metres from the south face": "Metros da fachada sul",
   "Algarve turret": "Torre algarvia",
   "Alentejo stack": "Chaminé alentejana",
-  "Lisbon brick": "Chaminé lisboeta",
+  "Lisbon whitewash": "Chaminé lisboeta",
   "Northern granite": "Chaminé nortenha",
   "Beira schist": "Chaminé beirã",
   "Island basalt": "Chaminé insular",
@@ -14599,7 +14599,7 @@ Object.assign(PT, {
   "Cacela chest": "Arca de Cacela",
   "An openwork crown under the cap, two pots — the Algarve chimney.": "Coroa rendilhada sob a tampa, dois potes — a chaminé algarvia.",
   "Tall and slender, one pot under a slab — the Alentejo chimney.": "Alta e esguia, um pote sob uma laje — a chaminé alentejana.",
-  "A corbelled head with two clay pots — the Lisbon chimney.": "Cabeça em mísulas com dois potes de barro — a chaminé lisboeta.",
+  "A whitewashed stack with two clay pots — the Lisbon chimney.": "Fuste caiado com dois potes de barro — a chaminé lisboeta.",
   "A heavy mass with open flues under one great slab — the northern chimney.": "Maciço pesado com condutas abertas sob uma grande laje — a chaminé nortenha.",
   "A stone shaft with a slab cap and one pot — the Beira chimney.": "Fuste de pedra com tampa em laje e um pote — a chaminé beirã.",
   "A dark shaft with a washed crown and one pot — the island chimney.": "Fuste escuro com coroa caiada e um pote — a chaminé insular.",
