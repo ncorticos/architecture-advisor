@@ -8528,9 +8528,13 @@ function buildOpenings(host) {
       Mm.walls.forEach(wl => {
         const sg = wl.sg;
         if (!segSeen(sg)) return;
-        items.push({ pts:[onWall(sg, 0, 0), onWall(sg, sg.len, 0)].concat(wl.prof.slice().reverse().map(q => onWall(sg, q[0], q[1]))), fill:wallCol(sg.n[1] !== 0), sg });
+        const wpts = [onWall(sg, 0, 0), onWall(sg, sg.len, 0)].concat(wl.prof.slice().reverse().map(q => onWall(sg, q[0], q[1])));
+        items.push({ pts:wpts, fill:wallCol(sg.n[1] !== 0), sg });
+        /* devices ride their own wall: a fin at the far jamb no longer
+           sorts behind the wall's middle and disappears under the glass */
+        const wD = wpts.reduce((s, q) => s + camDepth(A, q[0], q[1], q[2]), 0) / wpts.length;
         const wn = wins.find(o => o.sg === sg);
-        if (wn) winGeo(sg, wn.w).devs.forEach(dv => items.push({ pts:dv.pts, dev:dv }));
+        if (wn) winGeo(sg, wn.w).devs.forEach(dv => items.push({ pts:dv.pts, dev:dv, d:wD - 0.05 }));
       });
       Mm.steps.forEach(st => {
         if (!camSees(A, st.n[0], st.n[1], 0)) return;
@@ -8546,7 +8550,7 @@ function buildOpenings(host) {
       const depth = it => it.pts.reduce((a, q) => a + camDepth(A, q[0], q[1], q[2]), 0) / it.pts.length - (it.dev ? 0.01 : 0);
       pushImportFaces(items);
       pushChimPar(items, Mm);
-      items.sort((p, q) => roofWallOrder(p, q) || depth(q) - depth(p)).forEach(it => {
+      items.sort((p, q) => roofWallOrder(p, q) || ((q.d === undefined ? depth(q) : q.d) - (p.d === undefined ? depth(p) : p.d))).forEach(it => {
         if (it.balc) { balcFace(ctx, it.balc, P3); return; }
         if (it.import) { pathOf(it.pts); ctx.fillStyle = it.fill; ctx.fill(); return; }
         if (it.chim || it.par) { pathOf(it.pts); ctx.fillStyle = it.fill; ctx.fill(); stroke(ctx, CH.ink, 1.2); ctx.stroke(); return; }
@@ -11043,9 +11047,11 @@ function buildVentilation(host) {
     M.walls.forEach(wl => {
       const sg = wl.sg;
       if (!wallSeen(sg.n)) return;
-      items.push({ pts:[onWallV(sg, 0, 0), onWallV(sg, sg.len, 0)].concat(wl.prof.slice().reverse().map(q => onWallV(sg, q[0], q[1]))), fill:wallCol(sg.n[1] !== 0), sg, prof:wl.prof });
+      const wpts = [onWallV(sg, 0, 0), onWallV(sg, sg.len, 0)].concat(wl.prof.slice().reverse().map(q => onWallV(sg, q[0], q[1])));
+      items.push({ pts:wpts, fill:wallCol(sg.n[1] !== 0), sg, prof:wl.prof });
+      const wD = wpts.reduce((s, q) => s + camDepth(q[0], q[1], q[2]), 0) / wpts.length;
       const wn = wins.find(o => o.sg === sg);
-      if (wn) devsOf(sg, wn.w).devs.forEach(dv => items.push({ pts:dv.pts, dev:dv }));
+      if (wn) devsOf(sg, wn.w).devs.forEach(dv => items.push({ pts:dv.pts, dev:dv, d:wD - 0.05 }));
     });
     M.steps.forEach(st => {
       if (!wallSeen(st.n)) return;
@@ -11062,7 +11068,7 @@ function buildVentilation(host) {
     const pathV = pts3 => { ctx.beginPath(); pts3.forEach((q, i) => { const p2 = proj(q[0], q[1], q[2]); i ? ctx.lineTo(p2[0], p2[1]) : ctx.moveTo(p2[0], p2[1]); }); ctx.closePath(); };
     pushImportFaces(items);
     pushChimPar(items, M);
-    items.sort((p1, q1) => roofWallOrder(p1, q1) || depthV(q1) - depthV(p1)).forEach(it => {
+    items.sort((p1, q1) => roofWallOrder(p1, q1) || ((q1.d === undefined ? depthV(q1) : q1.d) - (p1.d === undefined ? depthV(p1) : p1.d))).forEach(it => {
       if (it.balc) { balcFace(ctx, it.balc, P3v); return; }
       if (it.import) { pathV(it.pts); ctx.fillStyle = it.fill; ctx.fill(); return; }
       if (it.chim || it.par) { pathV(it.pts); ctx.fillStyle = it.fill; ctx.fill(); stroke(ctx, CH.ink, 1.2); ctx.stroke(); return; }
