@@ -1,0 +1,10 @@
+#!/bin/zsh
+# Stand-in for osascript: records dialogs and notifications; a dialog answers $DIALOG_ANSWER.
+cat > /dev/null                      # the AppleScript itself
+[[ $1 == - ]] && shift
+if (( $# >= 4 )); then
+  jq -nc --arg title "$1" --arg text "$2" --arg default "$3" --args '{kind: "dialog", title: $title, text: $text, default: $default, buttons: $ARGS.positional}' "${@[4,-1]}" >> $STUB_LOG/osascript.jsonl
+  print -rn -- "${DIALOG_ANSWER:-}"
+else
+  jq -nc --arg title "$1" --arg text "${2:-}" '{kind: "notification", title: $title, text: $text}' >> $STUB_LOG/osascript.jsonl
+fi

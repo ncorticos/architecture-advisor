@@ -1,0 +1,38 @@
+#!/bin/zsh
+# Stand-in for Claude Code. Behaviour: $CLAUDE_SCENARIO. Records its arguments (NUL-separated) and stdin.
+case ${1:-} in
+  --help)
+    cat <<'EOF'
+Usage: claude [options] [command] [prompt]
+
+Options:
+  -p, --print                           Print response and exit (useful for pipes)
+  --output-format <format>              Output format (only works with --print)
+  --no-session-persistence              Disable session persistence
+  --safe-mode                           Start with all customizations disabled
+  --strict-mcp-config                   Only use MCP servers from --mcp-config
+  --system-prompt <prompt>              System prompt to use for the session
+  --tools <tools...>                    Specify the list of available tools
+  --model <model>                       Model for the current session
+EOF
+    exit 0 ;;
+  --version) print "2.1.283 (Claude Code)"; exit 0 ;;
+esac
+print -rN -- "$@" > $STUB_LOG/claude.args
+cat > $STUB_LOG/claude.stdin
+print x >> $STUB_LOG/claude.calls
+result() { jq -n --arg t "$1" --argjson e ${2:-false} --argjson s ${3:-null} '{type: "result", subtype: "success", is_error: $e, api_error_status: $s, result: $t}' }
+case ${CLAUDE_SCENARIO:-ok} in
+  ok) result "${CLAUDE_TEXT:-Claude answer}" ;;
+  limit) result "You've hit your limit · resets 5pm (Europe/Lisbon)" true 429; exit 1 ;;
+  old-limit) result "Claude AI usage limit reached|1759000000" ;;
+  network) result "API Error: Connection refused (ECONNREFUSED)" true; exit 1 ;;
+  auth) result "Authentication error · please run /login" true 401; exit 1 ;;
+  badflag)
+    if (( ${@[(I)--safe-mode]} )); then
+      print -r -- "error: unknown option '--safe-mode'" >&2
+      exit 1
+    fi
+    result "${CLAUDE_TEXT:-Claude answer}" ;;
+  hang) sleep 30 ;;
+esac

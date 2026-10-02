@@ -1,0 +1,5 @@
+#!/bin/zsh
+# Stand-in for LM Studio's lms: `server start` brings the mock server's LM Studio endpoints up.
+print -r -- "$*" >> $STUB_LOG/lms.log
+[[ $1 == server && $2 == start ]] && rm -f $MOCK_STATE/lms_down
+exit 0

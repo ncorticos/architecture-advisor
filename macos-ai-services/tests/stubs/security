@@ -1,0 +1,8 @@
+#!/bin/zsh
+# Stand-in for the Keychain: find-generic-password knows one key, $STUB_API_KEY.
+if [[ $1 == find-generic-password && -n ${STUB_API_KEY:-} ]]; then
+  (( ${@[(I)-w]} )) && print -r -- $STUB_API_KEY
+  exit 0
+fi
+print -r -- "security: The specified item could not be found in the keychain." >&2
+exit 44
