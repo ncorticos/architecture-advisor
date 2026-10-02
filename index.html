@@ -4065,7 +4065,13 @@ function camAxes(cam, elMin) {
 /** A plan point on the screen before scaling: u to the right, v up. */
 const camUV = (A, x, y, z) => [CAM_K * (x * A.r[0] + y * A.r[1]), CAM_K * ((x * A.d[0] + y * A.d[1]) * A.se + (z || 0) * A.ce)];
 /** How far from the camera: larger is farther, for painting back to front. */
-const camDepth = (A, x, y, z) => (x * A.d[0] + y * A.d[1]) * A.ce - (z || 0) * A.se;
+const camDepth = (A, x, y, z) => (x * A.d[0] + y * A.d[1]) * A.ce - (z || 0) * A.se; /** A roof plane ends where its walls begin — they only ever touch —
+      so with the camera above them the plane always covers the wall.
+      A fixed order for that one pair; everything else (balconies,
+      chimneys, parapets, risers, neighbours) keeps its depth order. */
+  function isRoofFace(f) { return !!(f.pc && !f.balc && !f.chim && !f.par && !f.import); }
+  function isWallFace(f) { return !!(f.sg && !f.pc && !f.balc && !f.chim && !f.par && !f.import); }
+  function roofWallOrder(p, q) { return (isRoofFace(p) && isWallFace(q)) ? 1 : (isWallFace(p) && isRoofFace(q)) ? -1 : 0; }
 /** Does a face with outward normal (nx, ny, nz) turn toward the camera? */
 const camSees = (A, nx, ny, nz) => (nx * A.c[0] + ny * A.c[1]) * A.ce + (nz || 0) * A.se > 1e-6;
 /** The point of the plane O + u·U + v·V under a screen point, as [u, v],
@@ -4969,7 +4975,7 @@ function buildEnvironment(host) {
     const path3 = pts3 => { ctx.beginPath(); pts3.forEach((q, i) => { const p2 = pt(q[0], q[1], q[2]); i ? ctx.lineTo(p2[0], p2[1]) : ctx.moveTo(p2[0], p2[1]); }); ctx.closePath(); };
     pushImportFaces(faces, wQ);
     pushChimPar(faces, M, wQ);
-    faces.sort((p1, q1) => dep(q1) - dep(p1)).forEach(f2 => {
+    faces.sort((p1, q1) => roofWallOrder(p1, q1) || dep(q1) - dep(p1)).forEach(f2 => {
       if (f2.balc) { balcFace(ctx, f2.balc, P3e); return; }
       if (f2.chim || f2.par) { path3(f2.pts); ctx.fillStyle = f2.fill; ctx.fill(); stroke(ctx, CH.ink, 1.1); ctx.stroke(); return; }
       if (f2.import) { path3(f2.pts); ctx.fillStyle = f2.fill; ctx.fill(); return; }
@@ -6201,7 +6207,7 @@ function buildSite(host) {
         });
         pushImportFaces(faces);
         pushChimPar(faces, RM);
-        faces.sort((p, q) => dep(q.pts) - dep(p.pts) || (p.balc ? 1 : 0) - (q.balc ? 1 : 0)).forEach(fc => {
+        faces.sort((p, q) => roofWallOrder(p, q) || dep(q.pts) - dep(p.pts) || (p.balc ? 1 : 0) - (q.balc ? 1 : 0)).forEach(fc => {
           const scr = fc.pts.map(q => at(q[0], q[1], beta, q[2]));
           if (fc.balc) { desk.path(scr, true); balcFace(ctx, fc.balc, P3s); return; }
           if (fc.import) { outline(scr, true); ctx.fillStyle = fc.fill; ctx.fill(); return; }
@@ -7338,7 +7344,7 @@ function buildRoof(host) {
       const depth = F => F.pts.reduce((a, q) => a + camDepth(A, q[0], q[1], q[2]), 0) / F.pts.length;
       pushImportFaces(faces);
       pushChimPar(faces, M);
-      faces.sort((p, q) => depth(q) - depth(p)).forEach(F => {
+      faces.sort((p, q) => roofWallOrder(p, q) || depth(q) - depth(p)).forEach(F => {
         if (F.balc) { desk.path(F.pts.map(P3), true); balcFace(ctx, F.balc, P3); return; }
         if (F.import) { const p = pathOf(F.pts); ctx.fillStyle = F.fill; ctx.fill(); return; }
 if (F.chim || F.par) { const p = pathOf(F.pts); ctx.fillStyle = F.fill; ctx.fill(); stroke(ctx, CH.ink, 1.2); ctx.stroke(); return; }
@@ -8432,7 +8438,7 @@ function buildOpenings(host) {
       const depth = it => it.pts.reduce((a, q) => a + camDepth(A, q[0], q[1], q[2]), 0) / it.pts.length - (it.dev ? 0.01 : 0);
       pushImportFaces(items);
       pushChimPar(items, Mm);
-      items.sort((p, q) => depth(q) - depth(p)).forEach(it => {
+      items.sort((p, q) => roofWallOrder(p, q) || depth(q) - depth(p)).forEach(it => {
         if (it.balc) { balcFace(ctx, it.balc, P3); return; }
         if (it.import) { pathOf(it.pts); ctx.fillStyle = it.fill; ctx.fill(); return; }
         if (it.chim || it.par) { pathOf(it.pts); ctx.fillStyle = it.fill; ctx.fill(); stroke(ctx, CH.ink, 1.2); ctx.stroke(); return; }
@@ -10915,7 +10921,7 @@ function buildVentilation(host) {
     const pathV = pts3 => { ctx.beginPath(); pts3.forEach((q, i) => { const p2 = proj(q[0], q[1], q[2]); i ? ctx.lineTo(p2[0], p2[1]) : ctx.moveTo(p2[0], p2[1]); }); ctx.closePath(); };
     pushImportFaces(items);
     pushChimPar(items, M);
-    items.sort((p1, q1) => depthV(q1) - depthV(p1)).forEach(it => {
+    items.sort((p1, q1) => roofWallOrder(p1, q1) || depthV(q1) - depthV(p1)).forEach(it => {
       if (it.balc) { balcFace(ctx, it.balc, P3v); return; }
       if (it.import) { pathV(it.pts); ctx.fillStyle = it.fill; ctx.fill(); return; }
       if (it.chim || it.par) { pathV(it.pts); ctx.fillStyle = it.fill; ctx.fill(); stroke(ctx, CH.ink, 1.2); ctx.stroke(); return; }
