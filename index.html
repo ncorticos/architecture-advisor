@@ -7118,7 +7118,7 @@ function buildRoof(host) {
     } else parHCtl = null;
   }
   buildParUI();
-  rail.appendChild(el('div', { class:'gh', text:'Beirado' }));
+  rail.appendChild(el('div', { class:'gh', text:'Eaves' }));
   const beiBox = rail.appendChild(el('div'));
   let beiDCtl = null;
   function buildBeiUI() {
@@ -7516,7 +7516,7 @@ if (F.chim || F.par) { const p = pathOf(F.pts); ctx.fillStyle = F.fill; ctx.fill
       return csvRows([['Parameter', 'Value'],
       ['Roof (largest part)', ['flat', 'shed', 'gable', 'hip'][RF.n]], ['Pitch (°)', RF.n === 0 ? 0 : RF.th],
       ['Roof parts', RF.zones.map((z, i) => 'ABC'[i] + ':' + ['flat', 'shed', 'gable', 'hip'][z.n] + (z.n === 0 ? '' : ' ' + z.th + '°')).join(' | ')],
-      ['Parapet', RF.par && RF.par.on ? fmt(RF.par.h, 2) + ' m' : 'none'],       ['Beirado', RF.bei && RF.bei.on ? fmt(RF.bei.d, 2) + ' m' : 'none'],
+      ['Parapet', RF.par && RF.par.on ? fmt(RF.par.h, 2) + ' m' : 'none'],       ['Eaves', RF.bei && RF.bei.on ? fmt(RF.bei.d, 2) + ' m' : 'none'],
       ['Chimney', RF.chim && RF.chim.on ? CHIMNEY_FAM[RF.chim.fam].name + ' at ' + fmt(RF.chim.x, 1) + ', ' + fmt(RF.chim.y, 1) + ' m · ' + fmt(chimEffH(RF.chim), 2) + ' m above roof' : 'none'],
       ['Plan form (from Site)', (G.form || 'rect') + (G.patio && G.patio.on && G.patio.ok !== false ? ' + patio' : '')],
       ['Winter solar ideal (°)', +idealW.toFixed(0)],
@@ -14491,7 +14491,7 @@ Object.assign(PT, {
   "Off": "Não",
   "On": "Sim",
   "Parapet": "Platibanda",
-  "Beirado": "Beirado", "Projection": "Projeção",
+  "Eaves": "Beirado", "Projection": "Projeção",
   "Height": "Altura",
   "Chimney": "Chaminé",
   "+ Add chimney": "+ Acrescentar chaminé",
