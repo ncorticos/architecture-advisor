@@ -8065,8 +8065,36 @@ function buildOpenings(host) {
     };
     faceUnits(curFace).forEach((u, i) => {
       const chk = checkCtl('W' + (i + 1), u.on, v => { u.on = v; updateTexts(); refreshOpenings(); });
-      const dor = el('button', { class:'btn small' + (u.door ? ' solid' : ''), text:t('door'), title:t('A glazed door instead of a window: drops its sill to the floor'),
-        'aria-pressed':String(!!u.door), onclick:() => { u.door = !u.door; buildUnitUI(); refreshOpenings(); } });
+      const dor = el('button', { class:'btn small' + (u.door ? ' solid' : ''), text:t('door'), title:t('A door beside, not instead: lone glass splits into window + door; otherwise this opening converts'),
+        'aria-pressed':String(!!u.door), onclick:() => {
+          const us = faceUnits(curFace);
+          if (!u.door && !us.some((q, j) => j !== i && q.on)) {
+            /* sole glass: keep the window, stand a door beside it */
+            const sg = refWall(curFace), w = sg && segWindow(sg, G), bandW = w ? w.w : 0;
+            const W = u.frac * bandW, Dw = Math.min(W, 1.2);
+            const sp = w ? glassSpans(curFace, w.uc - w.w / 2, w.uc + w.w / 2, sg.len)[i] : null;
+            if (bandW > 0 && sp && W > Dw + 0.3) {
+              /* glassSpans re-seated the array above: work the live one */
+              const live = faceUnits(curFace), at = live.indexOf(u);
+              if (at < 0) return;
+              const a0 = sp.a, w0 = W - Dw, b0 = w.uc - w.w / 2;
+              let cum = 0;
+              live.forEach((q, j) => { if (j < at) cum += q.frac; });
+              u.frac = w0 / bandW;
+              u.off = clamp((a0 + w0 / 2) - (b0 + (cum + u.frac / 2) * bandW), -30, 30);
+              const dOff = clamp((a0 + w0 + Dw / 2) - (b0 + (cum + u.frac + (Dw / bandW) / 2) * bandW), -30, 30);
+              live.splice(at + 1, 0, { on:true, frac:Dw / bandW, off:dOff, door:true, up:0 });
+              OPEN[curFace].sel = at + 1;
+              OPEN[curFace].laid = true;
+              buildUnitUI(); refreshOpenings();
+              toast(t('Window kept — the door stands beside it'));
+              return;
+            }
+          }
+          u.door = !u.door;
+          if (u.door) { u.up = 0; OPEN[curFace].laid = true; }
+          buildUnitUI(); refreshOpenings();
+        } });
       const sh = rangeCtl('Share', 5, 95, 1, Math.round(u.frac * 100), v => {
         const us = faceUnits(curFace), w = us[i];
         if (!w) { buildUnitUI(); return; }
@@ -14791,6 +14819,8 @@ Object.assign(PT, {
   "One window more": "Mais uma janela",
   "door": "porta",
   "A glazed door instead of a window: drops its sill to the floor": "Uma porta envidraçada em vez de janela: desce o peitoril até ao chão",
+  "A door beside, not instead: lone glass splits into window + door; otherwise this opening converts": "Uma porta ao lado, não em vez: o vidro isolado divide-se em janela + porta; nos outros casos esta abertura converte-se",
+  "Window kept — the door stands beside it": "Janela mantida — a porta fica ao lado",
   "Shape fit /100": "Ajuste da forma /100",
   "Winter shelter /100": "Abrigo de inverno /100",
   "The two {}–{} scores sit in the corner of the model — winter shelter, summer tunnel — with the Olgyay verdict on the pair below.": "As duas notas {}–{} estão no canto do modelo — abrigo de inverno, túnel de verão — com o veredicto de Olgyay sobre o par abaixo.",
