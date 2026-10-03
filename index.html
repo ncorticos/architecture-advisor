@@ -2299,7 +2299,10 @@ const SCE_SVG = (() => {
       + slab(23, 18, 19.8) + pot(28.5, 13.5, 1.6) + pot(35.5, 13.5, 1.6),
     /* the Alentejo stack: tall and slender, one pot under a slab */
     alentejana: () => g('<path d="M6 48L32 40L58 48"/>')
-      + tower(28, 8, 14, 46, WASH) + slab(25.5, 13, 11.8) + pot(32, 5.5, 1.8),
+      + tower(28, 8, 14, 46, WASH)
+      + '<polygon points="28.5,20 30.5,16 32.5,20" fill="#33302c"/>'
+      + '<polygon points="33,20 35,16 37,20" fill="#33302c"/>'
+      + slab(25.5, 13, 11.8) + '<rect x="30" y="11.9" width="4" height="1.6" fill="#33302c"/>',
     /* Lisbon whitewash: a washed stack, corbelled head, two clay pots */
     lisboeta: () => g('<path d="M6 48L32 40L58 48"/>')
       + tower(26.5, 11, 20, 46, WASH) + slab(25, 17.8, 14) + slab(26, 12, 15.6)
@@ -2342,7 +2345,7 @@ const SCE_SVG = (() => {
 const CHIMNEY_FAM = {
   algarvia:  { name:'Algarve turret', shaft:0.7, h:1.7, cap:0.1, pots:2, skewed:false,
     colours:['#F4F1EA', '#C98A5E'] },
-  alentejana:{ name:'Alentejo stack', shaft:0.5, h:1.9, cap:0.1, pots:1, skewed:false,
+  alentejana:{ name:'Alentejo stack', shaft:0.5, h:1.9, cap:0.1, pots:0, fret:true,
     colours:['#F4F1EA', '#C98A5E'] },
   lisboeta:  { name:'Lisbon whitewash', shaft:0.65, h:1.5, cap:0.18, pots:2,
     colours:['#F4F1EA', '#C98A5E'] },
@@ -2381,7 +2384,7 @@ const chimneyList = nuts => { const l = CHIMNEY_NUT[nuts] || ['alentejana']; ret
     shape, so sceFig draws them unchanged. */
 Object.assign(SCE_ICON, {
   algarvia:  ['Algarve turret', 'An openwork crown under the cap, two pots — the Algarve chimney.'],
-  alentejana:['Alentejo stack', 'Tall and slender, one pot under a slab — the Alentejo chimney.'],
+  alentejana:['Alentejo stack', 'Tall and slender, a fret band of triangles under the slab — the Alentejo chimney.'],
   lisboeta:  ['Lisbon whitewash', 'A whitewashed stack with two clay pots — the Lisbon chimney.'],
   nortenha:  ['Northern granite', 'A heavy mass with open flues under one great slab — the northern chimney.'],
   beira:     ['Beira schist', 'A stone shaft with a slab cap and one pot — the Beira chimney.'],
@@ -2462,6 +2465,19 @@ function chimneyFaces(famKey, x, y, z0, hEff) {
       box(x + sx * (w / 2 - pw) - pw / 2, y + sy * (w / 2 - pw) - pw / 2, z1 + 0.06, x + sx * (w / 2 - pw) + pw / 2, y + sy * (w / 2 - pw) + pw / 2, z0 + h, shaftC));
   }
   if (F.brick) box(x - w / 2 - 0.06, y - w / 2 - 0.06, z0 + h - 0.14, x + w / 2 + 0.06, y + w / 2 + 0.06, z0 + h - 0.07, '#8A4A2E');
+  if (F.fret) {
+    const fz1 = z0 + h - 0.44, fz2 = z0 + h - 0.14, e = 0.006, tw = 0.13;
+    const nF = Math.max(2, Math.round(w / 0.17));
+    for (let s = 0; s < 4; s++) {
+      for (let k = 0; k < nF; k++) {
+        const c = -w / 2 + (k + 0.5) * (w / nF), a0 = c - tw / 2, b0 = c + tw / 2;
+        if (s === 0) tri([x + w / 2 + e, y + a0, fz1], [x + w / 2 + e, y + b0, fz1], [x + w / 2 + e, y + c, fz2], '#33302c');
+        else if (s === 1) tri([x - w / 2 - e, y + b0, fz1], [x - w / 2 - e, y + a0, fz1], [x - w / 2 - e, y + c, fz2], '#33302c');
+        else if (s === 2) tri([x + a0, y + w / 2 + e, fz1], [x + b0, y + w / 2 + e, fz1], [x + c, y + w / 2 + e, fz2], '#33302c');
+        else tri([x + b0, y - w / 2 - e, fz1], [x + a0, y - w / 2 - e, fz1], [x + c, y - w / 2 - e, fz2], '#33302c');
+      }
+    }
+  }
   box(x - sw / 2 - 0.08, y - w / 2 - 0.08, z0 + h, x + sw / 2 + 0.08, y + w / 2 + 0.08, z0 + h + capT, capC);
   const zt = z0 + h + capT;
   if (F.pots > 0) {
@@ -14709,7 +14725,7 @@ Object.assign(PT, {
   "Monchique balloon": "Balão de Monchique",
   "Cacela chest": "Arca de Cacela",
   "An openwork crown under the cap, two pots — the Algarve chimney.": "Coroa rendilhada sob a tampa, dois potes — a chaminé algarvia.",
-  "Tall and slender, one pot under a slab — the Alentejo chimney.": "Alta e esguia, um pote sob uma laje — a chaminé alentejana.",
+  "Tall and slender, a fret band of triangles under the slab — the Alentejo chimney.": "Alta e esguia, faixa rendilhada de triângulos sob a laje — a chaminé alentejana.",
   "A whitewashed stack with two clay pots — the Lisbon chimney.": "Fuste caiado com dois potes de barro — a chaminé lisboeta.",
   "A heavy mass with open flues under one great slab — the northern chimney.": "Maciço pesado com condutas abertas sob uma grande laje — a chaminé nortenha.",
   "A stone shaft with a slab cap and one pot — the Beira chimney.": "Fuste de pedra com tampa em laje e um pote — a chaminé beirã.",
