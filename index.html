@@ -3749,7 +3749,7 @@ function faceUnits(f) {
   if (!Array.isArray(o.units)) o.units = [{ on:true, frac:1, off:0 }];
   o.units = o.units.filter(w => w && isFinite(+w.frac) && +w.frac > 0).slice(0, 6);
   /* an emptied side stays empty: no glass, honest zeros everywhere */
-  o.units.forEach(w => { w.on = w.on !== false; w.frac = +w.frac; w.off = isFinite(+w.off) ? Math.max(-30, Math.min(30, +w.off)) : 0; w.up = isFinite(+w.up) ? Math.max(-30, Math.min(30, +w.up)) : 0; });
+  o.units.forEach(w => { w.on = w.on !== false; w.frac = +w.frac; w.off = isFinite(+w.off) ? Math.max(-30, Math.min(30, +w.off)) : 0; w.up = isFinite(+w.up) ? Math.max(-30, Math.min(30, +w.up)) : 0; w.gel = !!w.gel && !w.door; });
   if (!(o.sel >= 0) || o.sel >= o.units.length) o.sel = -1;
   return o.units;
 }
@@ -7912,7 +7912,7 @@ function buildOpenings(host) {
   const lat = S.lat, lon = S.lon, tz = lon / 15;
   const G = MASS, RF = ROOF;
   pageHead(host, 'Openings and Shadowing',
-    'Glazing, overhangs and fins for each facade, sized against the plan fixed on Site and the roof fixed on Roof — this tab cannot change either. Choosing a facade turns the model to face it, so you can drag its window directly; the compass shows which way is which. Click a window to select it — drag its black node to push it along the wall and up or down, drag a fin dot to stand it where the shade belongs, double-click it to open or close it, double-click bare wall to plant a new one. Drag it onto another facade to move it there, or step it across with the arrows on its row.');
+    'Glazing, overhangs and fins for each facade, sized against the plan fixed on Site and the roof fixed on Roof — this tab cannot change either. Choosing a facade turns the model to face it, so you can drag its window directly; the compass shows which way is which. Click a window to select it — drag its black node to push it along the wall and up or down, drag a fin dot to stand it where the shade belongs, double-click it to open or close it, double-click bare wall to plant a new one. Any unit turns into a glazed door or a gelosia breeze-block from its row. Drag it onto another facade to move it there, or step it across with the arrows on its row.');
 
   const h0 = () => G.fl * G.fh;   // read live: the tab outlives changes made on Site
   const Mod = () => roofModel(G, RF);   // the worked volume from Site and Roof, cached
@@ -7989,7 +7989,7 @@ function buildOpenings(host) {
   function shapeScore(f) {
     const fn = facadeNumbers(f);
     if (!fn.wall) return null;
-    const on = fn.per.filter(q => q.on);
+    const on = fn.per.filter(q => q.on && !q.gel);
     if (!on.length) return 0;
     const ws = winsOf(f);
     const H = ws.length ? ws[0].w.rows[0].head : 0;
@@ -8075,12 +8075,14 @@ function buildOpenings(host) {
         const sillEff = us[i].door ? 0.05 : shiftRow(sill0, head0, 0, G.fh, us[i].up)[0];
         r.m.textContent = fmt(q.w, 2) + ' m · ' + fmt(q.area, 2) + ' m² · '
           + (!us[i].on ? '–' : String(Math.round(100 * (clamp(2 * H / Math.max(1, depth), 0, 1) + clamp(q.w / 2.4, 0, 1)) / 2)))
-          + (us[i].on && us[i].door ? ' · ' + t('door') : '')
+          + (us[i].on && us[i].door ? ' · ' + t('door') : us[i].on && us[i].gel ? ' · ' + t('gelosia') : '')
           + (us[i].on ? ' · ' + t('sill') + ' ' + fmt(sillEff, 2) + ' m' : '');
       });
     };
     faceUnits(curFace).forEach((u, i) => {
       const chk = checkCtl('W' + (i + 1), u.on, v => { u.on = v; updateTexts(); refreshOpenings(); });
+      const gel = el('button', { class:'btn small' + (u.gel ? ' solid' : ''), text:t('gelosia'), title:t('A breeze-block panel instead of glass: ventilated, no view'),
+        'aria-pressed':String(!!u.gel), onclick:() => { u.gel = !u.gel; if (u.gel) u.door = false; buildUnitUI(); refreshOpenings(); } });
       const dor = el('button', { class:'btn small' + (u.door ? ' solid' : ''), text:t('door'), title:t('A door beside, not instead: lone glass splits into window + door; otherwise this opening converts'),
         'aria-pressed':String(!!u.door), onclick:() => {
           const us = faceUnits(curFace);
@@ -8108,7 +8110,7 @@ function buildOpenings(host) {
             }
           }
           u.door = !u.door;
-          if (u.door) { u.up = 0; OPEN[curFace].laid = true; }
+          if (u.door) { u.up = 0; u.gel = false; OPEN[curFace].laid = true; }
           buildUnitUI(); refreshOpenings();
         } });
       const sh = rangeCtl('Share', 5, 95, 1, Math.round(u.frac * 100), v => {
@@ -8123,7 +8125,7 @@ function buildOpenings(host) {
       const r = { m:el('div', { class:'hint' }) };
       const mvL = el('button', { class:'btn small', text:'\u2039', title:t('Move window to the previous face'), 'aria-label':t('Move window to the previous face'), onclick:() => stepFace(i, -1) });
       const mvR = el('button', { class:'btn small', text:'\u203A', title:t('Move window to the next face'), 'aria-label':t('Move window to the next face'), onclick:() => stepFace(i, 1) });
-      const line = el('div', { class:OPEN[curFace].sel === i ? 'urow sel' : 'urow' }, OPEN[curFace].sel === i ? [chk, dor, mvL, mvR, r.m] : [chk, dor, r.m]);
+      const line = el('div', { class:OPEN[curFace].sel === i ? 'urow sel' : 'urow' }, OPEN[curFace].sel === i ? [chk, dor, gel, mvL, mvR, r.m] : [chk, dor, gel, r.m]);
       rows.push(r);
       unitBox.appendChild(line);
       unitBox.appendChild(sh);
@@ -8312,7 +8314,7 @@ function buildOpenings(host) {
   const winGeo = (sg, w) => {
     const o = OPEN[w.f], n = sg.n;
     const off = (p, d) => [p[0] + n[0] * d, p[1] + n[1] * d, p[2]];
-    const devs = [], glass = [], sel = [], fins = [];
+    const devs = [], glass = [], sel = [], fins = [], lat = [];
     const uus = OPEN[w.f] && OPEN[w.f].units;
     /* the devices shade the glass wherever the student pushed it, not
        just the band it was born in */
@@ -8348,20 +8350,21 @@ function buildOpenings(host) {
         const v0 = uv[0], v1 = uv[1];
         if (v1 - v0 < 0.1) return;
         const quad = [onWall(sg, sp.a, v0), onWall(sg, sp.b, v0), onWall(sg, sp.b, v1), onWall(sg, sp.a, v1)];
-        glass.push(quad);
+        (uu && uu.gel ? lat : glass).push(quad);
         if (uu && sp.ui === o.sel) sel.push(quad);
       });
     });
-    return { devs, glass, sel, fins };
+    return { devs, glass, sel, fins, lat };
   };
   /** Windows on one side, as built: switched-on units, one per wall per storey. */
-  const winCount = f => { const nU = faceUnits(f).filter(u => u.on).length; return winsOf(f).reduce((a, x) => a + x.w.n * nU, 0); };
+  const winCount = f => { const nU = faceUnits(f).filter(u => u.on && !u.gel).length; return winsOf(f).reduce((a, x) => a + x.w.n * nU, 0); };
+const gelCount = f => { const nU = faceUnits(f).filter(u => u.on && u.gel).length; return winsOf(f).reduce((a, x) => a + x.w.n * nU, 0); };
   /** Built glass per facade and per unit (doors drop to the floor): the one
       place the totals come from — badges, labels, CSV and export agree. */
   function facadeNumbers(f) {
     const ws = winsOf(f), o = OPEN[f], us = faceUnits(f);
     const wall = ws.reduce((a, x) => a + x.w.glass / (o.wwr || 1), 0);
-    const per = us.map(u => ({ area:0, w:0, on:!!u.on, frac:u.frac, door:!!u.door, up:u.up || 0 }));
+    const per = us.map(u => ({ area:0, w:0, on:!!u.on, frac:u.frac, door:!!u.door, up:u.up || 0, gel:!!u.gel }));
     ws.forEach(x => {
       const u0 = x.w.uc - x.w.w / 2, u1 = x.w.uc + x.w.w / 2, spans = glassSpans(f, u0, u1, x.sg.len);
       spans.forEach(sp => { per[sp.ui].w += Math.max(0, sp.b - sp.a) / Math.max(1, ws.length); });
@@ -8375,7 +8378,7 @@ function buildOpenings(host) {
       });
     });
     us.forEach((u, i) => { if (!u.on) { per[i].area = 0; per[i].w = 0; } });
-    const built = per.reduce((a, q) => a + q.area, 0);
+    const built = per.reduce((a, q, k) => a + (us[k].gel ? 0 : q.area), 0);
     return { wall, built, eff:wall > 0 ? built / wall : 0, per };
   }
 
@@ -8615,11 +8618,20 @@ function buildOpenings(host) {
         const wn = it.sg && wins.find(o => o.sg === it.sg);
         if (wn) {
           const act = wn.w.f === curFace;
-          winGeo(it.sg, wn.w).glass.forEach(gl => {
+          const wg = winGeo(it.sg, wn.w);
+          wg.glass.forEach(gl => {
             poly(gl, act ? 'rgba(219,234,254,.95)' : 'rgba(219,234,254,.8)', act ? '#2563EB' : 'rgba(37,99,235,.75)', act ? 1.8 : 1.2);
             const n = Math.max(1, Math.round(wn.w.w / 1.2));   // a pane to about every 1.2 m
             stroke(ctx, act ? '#2563EB' : 'rgba(37,99,235,.6)', 0.9);
             for (let k = 1; k < n; k++) { const a = proj(...gl[0].map((v, i) => v + (gl[1][i] - v) * k / n)), b = proj(...gl[3].map((v, i) => v + (gl[2][i] - v) * k / n)); seg(ctx, a[0], a[1], b[0], b[1]); }
+          });
+          wg.lat.forEach(q => {
+            poly(q, act ? 'rgba(255,255,255,.95)' : 'rgba(245,244,240,.85)', act ? '#57534E' : 'rgba(87,83,78,.7)', 1.4);
+            const p = q.map(pt => proj(...pt)), mid = (a, b) => [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+            stroke(ctx, act ? '#57534E' : 'rgba(87,83,78,.7)', 1);
+            seg(ctx, p[0][0], p[0][1], p[2][0], p[2][1]); seg(ctx, p[1][0], p[1][1], p[3][0], p[3][1]);
+            const m01 = mid(p[0], p[1]), m32 = mid(p[3], p[2]), m03 = mid(p[0], p[3]), m12 = mid(p[1], p[2]);
+            seg(ctx, m01[0], m01[1], m32[0], m32[1]); seg(ctx, m03[0], m03[1], m12[0], m12[1]);
           });
         }
         if (it.sg) balcHoles(ctx, BS.holes.get(it.sg), P3, dep3, sees3);
@@ -8631,6 +8643,7 @@ function buildOpenings(host) {
         if (segSeen(o.sg)) return;
         const g = winGeo(o.sg, o.w);
         g.glass.forEach(gl => poly(gl, 'rgba(37,99,235,.04)', 'rgba(37,99,235,.55)', 1.1, [5, 4]));
+        g.lat.forEach(gl => poly(gl, 'rgba(87,83,78,.05)', 'rgba(87,83,78,.55)', 1.1, [5, 4]));
         g.devs.forEach(dv => poly(dv.pts, null, dv.kind === 'ov' ? 'rgba(217,119,6,.55)' : 'rgba(220,38,38,.55)', 1, [5, 4]));
       });
 
@@ -8691,7 +8704,7 @@ function buildOpenings(host) {
       const o = OPEN[curFace];
       const sh = ((o.ovD > 0 || o.finD > 0 || balcOnFace(curFace)) && faceUnits(curFace).some(u => u.on)) ? shadeEffectiveness(curFace, 172).pct : null;
       const nW = winCount(curFace);
-      label(ctx, t(faceName[curFace]) + ' · ' + t('faces') + ' ' + faceDir(curFace) + ' · WWR ' + fmt(facadeNumbers(curFace).eff * 100, 0) + '% · ' + nW + ' ' + t(nW === 1 ? 'window' : 'windows')
+      label(ctx, t(faceName[curFace]) + ' · ' + t('faces') + ' ' + faceDir(curFace) + ' · WWR ' + fmt(facadeNumbers(curFace).eff * 100, 0) + '% · ' + nW + ' ' + t(nW === 1 ? 'window' : 'windows') + (gelCount(curFace) > 0 ? ' · ' + gelCount(curFace) + ' ' + t('gelosia') : '')
         + (sh !== null ? ' · ' + t('shading') + ' ' + fmt(sh, 0) + '%' : ''),
         8, narrow ? 72 : 12, CH.ink2, FM(narrow ? 9.5 : 11), 'left', 'middle');
       const GREEN = '#16A34A';
@@ -8717,7 +8730,7 @@ function buildOpenings(host) {
         fn.per.forEach((q, i) => {
           const on = faceUnits(f)[i] && faceUnits(f)[i].on;
           const shi = !on ? '' : Math.round(100 * (clamp(2 * H / Math.max(1, depth), 0, 1) + clamp(q.w / 2.4, 0, 1)) / 2);
-          rows.push([faceName[f] + ' window ' + (i + 1) + ' (' + fmt(q.w, 1) + ' m)' + (q.door && on ? ' · door' : ''), on ? 'on' : 'off', '',
+          rows.push([faceName[f] + ' window ' + (i + 1) + ' (' + fmt(q.w, 1) + ' m)' + (q.door && on ? ' · door' : q.gel && on ? ' · gelosia' : ''), on ? 'on' : 'off', '',
             +q.area.toFixed(2), '', q.door && on ? '0.05' : fmt(shiftRow(o.sillZ, o.headZ, 0, G.fh, q.up)[0], 2), fmt(o.headZ, 2), '', '', '', '', '', '', '', shi]);
         }); });
       rows.push(['Sunspace', SUNSP.on ? SUNSP.face : 'off', '', '', '', '', '', fmt(SUNSP.depth, 2), '', '', '', '', '', fmt(SUNSP.widthFrac, 2)]);
@@ -12099,12 +12112,12 @@ function exportModel() {
   /** A window with its shading on a wall: P(u, v) a point on the wall, u
       along it, v up; n its outward normal — the same devices, by the same
       rules, on every wall. */
-  const windowAndShading = (P, n, along, uc, ww, v0, v1, o, f, tag, segLen) => {
+  const windowAndShading = (P, n, along, uc, ww, v0, v1, o, f, tag, segLen, gk) => {
     const u0 = uc - ww / 2, u1 = uc + ww / 2;
     const uLeftIsB = (along[0] * n[1] + along[1] * -n[0]) > 0;
     const x0 = Math.max(0, u0 - (uLeftIsB ? (o.ovR || 0) : (o.ovL || 0))), x1 = Math.min(segLen === undefined ? u1 + 1 : segLen, u1 + (uLeftIsB ? (o.ovL || 0) : (o.ovR || 0)));
     const off = (p, d) => [p[0] + n[0] * d, p[1] + n[1] * d, p[2]];
-    add('window', tag + ' window', 'AA-GLAZING', [[[P(u0, v0), P(u1, v0), P(u1, v1), P(u0, v1)], n]], { width:ww, height:v1 - v0, wwr:o.wwr, facade:f });
+    add('window', tag + ' window' + (gk ? ' ' + gk : ''), gk === 'gelosia' ? 'AA-GELOSIA' : 'AA-GLAZING', [[[P(u0, v0), P(u1, v0), P(u1, v1), P(u0, v1)], n]], { width:ww, height:v1 - v0, wwr:o.wwr, facade:f });
     if (o.ovD > 0) {
       const vs = o.ovN <= 1 ? [v1] : Array.from({ length:o.ovN }, (_, i) => v0 + (v1 - v0) * (i / (o.ovN - 1)));
       vs.forEach((vt, i) => add('shading', tag + (o.ovN > 1 ? ' louvre ' + (i + 1) : ' overhang'), 'AA-SHADING',
@@ -12160,12 +12173,12 @@ function exportModel() {
             if (!sp.on) return;
             const c0 = Math.max(a, sp.a), c1 = Math.min(b, sp.b);
             if (c1 - c0 < 0.05) return;
-            const uu = OPEN[f].units[sp.ui], isDoor = !!(uu && uu.door);
+            const uu = OPEN[f].units[sp.ui], isDoor = !!(uu && uu.door), isGel = !!(uu && uu.gel);
             const uvx = isDoor ? [k * G.fh + 0.05, v1] : shiftRow(v0, v1, k, G.fh, uu && uu.up);
             const w0 = uvx[0], w1 = uvx[1];
             if (w1 - w0 < 0.1) return;
             holes.push([c0, c1, w0, w1]);
-            windowAndShading(P, n, along, (c0 + c1) / 2, c1 - c0, w0, w1, OPEN[f], f, tag + (rows.length > 1 ? ' floor ' + k : '') + (pieces.length > 1 ? ' ' + String.fromCharCode(97 + j) : '') + (units.length > 1 ? '·U' + (i + 1) : '') + (isDoor ? ' door' : ''), sg.len);
+            windowAndShading(P, n, along, (c0 + c1) / 2, c1 - c0, w0, w1, OPEN[f], f, tag + (rows.length > 1 ? ' floor ' + k : '') + (pieces.length > 1 ? ' ' + String.fromCharCode(97 + j) : '') + (units.length > 1 ? '·U' + (i + 1) : '') + (isDoor ? ' door' : isGel ? ' gelosia' : ''), sg.len, isGel ? 'gelosia' : '');
           });
         });
         /* the fins stand where the student put them along the device span —
@@ -12543,7 +12556,7 @@ function applyStudy(o) {
     if (['left', 'right', 'both'].indexOf(s.finSide) >= 0) d.finSide = s.finSide;
     if (Array.isArray(s.units) && s.units.length) {
       const vu = s.units.filter(w => w && isFinite(+w.frac) && +w.frac > 0).slice(0, 6)
-        .map(w => ({ on:w.on !== false, frac:+w.frac, door:!!w.door, off:isFinite(+w.off) ? Math.max(-30, Math.min(30, +w.off)) : 0, up:isFinite(+w.up) ? Math.max(-30, Math.min(30, +w.up)) : 0 }));
+        .map(w => ({ on:w.on !== false, frac:+w.frac, door:!!w.door, gel:!!w.gel, off:isFinite(+w.off) ? Math.max(-30, Math.min(30, +w.off)) : 0, up:isFinite(+w.up) ? Math.max(-30, Math.min(30, +w.up)) : 0 }));
       if (vu.length) { const t = vu.reduce((a, w) => a + w.frac, 0) || 1; vu.forEach(w => { w.frac /= t; }); d.units = vu; }
     }
   });
@@ -14781,7 +14794,7 @@ Object.assign(PT, {
   /* windows & shading */
   "Openings and Shadowing": "Aberturas e Sombreamento",
   "Glazing, overhangs and fins for each facade, sized against the plan fixed on Site and the roof fixed on Roof — this tab cannot change either. Choosing a facade turns the model to face it, so you can drag its window directly; the compass shows which way is which.":
-    "Envidraçados, palas e brises para cada fachada, dimensionados a partir da planta fixada em Local e do telhado fixado em Telhado — este separador não altera nenhum dos dois. Escolher uma fachada roda o modelo para a mostrar de frente, para poder arrastar a sua janela directamente; a bússola mostra que direcção é qual. Clique numa janela para a seleccionar — arraste o seu ponto preto para a empurrar ao longo da parede e para cima ou para baixo, arraste o ponto de um brise para o colocar onde a sombra pertence, clique duas vezes para a abrir ou fechar, clique duas vezes na parede vazia para plantar uma nova. Arraste-a para outra fachada para a mudar para lá, ou passe-a com as setas da sua linha.",
+    "Envidraçados, palas e brises para cada fachada, dimensionados a partir da planta fixada em Local e do telhado fixado em Telhado — este separador não altera nenhum dos dois. Escolher uma fachada roda o modelo para a mostrar de frente, para poder arrastar a sua janela directamente; a bússola mostra que direcção é qual. Clique numa janela para a seleccionar — arraste o seu ponto preto para a empurrar ao longo da parede e para cima ou para baixo, arraste o ponto de um brise para o colocar onde a sombra pertence, clique duas vezes para a abrir ou fechar, clique duas vezes na parede vazia para plantar uma nova. Qualquer módulo pode tornar-se porta envidraçada ou gelosia na sua linha. Arraste-a para outra fachada para a mudar para lá, ou passe-a com as setas da sua linha.",
   "selected — drag it around the wall": "selecionada — arraste-a pela parede",
   "open": "aberta",
   "closed": "fechada",
@@ -14807,6 +14820,8 @@ Object.assign(PT, {
   "L {} × H {} m": "L {} × A {} m",
   "Sill height": "Altura do peitoril",
   "sill": "peitoril",
+  "gelosia": "gelosia",
+  "A breeze-block panel instead of glass: ventilated, no view": "Um painel de blocos vazados em vez de vidro: ventilado, sem vista",
   "Head height": "Altura da verga",
   "Below the recommended range": "Abaixo do intervalo recomendado",
   "Within the recommended range": "Dentro do intervalo recomendado",
